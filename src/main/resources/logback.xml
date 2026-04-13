@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <property name="VOXY_LOG_LEVEL" value="${voxy.log.level:-INFO}"/>
+    <property name="LOGBACK_PATTERN"
+              value="%d{HH:mm:ss.SSS} %highlight(%-5level) %cyan([%thread]) %green(%logger{24}) - %msg%n"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOGBACK_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="org.weaw" level="${VOXY_LOG_LEVEL}"/>
+    <logger name="org.lwjgl" level="WARN"/>
+    <logger name="imgui" level="WARN"/>
+    <logger name="org.joml" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
