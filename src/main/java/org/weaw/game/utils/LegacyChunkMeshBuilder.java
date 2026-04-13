@@ -19,8 +19,10 @@ public final class LegacyChunkMeshBuilder {
         int initialCapacity = Math.max(estimateVisibleFaces(chunk), 1);
         int[] opaqueFaces = new int[initialCapacity * 2];
         int[] cutoutFaces = new int[initialCapacity * 2];
+        int[] transparentFaces = new int[initialCapacity * 2];
         int opaqueCount = 0;
         int cutoutCount = 0;
+        int transparentCount = 0;
 
         for (int y = 0; y < Chunk.SIZE; y++) {
             for (int z = 0; z < Chunk.SIZE; z++) {
@@ -31,65 +33,85 @@ public final class LegacyChunkMeshBuilder {
                     }
 
                     BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
-                    if (blockDefinition == null || blockDefinition.isTransparent()) {
+                    if (blockDefinition == null) {
                         continue;
                     }
 
                     int textureIndex = blockDefinition.getTextureIndex();
-                    MeshLayer layer = blockDefinition.isCutout() ? MeshLayer.CUTOUT : MeshLayer.OPAQUE;
+                    MeshLayer layer = blockDefinition.isTransparent()
+                            ? MeshLayer.TRANSPARENT
+                            : (blockDefinition.isCutout() ? MeshLayer.CUTOUT : MeshLayer.OPAQUE);
 
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x + 1, y, z)) {
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), textureIndex);
-                        } else {
+                        } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), textureIndex);
+                        } else {
+                            transparentFaces = ensureCapacity(transparentFaces, transparentCount);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), textureIndex);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x - 1, y, z)) {
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), textureIndex);
-                        } else {
+                        } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), textureIndex);
+                        } else {
+                            transparentFaces = ensureCapacity(transparentFaces, transparentCount);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), textureIndex);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y + 1, z)) {
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), textureIndex);
-                        } else {
+                        } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), textureIndex);
+                        } else {
+                            transparentFaces = ensureCapacity(transparentFaces, transparentCount);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), textureIndex);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y - 1, z)) {
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), textureIndex);
-                        } else {
+                        } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), textureIndex);
+                        } else {
+                            transparentFaces = ensureCapacity(transparentFaces, transparentCount);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), textureIndex);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z + 1)) {
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), textureIndex);
-                        } else {
+                        } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), textureIndex);
+                        } else {
+                            transparentFaces = ensureCapacity(transparentFaces, transparentCount);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), textureIndex);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z - 1)) {
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), textureIndex);
-                        } else {
+                        } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), textureIndex);
+                        } else {
+                            transparentFaces = ensureCapacity(transparentFaces, transparentCount);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), textureIndex);
                         }
                     }
                 }
@@ -98,7 +120,8 @@ public final class LegacyChunkMeshBuilder {
 
         return new ChunkMeshData(
                 new ChunkMeshData.LayerMeshData(trimFaces(opaqueFaces, opaqueCount), opaqueCount),
-                new ChunkMeshData.LayerMeshData(trimFaces(cutoutFaces, cutoutCount), cutoutCount)
+                new ChunkMeshData.LayerMeshData(trimFaces(cutoutFaces, cutoutCount), cutoutCount),
+                new ChunkMeshData.LayerMeshData(trimFaces(transparentFaces, transparentCount), transparentCount)
         );
     }
 
@@ -130,6 +153,10 @@ public final class LegacyChunkMeshBuilder {
 
         if (currentBlock.isCutout()) {
             return neighborBlock.isTransparent() || (neighborBlock.isCutout() && neighborBlock != currentBlock);
+        }
+
+        if (currentBlock.isTransparent()) {
+            return !neighborBlock.isTransparent() || neighborBlock != currentBlock;
         }
 
         return false;
@@ -195,6 +222,7 @@ public final class LegacyChunkMeshBuilder {
 
     private enum MeshLayer {
         OPAQUE,
-        CUTOUT
+        CUTOUT,
+        TRANSPARENT
     }
 }

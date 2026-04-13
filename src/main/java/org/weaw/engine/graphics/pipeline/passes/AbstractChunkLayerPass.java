@@ -99,6 +99,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                 visibleDraws.add(renderEntry);
             }
         }
+        sortVisibleDraws(context, visibleDraws);
         int culledMeshCount = Math.max(0, residentMeshCount - visibleMeshCount);
         long visibilityCpuTimeNs = System.nanoTime() - visibilityStartNs;
 
@@ -186,6 +187,10 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     protected boolean includeSharedTextureStats() {
         return false;
+    }
+
+    protected void sortVisibleDraws(RenderContext context, List<ChunkRenderEntry> visibleDraws) {
+        // Most chunk layers do not need a sort step.
     }
 
     private void synchronizeRenderEntries(RenderContext context) {
@@ -301,7 +306,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         return visibleChunkPositions;
     }
 
-    private record ChunkRenderEntry(
+    protected record ChunkRenderEntry(
             Chunk chunk,
             ChunkFaceArena.Allocation allocation,
             int originX,

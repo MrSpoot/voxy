@@ -44,6 +44,7 @@ public class RenderContext {
     private int sharedChunkVao;
     private ChunkFaceArena opaqueChunkFaceArena;
     private ChunkFaceArena cutoutChunkFaceArena;
+    private ChunkFaceArena transparentChunkFaceArena;
     private long chunkVisibilityFrameIndex = Long.MIN_VALUE;
     private long chunkVisibilityUploadsVersion = Long.MIN_VALUE;
     private final Set<ChunkPosition> visibleChunkPositions = new HashSet<>();
@@ -89,6 +90,7 @@ public class RenderContext {
         sharedChunkVao = glGenVertexArrays();
         opaqueChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 4096);
         cutoutChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
+        transparentChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
     }
 
     /**
@@ -106,6 +108,10 @@ public class RenderContext {
         if (cutoutChunkFaceArena != null) {
             cutoutChunkFaceArena.cleanup();
             cutoutChunkFaceArena = null;
+        }
+        if (transparentChunkFaceArena != null) {
+            transparentChunkFaceArena.cleanup();
+            transparentChunkFaceArena = null;
         }
         if (sharedChunkVao != 0) {
             glDeleteVertexArrays(sharedChunkVao);

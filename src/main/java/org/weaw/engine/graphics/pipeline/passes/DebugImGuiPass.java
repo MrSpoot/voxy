@@ -69,7 +69,7 @@ public class DebugImGuiPass implements RenderPass {
     private WindowRect overviewRect = WindowRect.of(10.0f, 35.0f, 320.0f, 120.0f);
     private WindowRect frameRect = WindowRect.of(10.0f, 170.0f, 360.0f, 145.0f);
     private WindowRect gpuRect = WindowRect.of(390.0f, 170.0f, 360.0f, 125.0f);
-    private WindowRect arenaRect = WindowRect.of(390.0f, 315.0f, 360.0f, 220.0f);
+    private WindowRect arenaRect = WindowRect.of(390.0f, 315.0f, 360.0f, 300.0f);
     private WindowRect chunkProfilingRect = WindowRect.of(770.0f, 315.0f, 460.0f, 200.0f);
     private WindowRect resourcesRect = WindowRect.of(770.0f, 170.0f, 360.0f, 155.0f);
     private WindowRect jvmRect = WindowRect.of(10.0f, 335.0f, 360.0f, 110.0f);
@@ -289,6 +289,8 @@ public class DebugImGuiPass implements RenderPass {
         renderArenaStats("Opaque", context.getOpaqueChunkFaceArena());
         ImGui.separator();
         renderArenaStats("Cutout", context.getCutoutChunkFaceArena());
+        ImGui.separator();
+        renderArenaStats("Transparent", context.getTransparentChunkFaceArena());
         ImGui.end();
     }
 
@@ -478,7 +480,7 @@ public class DebugImGuiPass implements RenderPass {
             jvmRect = WindowRect.of(leftX, frameRect.bottom() + rowGap, columnWidth, 110.0f);
 
             gpuRect = WindowRect.of(middleX, top + 135.0f, columnWidth, 125.0f);
-            arenaRect = WindowRect.of(middleX, gpuRect.bottom() + rowGap, columnWidth, 220.0f);
+            arenaRect = WindowRect.of(middleX, gpuRect.bottom() + rowGap, columnWidth, 300.0f);
             deviceRect = WindowRect.of(middleX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
 
             resourcesRect = WindowRect.of(rightX, top + 135.0f, columnWidth, 155.0f);
@@ -497,7 +499,7 @@ public class DebugImGuiPass implements RenderPass {
             frameRect = WindowRect.of(leftX, overviewRect.bottom() + rowGap, columnWidth, 145.0f);
             gpuRect = WindowRect.of(rightX, overviewRect.bottom() + rowGap, columnWidth, 125.0f);
             jvmRect = WindowRect.of(leftX, frameRect.bottom() + rowGap, columnWidth, 110.0f);
-            arenaRect = WindowRect.of(rightX, gpuRect.bottom() + rowGap, columnWidth, 220.0f);
+            arenaRect = WindowRect.of(rightX, gpuRect.bottom() + rowGap, columnWidth, 300.0f);
             resourcesRect = WindowRect.of(leftX, jvmRect.bottom() + rowGap, columnWidth, 155.0f);
             deviceRect = WindowRect.of(rightX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
             chunkProfilingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, contentWidth, 200.0f);
@@ -512,7 +514,7 @@ public class DebugImGuiPass implements RenderPass {
         overviewRect = WindowRect.of(margin, top, fullWidth, 120.0f);
         frameRect = WindowRect.of(margin, overviewRect.bottom() + rowGap, fullWidth, 145.0f);
         gpuRect = WindowRect.of(margin, frameRect.bottom() + rowGap, fullWidth, 125.0f);
-        arenaRect = WindowRect.of(margin, gpuRect.bottom() + rowGap, fullWidth, 220.0f);
+        arenaRect = WindowRect.of(margin, gpuRect.bottom() + rowGap, fullWidth, 300.0f);
         resourcesRect = WindowRect.of(margin, arenaRect.bottom() + rowGap, fullWidth, 155.0f);
         jvmRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 110.0f);
         deviceRect = WindowRect.of(margin, jvmRect.bottom() + rowGap, fullWidth, 150.0f);

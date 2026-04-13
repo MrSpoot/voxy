@@ -7,6 +7,7 @@ import org.weaw.engine.graphics.pipeline.RenderPipeline;
 import org.weaw.engine.graphics.pipeline.passes.CutoutChunkRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.DebugImGuiPass;
 import org.weaw.engine.graphics.pipeline.passes.OpaqueChunkRenderPass;
+import org.weaw.engine.graphics.pipeline.passes.TransparentChunkRenderPass;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.input.InputManager;
@@ -46,6 +47,7 @@ public class Renderer {
         pipeline = new RenderPipeline(context);
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
+        pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new DebugImGuiPass(window, inputManager));
 
         pipeline.create();

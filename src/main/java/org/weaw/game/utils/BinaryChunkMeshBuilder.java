@@ -32,7 +32,8 @@ public final class BinaryChunkMeshBuilder {
     public static ChunkMeshData buildMeshData(Chunk chunk, WorldBlockProvider blockProvider) {
         return new ChunkMeshData(
                 buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.OPAQUE),
-                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.CUTOUT)
+                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.CUTOUT),
+                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.TRANSPARENT)
         );
     }
 
@@ -328,6 +329,10 @@ public final class BinaryChunkMeshBuilder {
 
         if (currentBlock.isCutout()) {
             return neighborBlock.isTransparent() || (neighborBlock.isCutout() && neighborBlock != currentBlock);
+        }
+
+        if (currentBlock.isTransparent()) {
+            return !neighborBlock.isTransparent() || neighborBlock != currentBlock;
         }
 
         return false;
