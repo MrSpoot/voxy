@@ -2,6 +2,7 @@ package org.weaw.engine.graphics.pipeline.passes;
 
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.resources.GLStateManager;
+import org.weaw.engine.graphics.utils.ChunkFaceArena;
 import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkManager.ChunkUpload;
 import org.weaw.game.ChunkMeshData.LayerMeshData;
@@ -25,5 +26,10 @@ public class CutoutChunkRenderPass extends AbstractChunkLayerPass {
     @Override
     protected LayerMeshData selectLayerMesh(ChunkUpload upload) {
         return upload.meshData().cutout();
+    }
+
+    @Override
+    protected ChunkFaceArena selectArena(RenderContext context) {
+        return context.getCutoutChunkFaceArena();
     }
 }

@@ -23,11 +23,15 @@ public class RenderStats {
     private int drawnVertexCount;
 
     private int textureArrayCount;
+    private int chunkDrawBatchCount;
+    private int indirectVisibleDrawCount;
+    private int indirectDrawCapacity;
     private int renderTargetCount;
     private int renderTargetColorTextureCount;
     private int renderTargetDepthTextureCount;
 
     private long meshGpuBytes;
+    private long indirectBufferGpuBytes;
     private long textureGpuBytes;
     private long renderTargetGpuBytes;
 
@@ -51,7 +55,11 @@ public class RenderStats {
         drawnVertexCount = 0;
 
         textureArrayCount = 0;
+        chunkDrawBatchCount = 0;
+        indirectVisibleDrawCount = 0;
+        indirectDrawCapacity = 0;
         meshGpuBytes = 0L;
+        indirectBufferGpuBytes = 0L;
         textureGpuBytes = 0L;
 
         renderTargetCount = 0;
@@ -95,6 +103,14 @@ public class RenderStats {
         stats.drawnTriangleCount = metrics.drawnTriangleCount();
         stats.drawnVertexCount = metrics.drawnVertexCount();
         stats.meshGpuBytes = metrics.meshGpuBytes();
+        stats.submissionMode = metrics.submissionMode();
+        stats.indirectVisibleDrawCount = metrics.indirectVisibleDrawCount();
+        stats.indirectDrawCapacity = metrics.indirectDrawCapacity();
+        stats.indirectBufferGpuBytes = metrics.indirectBufferGpuBytes();
+        stats.syncCpuTimeNs = metrics.syncCpuTimeNs();
+        stats.visibilityCpuTimeNs = metrics.visibilityCpuTimeNs();
+        stats.batchUploadCpuTimeNs = metrics.batchUploadCpuTimeNs();
+        stats.drawSubmitCpuTimeNs = metrics.drawSubmitCpuTimeNs();
         stats.textureArrayCount = metrics.textureArrayCount();
         stats.textureGpuBytes = metrics.textureGpuBytes();
 
@@ -107,6 +123,10 @@ public class RenderStats {
         drawnTriangleCount += metrics.drawnTriangleCount();
         drawnVertexCount += metrics.drawnVertexCount();
         meshGpuBytes += metrics.meshGpuBytes();
+        chunkDrawBatchCount++;
+        indirectVisibleDrawCount += metrics.indirectVisibleDrawCount();
+        indirectDrawCapacity += metrics.indirectDrawCapacity();
+        indirectBufferGpuBytes += metrics.indirectBufferGpuBytes();
         textureArrayCount += metrics.textureArrayCount();
         textureGpuBytes += metrics.textureGpuBytes();
     }
@@ -137,6 +157,14 @@ public class RenderStats {
         private int drawnVertexCount;
         private int textureArrayCount;
         private long meshGpuBytes;
+        private String submissionMode;
+        private int indirectVisibleDrawCount;
+        private int indirectDrawCapacity;
+        private long indirectBufferGpuBytes;
+        private long syncCpuTimeNs;
+        private long visibilityCpuTimeNs;
+        private long batchUploadCpuTimeNs;
+        private long drawSubmitCpuTimeNs;
         private long textureGpuBytes;
 
         private PassStats(String name) {
@@ -156,6 +184,14 @@ public class RenderStats {
             drawnVertexCount = 0;
             textureArrayCount = 0;
             meshGpuBytes = 0L;
+            submissionMode = "N/A";
+            indirectVisibleDrawCount = 0;
+            indirectDrawCapacity = 0;
+            indirectBufferGpuBytes = 0L;
+            syncCpuTimeNs = 0L;
+            visibilityCpuTimeNs = 0L;
+            batchUploadCpuTimeNs = 0L;
+            drawSubmitCpuTimeNs = 0L;
             textureGpuBytes = 0L;
         }
     }
@@ -170,6 +206,14 @@ public class RenderStats {
             int drawnTriangleCount,
             int drawnVertexCount,
             long meshGpuBytes,
+            String submissionMode,
+            int indirectVisibleDrawCount,
+            int indirectDrawCapacity,
+            long indirectBufferGpuBytes,
+            long syncCpuTimeNs,
+            long visibilityCpuTimeNs,
+            long batchUploadCpuTimeNs,
+            long drawSubmitCpuTimeNs,
             int textureArrayCount,
             long textureGpuBytes
     ) {

@@ -6,29 +6,45 @@ import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.RenderStats.ChunkPassMetrics;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
-import org.weaw.engine.graphics.utils.Mesh;
+import org.weaw.engine.graphics.utils.ChunkFaceArena;
+import org.weaw.engine.graphics.utils.ChunkMultiDrawBatch;
 import org.weaw.engine.graphics.utils.Shader;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkManager;
+import org.weaw.game.ChunkManager.ChunkUploadChangeType;
+import org.weaw.game.ChunkManager.ChunkUploadDelta;
+import org.weaw.game.ChunkManager.ChunkUploadSync;
 import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.ChunkManager.ChunkUpload;
 import org.weaw.game.ChunkMeshData.LayerMeshData;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 abstract class AbstractChunkLayerPass implements RenderPass {
+    private static final String CHUNK_DRAW_MODE = System.getProperty("voxy.chunkDrawMode", "indirect");
+    private static final boolean USE_MULTI_DRAW = !"legacy".equalsIgnoreCase(CHUNK_DRAW_MODE);
+    private static final String DRAW_SUBMISSION_MODE = USE_MULTI_DRAW ? "Indirect" : "Legacy";
+
     private final ChunkManager chunkManager;
     private final String name;
     private final String shaderPath;
     private final Map<ChunkPosition, ChunkRenderEntry> renderEntries = new LinkedHashMap<>();
+    private final List<ChunkRenderEntry> visibleDraws = new ArrayList<>();
     private final Matrix4f projectionMatrix = new Matrix4f();
     private final Matrix4f viewMatrix = new Matrix4f();
     private final Matrix4f viewProjectionMatrix = new Matrix4f();
     private final FrustumIntersection frustumIntersection = new FrustumIntersection();
 
     private Shader shader;
+    private ChunkMultiDrawBatch multiDrawBatch;
     private long synchronizedChunkUploadsVersion = Long.MIN_VALUE;
+    private ChunkFaceArena currentArena;
+    private int residentMeshCountCache;
+    private int residentFaceCountCache;
 
     protected AbstractChunkLayerPass(ChunkManager chunkManager, String name, String shaderPath) {
         this.chunkManager = chunkManager;
@@ -44,58 +60,73 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     @Override
     public final void create() {
         shader = new Shader(shaderPath);
+        multiDrawBatch = new ChunkMultiDrawBatch(512);
     }
 
     @Override
     public final void execute(RenderContext context) {
-        synchronizeRenderEntries();
+        long syncStartNs = System.nanoTime();
+        synchronizeRenderEntries(context);
+        long syncCpuTimeNs = System.nanoTime() - syncStartNs;
         configureState(context);
+
+        long visibilityStartNs = System.nanoTime();
         context.getCamera().getProjectionMatrix(projectionMatrix);
         context.getCamera().getViewMatrix(viewMatrix);
         viewProjectionMatrix.set(projectionMatrix).mul(viewMatrix);
         frustumIntersection.set(viewProjectionMatrix);
-        int residentMeshCount = 0;
-        int residentFaceCount = 0;
+
+        Set<ChunkPosition> visibleChunkPositions = resolveVisibleChunkPositions(context);
+        visibleDraws.clear();
+
+        int residentMeshCount = residentMeshCountCache;
+        int residentFaceCount = residentFaceCountCache;
         int visibleMeshCount = 0;
-        int culledMeshCount = 0;
-        int drawCalls = 0;
         int drawnFaceCount = 0;
-        long meshGpuBytes = 0L;
         BlockTextureManager textureManager = context.getBlockTextureManager();
+        ChunkFaceArena arena = selectArena(context);
+        currentArena = arena;
+
+        if (!renderEntries.isEmpty() && !visibleChunkPositions.isEmpty()) {
+            for (ChunkPosition position : visibleChunkPositions) {
+                ChunkRenderEntry renderEntry = renderEntries.get(position);
+                if (renderEntry == null) {
+                    continue;
+                }
+
+                visibleMeshCount++;
+                drawnFaceCount += renderEntry.allocation().faceCount();
+                visibleDraws.add(renderEntry);
+            }
+        }
+        int culledMeshCount = Math.max(0, residentMeshCount - visibleMeshCount);
+        long visibilityCpuTimeNs = System.nanoTime() - visibilityStartNs;
+
+        long batchUploadStartNs = System.nanoTime();
+        multiDrawBatch.upload(visibleDraws);
+        long batchUploadCpuTimeNs = System.nanoTime() - batchUploadStartNs;
 
         shader.useProgram();
+        arena.bind();
+        multiDrawBatch.bind();
         textureManager.bind(0);
         shader.setUniform("uBlockTextures", 0);
         shader.setUniform("uProjection", projectionMatrix);
         shader.setUniform("uView", viewMatrix);
 
-        for (ChunkRenderEntry renderEntry : renderEntries.values()) {
-            Mesh mesh = renderEntry.mesh();
-            if (mesh != null) {
-                residentMeshCount++;
-                residentFaceCount += mesh.getInstanceCount();
-                meshGpuBytes += mesh.getEstimatedGpuBytes();
-            }
-
-            if (!isChunkVisible(renderEntry, frustumIntersection)) {
-                culledMeshCount++;
-                continue;
-            }
-
-            shader.setUniform("uModel", renderEntry.modelMatrix());
-
-            if (mesh != null) {
-                visibleMeshCount++;
-                if (mesh.getInstanceCount() > 0) {
-                    drawCalls++;
-                    drawnFaceCount += mesh.getInstanceCount();
-                }
-                mesh.render();
-            }
+        long drawSubmitStartNs = System.nanoTime();
+        if (USE_MULTI_DRAW) {
+            multiDrawBatch.drawIndirect();
+        } else {
+            multiDrawBatch.drawLegacy(visibleDraws);
         }
+        long drawSubmitCpuTimeNs = System.nanoTime() - drawSubmitStartNs;
 
+        multiDrawBatch.unbind();
+        arena.unbind();
         shader.unbind();
 
+        int drawCalls = visibleDraws.isEmpty() ? 0 : (USE_MULTI_DRAW ? 1 : visibleDraws.size());
         context.getRenderStats().recordChunkPass(
                 getName(),
                 new ChunkPassMetrics(
@@ -107,7 +138,15 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                         drawnFaceCount,
                         drawnFaceCount * 2,
                         drawnFaceCount * 4,
-                        meshGpuBytes,
+                        arena.getEstimatedGpuBytes() + multiDrawBatch.getEstimatedGpuBytes(),
+                        DRAW_SUBMISSION_MODE,
+                        multiDrawBatch.getActiveDrawCount(),
+                        multiDrawBatch.getDrawCapacity(),
+                        multiDrawBatch.getEstimatedGpuBytes(),
+                        syncCpuTimeNs,
+                        visibilityCpuTimeNs,
+                        batchUploadCpuTimeNs,
+                        drawSubmitCpuTimeNs,
                         includeSharedTextureStats() && textureManager != null && textureManager.getTextureArrayId() != 0 ? 1 : 0,
                         includeSharedTextureStats() && textureManager != null ? textureManager.getEstimatedGpuBytes() : 0L
                 )
@@ -121,13 +160,18 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     @Override
     public final void cleanup() {
-        for (ChunkRenderEntry renderEntry : renderEntries.values()) {
-            if (renderEntry.mesh() != null) {
-                renderEntry.mesh().cleanup();
+        if (currentArena != null) {
+            for (ChunkRenderEntry renderEntry : renderEntries.values()) {
+                currentArena.free(renderEntry.allocation());
             }
         }
         renderEntries.clear();
+        visibleDraws.clear();
 
+        if (multiDrawBatch != null) {
+            multiDrawBatch.cleanup();
+            multiDrawBatch = null;
+        }
         if (shader != null) {
             shader.cleanup();
             shader = null;
@@ -138,98 +182,149 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     protected abstract LayerMeshData selectLayerMesh(ChunkUpload upload);
 
+    protected abstract ChunkFaceArena selectArena(RenderContext context);
+
     protected boolean includeSharedTextureStats() {
         return false;
     }
 
-    private void synchronizeRenderEntries() {
+    private void synchronizeRenderEntries(RenderContext context) {
         long currentVersion = chunkManager.getChunkUploadsVersion();
         if (currentVersion == synchronizedChunkUploadsVersion) {
             return;
         }
 
-        Map<ChunkPosition, ChunkUpload> currentUploads = chunkManager.snapshotChunkUploads();
+        ChunkFaceArena arena = selectArena(context);
+        currentArena = arena;
+        ChunkUploadSync uploadSync = chunkManager.snapshotChunkUploadSync(synchronizedChunkUploadsVersion);
 
+        if (uploadSync.requiresFullSnapshot()) {
+            applyFullUploadSnapshot(uploadSync.fullSnapshot(), arena);
+        } else {
+            for (ChunkUploadDelta delta : uploadSync.deltas()) {
+                applyUploadDelta(delta, arena);
+            }
+        }
+
+        recomputeResidentStats();
+        synchronizedChunkUploadsVersion = uploadSync.version();
+    }
+
+    private void applyFullUploadSnapshot(Map<ChunkPosition, ChunkUpload> fullSnapshot, ChunkFaceArena arena) {
         renderEntries.entrySet().removeIf(entry -> {
-            if (!currentUploads.containsKey(entry.getKey())) {
-                if (entry.getValue().mesh() != null) {
-                    entry.getValue().mesh().cleanup();
-                }
+            if (!fullSnapshot.containsKey(entry.getKey())) {
+                arena.free(entry.getValue().allocation());
                 return true;
             }
             return false;
         });
 
-        for (Map.Entry<ChunkPosition, ChunkUpload> entry : currentUploads.entrySet()) {
-            ChunkRenderEntry existing = renderEntries.get(entry.getKey());
-            if (existing != null && existing.chunk() == entry.getValue().chunk()) {
-                continue;
-            }
+        for (Map.Entry<ChunkPosition, ChunkUpload> entry : fullSnapshot.entrySet()) {
+            upsertRenderEntry(entry.getKey(), entry.getValue(), arena);
+        }
+    }
 
-            LayerMeshData layerMesh = selectLayerMesh(entry.getValue());
-            if (existing != null && existing.mesh() != null) {
-                existing.mesh().update(layerMesh.faceData(), layerMesh.faceCount());
-                renderEntries.put(entry.getKey(), existing.withChunk(entry.getValue().chunk()));
-                continue;
+    private void applyUploadDelta(ChunkUploadDelta delta, ChunkFaceArena arena) {
+        if (delta.changeType() == ChunkUploadChangeType.REMOVED) {
+            ChunkRenderEntry removed = renderEntries.remove(delta.position());
+            if (removed != null) {
+                arena.free(removed.allocation());
             }
-
-            Mesh mesh = new Mesh(layerMesh.faceData(), layerMesh.faceCount());
-            renderEntries.put(entry.getKey(), ChunkRenderEntry.create(entry.getValue().chunk(), mesh));
+            return;
         }
 
-        synchronizedChunkUploadsVersion = currentVersion;
+        if (delta.upload() != null) {
+            upsertRenderEntry(delta.position(), delta.upload(), arena);
+        }
     }
 
-    private boolean isChunkVisible(ChunkRenderEntry renderEntry, FrustumIntersection frustumIntersection) {
-        return frustumIntersection.testAab(
-                renderEntry.minX(),
-                renderEntry.minY(),
-                renderEntry.minZ(),
-                renderEntry.maxX(),
-                renderEntry.maxY(),
-                renderEntry.maxZ()
+    private void upsertRenderEntry(ChunkPosition position, ChunkUpload upload, ChunkFaceArena arena) {
+        ChunkRenderEntry existing = renderEntries.get(position);
+        LayerMeshData layerMesh = selectLayerMesh(upload);
+
+        if (layerMesh.faceCount() == 0) {
+            if (existing != null) {
+                arena.free(existing.allocation());
+                renderEntries.remove(position);
+            }
+            return;
+        }
+
+        ChunkFaceArena.Allocation allocation = arena.upload(
+                layerMesh.faceData(),
+                layerMesh.faceCount(),
+                existing != null ? existing.allocation() : null
         );
+
+        renderEntries.put(position, ChunkRenderEntry.create(upload.chunk(), allocation));
     }
 
-    private record ChunkRenderEntry(
-            Chunk chunk,
-            Mesh mesh,
-            Matrix4f modelMatrix,
-            float minX,
-            float minY,
-            float minZ,
-            float maxX,
-            float maxY,
-            float maxZ
-    ) {
-        private static ChunkRenderEntry create(Chunk chunk, Mesh mesh) {
-            float minX = chunk.getPosition().x * Chunk.SIZE;
-            float minY = chunk.getPosition().y * Chunk.SIZE;
-            float minZ = chunk.getPosition().z * Chunk.SIZE;
-            return new ChunkRenderEntry(
-                    chunk,
-                    mesh,
-                    new Matrix4f().translation(minX, minY, minZ),
+    private void recomputeResidentStats() {
+        residentMeshCountCache = renderEntries.size();
+        residentFaceCountCache = 0;
+        for (ChunkRenderEntry renderEntry : renderEntries.values()) {
+            residentFaceCountCache += renderEntry.allocation().faceCount();
+        }
+    }
+
+    private Set<ChunkPosition> resolveVisibleChunkPositions(RenderContext context) {
+        long currentFrameIndex = context.getRenderStats().getFrameIndex();
+        long currentUploadsVersion = chunkManager.getChunkUploadsVersion();
+        if (context.getChunkVisibilityFrameIndex() == currentFrameIndex
+                && context.getChunkVisibilityUploadsVersion() == currentUploadsVersion) {
+            return context.getVisibleChunkPositions();
+        }
+
+        Set<ChunkPosition> visibleChunkPositions = context.getVisibleChunkPositions();
+        visibleChunkPositions.clear();
+
+        for (Map.Entry<ChunkPosition, ChunkUpload> entry : chunkManager.snapshotChunkUploads().entrySet()) {
+            ChunkPosition position = entry.getKey();
+            float minX = position.x() * Chunk.SIZE;
+            float minY = position.y() * Chunk.SIZE;
+            float minZ = position.z() * Chunk.SIZE;
+
+            if (frustumIntersection.testAab(
                     minX,
                     minY,
                     minZ,
                     minX + Chunk.SIZE,
                     minY + Chunk.SIZE,
                     minZ + Chunk.SIZE
-            );
+            )) {
+                visibleChunkPositions.add(position);
+            }
         }
 
-        private ChunkRenderEntry withChunk(Chunk chunk) {
+        context.setChunkVisibilityFrameIndex(currentFrameIndex);
+        context.setChunkVisibilityUploadsVersion(currentUploadsVersion);
+        return visibleChunkPositions;
+    }
+
+    private record ChunkRenderEntry(
+            Chunk chunk,
+            ChunkFaceArena.Allocation allocation,
+            int originX,
+            int originY,
+            int originZ
+    ) implements ChunkMultiDrawBatch.ChunkDrawSource {
+        @Override
+        public int faceOffsetInts() {
+            return allocation.offsetInts();
+        }
+
+        @Override
+        public int faceCount() {
+            return allocation.faceCount();
+        }
+
+        private static ChunkRenderEntry create(Chunk chunk, ChunkFaceArena.Allocation allocation) {
             return new ChunkRenderEntry(
                     chunk,
-                    mesh,
-                    modelMatrix,
-                    minX,
-                    minY,
-                    minZ,
-                    maxX,
-                    maxY,
-                    maxZ
+                    allocation,
+                    chunk.getPosition().x * Chunk.SIZE,
+                    chunk.getPosition().y * Chunk.SIZE,
+                    chunk.getPosition().z * Chunk.SIZE
             );
         }
     }

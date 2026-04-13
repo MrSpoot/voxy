@@ -3,6 +3,8 @@ package org.weaw.game;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.Blocks;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -10,16 +12,19 @@ import java.util.Map;
 import java.util.Set;
 
 public class ChunkManager {
+    private static final int MAX_RETAINED_UPLOAD_DELTAS = 4096;
+
     private final Map<ChunkPosition, Chunk> chunks = new LinkedHashMap<>();
     private final Map<ChunkPosition, ChunkMeshData> chunkMeshes = new LinkedHashMap<>();
+    private final Map<ChunkPosition, ChunkUpload> chunkUploads = new LinkedHashMap<>();
+    private final List<ChunkUploadDelta> chunkUploadDeltas = new ArrayList<>();
     private final Set<ChunkPosition> queuedChunks = new HashSet<>();
-    private Map<ChunkPosition, ChunkUpload> chunkUploadsSnapshot = Map.of();
+
     private long chunkUploadsVersion;
-    private boolean chunkUploadsDirty = true;
+    private long firstRetainedChunkUploadVersion = 1L;
 
     public synchronized void addChunk(Chunk chunk) {
         chunks.put(ChunkPosition.fromChunk(chunk), chunk);
-        markChunkUploadsDirty();
     }
 
     public synchronized Chunk getChunk(int chunkX, int chunkY, int chunkZ) {
@@ -92,14 +97,24 @@ public class ChunkManager {
         chunks.put(position, chunk);
         chunkMeshes.put(position, meshData);
         queuedChunks.remove(position);
-        markChunkUploadsDirty();
+
+        ChunkUpload upload = new ChunkUpload(position, chunk, meshData);
+        ChunkUpload previousUpload = chunkUploads.put(position, upload);
+        recordChunkUploadDelta(
+                previousUpload == null ? ChunkUploadChangeType.ADDED : ChunkUploadChangeType.UPDATED,
+                position,
+                upload
+        );
     }
 
     public synchronized void unloadChunk(ChunkPosition position) {
         chunks.remove(position);
         chunkMeshes.remove(position);
         queuedChunks.remove(position);
-        markChunkUploadsDirty();
+
+        if (chunkUploads.remove(position) != null) {
+            recordChunkUploadDelta(ChunkUploadChangeType.REMOVED, position, null);
+        }
     }
 
     public synchronized long getChunkUploadsVersion() {
@@ -107,25 +122,65 @@ public class ChunkManager {
     }
 
     public synchronized Map<ChunkPosition, ChunkUpload> snapshotChunkUploads() {
-        if (!chunkUploadsDirty) {
-            return chunkUploadsSnapshot;
-        }
-
-        Map<ChunkPosition, ChunkUpload> snapshot = new LinkedHashMap<>();
-        for (Map.Entry<ChunkPosition, Chunk> entry : chunks.entrySet()) {
-            ChunkMeshData meshData = chunkMeshes.get(entry.getKey());
-            if (meshData != null) {
-                snapshot.put(entry.getKey(), new ChunkUpload(entry.getKey(), entry.getValue(), meshData));
-            }
-        }
-        chunkUploadsSnapshot = snapshot;
-        chunkUploadsDirty = false;
-        return chunkUploadsSnapshot;
+        return Collections.unmodifiableMap(new LinkedHashMap<>(chunkUploads));
     }
 
-    private void markChunkUploadsDirty() {
+    public synchronized ChunkUploadSync snapshotChunkUploadSync(long lastSeenVersion) {
+        if (lastSeenVersion == chunkUploadsVersion) {
+            return new ChunkUploadSync(chunkUploadsVersion, false, Map.of(), List.of());
+        }
+
+        boolean requiresFullSnapshot = lastSeenVersion < (firstRetainedChunkUploadVersion - 1);
+        if (requiresFullSnapshot) {
+            return new ChunkUploadSync(
+                    chunkUploadsVersion,
+                    true,
+                    Collections.unmodifiableMap(new LinkedHashMap<>(chunkUploads)),
+                    List.of()
+            );
+        }
+
+        if (chunkUploadDeltas.isEmpty()) {
+            return new ChunkUploadSync(chunkUploadsVersion, false, Map.of(), List.of());
+        }
+
+        int startIndex = 0;
+        while (startIndex < chunkUploadDeltas.size()
+                && chunkUploadDeltas.get(startIndex).version() <= lastSeenVersion) {
+            startIndex++;
+        }
+
+        if (startIndex >= chunkUploadDeltas.size()) {
+            return new ChunkUploadSync(chunkUploadsVersion, false, Map.of(), List.of());
+        }
+
+        return new ChunkUploadSync(
+                chunkUploadsVersion,
+                false,
+                Map.of(),
+                List.copyOf(chunkUploadDeltas.subList(startIndex, chunkUploadDeltas.size()))
+        );
+    }
+
+    private void recordChunkUploadDelta(ChunkUploadChangeType changeType, ChunkPosition position, ChunkUpload upload) {
         chunkUploadsVersion++;
-        chunkUploadsDirty = true;
+        chunkUploadDeltas.add(new ChunkUploadDelta(chunkUploadsVersion, changeType, position, upload));
+        trimRetainedChunkUploadDeltas();
+    }
+
+    private void trimRetainedChunkUploadDeltas() {
+        int excess = chunkUploadDeltas.size() - MAX_RETAINED_UPLOAD_DELTAS;
+        if (excess <= 0) {
+            if (!chunkUploadDeltas.isEmpty()) {
+                firstRetainedChunkUploadVersion = chunkUploadDeltas.get(0).version();
+            }
+            return;
+        }
+
+        chunkUploadDeltas.subList(0, excess).clear();
+        firstRetainedChunkUploadVersion = chunkUploadDeltas.isEmpty()
+                ? (chunkUploadsVersion + 1)
+                : chunkUploadDeltas.get(0).version();
     }
 
     public record ChunkPosition(int x, int y, int z) {
@@ -135,5 +190,27 @@ public class ChunkManager {
     }
 
     public record ChunkUpload(ChunkPosition position, Chunk chunk, ChunkMeshData meshData) {
+    }
+
+    public record ChunkUploadDelta(
+            long version,
+            ChunkUploadChangeType changeType,
+            ChunkPosition position,
+            ChunkUpload upload
+    ) {
+    }
+
+    public record ChunkUploadSync(
+            long version,
+            boolean requiresFullSnapshot,
+            Map<ChunkPosition, ChunkUpload> fullSnapshot,
+            List<ChunkUploadDelta> deltas
+    ) {
+    }
+
+    public enum ChunkUploadChangeType {
+        ADDED,
+        UPDATED,
+        REMOVED
     }
 }

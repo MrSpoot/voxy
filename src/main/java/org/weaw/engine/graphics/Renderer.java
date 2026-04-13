@@ -39,6 +39,7 @@ public class Renderer {
         BlockTextureManager blockTextureManager = new BlockTextureManager();
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);
+        context.initializeSharedChunkGeometry();
         worldStreamer = new WorldStreamer(world.getChunkManager());
 
         // Create and configure render pipeline

@@ -5,9 +5,12 @@ layout(std430, binding = 0) readonly buffer FaceBuffer {
     uint faces[];
 };
 
+layout(std430, binding = 1) readonly buffer ChunkDrawBuffer {
+    ivec4 drawData[];
+};
+
 uniform mat4 uProjection;
 uniform mat4 uView;
-uniform mat4 uModel;
 
 out vec2 vTexCoord;
 flat out int vFace;
@@ -42,7 +45,8 @@ vec3 getFaceVertexOffset(int face, vec2 uv, float quadWidth, float quadHeight) {
 }
 
 void main() {
-    int faceIndex = gl_InstanceID * 2;
+    ivec4 chunkDraw = drawData[gl_BaseInstance];
+    int faceIndex = chunkDraw.x + (gl_InstanceID * 2);
     int faceData = int(faces[faceIndex]);
     int textureIndex = int(faces[faceIndex + 1]);
 
@@ -54,8 +58,9 @@ void main() {
     float quadHeight = float(((faceData >> 23) & 31) + 1);
     vec2 uv = getQuadUv(gl_VertexID);
 
-    vec3 worldPosition = vec3(x, y, z) + getFaceVertexOffset(face, uv, quadWidth, quadHeight);
-    gl_Position = uProjection * uView * uModel * vec4(worldPosition, 1.0);
+    vec3 chunkOrigin = vec3(chunkDraw.y, chunkDraw.z, chunkDraw.w);
+    vec3 worldPosition = chunkOrigin + vec3(x, y, z) + getFaceVertexOffset(face, uv, quadWidth, quadHeight);
+    gl_Position = uProjection * uView * vec4(worldPosition, 1.0);
 
     vTexCoord = vec2(uv.x * quadWidth, uv.y * quadHeight);
     vFace = face;

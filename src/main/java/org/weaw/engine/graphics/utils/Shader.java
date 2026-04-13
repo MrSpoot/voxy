@@ -110,58 +110,73 @@ public class Shader {
     }
 
     public void setUniform(String uniformName, int value) {
-        if (getUniformLocation(uniformName) != null) {
-            glUniform1i(getUniformLocation(uniformName), value);
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
+            glUniform1i(location, value);
         }
     }
 
     public void setUniform(String uniformName, int value, boolean unsigned) {
-        if (getUniformLocation(uniformName) != null) {
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
             if(unsigned) {
-                glUniform1ui(getUniformLocation(uniformName), value);
+                glUniform1ui(location, value);
             }else{
-                glUniform1i(getUniformLocation(uniformName), value);
+                glUniform1i(location, value);
             }
         }
     }
 
     public void setUniform(String uniformName, Matrix4f value) {
-        if (getUniformLocation(uniformName) != null) {
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                glUniformMatrix4fv(getUniformLocation(uniformName), false, value.get(stack.mallocFloat(16)));
+                glUniformMatrix4fv(location, false, value.get(stack.mallocFloat(16)));
             }
         }
     }
 
     public void setUniform(String uniformName, Matrix3f value) {
-        if (getUniformLocation(uniformName) != null) {
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                glUniformMatrix3fv(getUniformLocation(uniformName), false, value.get(stack.mallocFloat(16)));
+                glUniformMatrix3fv(location, false, value.get(stack.mallocFloat(16)));
             }
         }
     }
 
     public void setUniform(String uniformName, Vector4f value) {
-        if (getUniformLocation(uniformName) != null) {
-            glUniform4f(getUniformLocation(uniformName), value.x, value.y, value.z, value.w);
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
+            glUniform4f(location, value.x, value.y, value.z, value.w);
         }
     }
 
     public void setUniform(String uniformName, Vector3f value) {
-        if (getUniformLocation(uniformName) != null) {
-            glUniform3f(getUniformLocation(uniformName), value.x, value.y, value.z);
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
+            glUniform3f(location, value.x, value.y, value.z);
         }
     }
 
     public void setUniform(String uniformName, Vector2f value) {
-        if (getUniformLocation(uniformName) != null) {
-            glUniform2f(getUniformLocation(uniformName), value.x, value.y);
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
+            glUniform2f(location, value.x, value.y);
         }
     }
 
     public void setUniform(String uniformName, float value) {
-        if (getUniformLocation(uniformName) != null) {
-            glUniform1f(getUniformLocation(uniformName), value);
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
+            glUniform1f(location, value);
+        }
+    }
+
+    public void setUniform(String uniformName, float x, float y, float z) {
+        Integer location = getUniformLocation(uniformName);
+        if (location != null) {
+            glUniform3f(location, x, y, z);
         }
     }
 

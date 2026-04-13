@@ -5,9 +5,16 @@ import lombok.Setter;
 import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.Camera;
+import org.weaw.engine.graphics.utils.ChunkFaceArena;
+import org.weaw.game.ChunkManager.ChunkPosition;
 
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+
+import static org.lwjgl.opengl.GL30C.glDeleteVertexArrays;
+import static org.lwjgl.opengl.GL30C.glGenVertexArrays;
 
 /**
  * Shared rendering context passed to all render passes.
@@ -34,6 +41,12 @@ public class RenderContext {
     private final Map<String, RenderTarget> renderTargets = new HashMap<>();
     private final RenderStats renderStats = new RenderStats();
     private BlockTextureManager blockTextureManager;
+    private int sharedChunkVao;
+    private ChunkFaceArena opaqueChunkFaceArena;
+    private ChunkFaceArena cutoutChunkFaceArena;
+    private long chunkVisibilityFrameIndex = Long.MIN_VALUE;
+    private long chunkVisibilityUploadsVersion = Long.MIN_VALUE;
+    private final Set<ChunkPosition> visibleChunkPositions = new HashSet<>();
 
     public RenderContext(int viewportWidth, int viewportHeight) {
         this.viewportWidth = viewportWidth;
@@ -68,6 +81,16 @@ public class RenderContext {
         this.viewportHeight = height;
     }
 
+    public void initializeSharedChunkGeometry() {
+        if (sharedChunkVao != 0) {
+            return;
+        }
+
+        sharedChunkVao = glGenVertexArrays();
+        opaqueChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 4096);
+        cutoutChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
+    }
+
     /**
      * Cleanup all render targets.
      */
@@ -76,6 +99,21 @@ public class RenderContext {
             blockTextureManager.cleanup();
             blockTextureManager = null;
         }
+        if (opaqueChunkFaceArena != null) {
+            opaqueChunkFaceArena.cleanup();
+            opaqueChunkFaceArena = null;
+        }
+        if (cutoutChunkFaceArena != null) {
+            cutoutChunkFaceArena.cleanup();
+            cutoutChunkFaceArena = null;
+        }
+        if (sharedChunkVao != 0) {
+            glDeleteVertexArrays(sharedChunkVao);
+            sharedChunkVao = 0;
+        }
+        chunkVisibilityFrameIndex = Long.MIN_VALUE;
+        chunkVisibilityUploadsVersion = Long.MIN_VALUE;
+        visibleChunkPositions.clear();
         renderTargets.values().forEach(RenderTarget::cleanup);
         renderTargets.clear();
     }

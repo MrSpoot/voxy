@@ -23,9 +23,13 @@ public class WorldStreamer implements AutoCloseable {
     private final int horizontalUnloadRadius;
     private final int verticalUnloadHeight;
     private final int maxSubmissionsPerUpdate;
+    private final List<ChunkOffset> sortedDesiredOffsets;
+
+    private ChunkPosition cachedPlayerChunk;
+    private List<ChunkPosition> cachedDesiredPositions = List.of();
 
     public WorldStreamer(ChunkManager chunkManager) {
-        this(chunkManager, 4, 20, 5, 24, 4);
+        this(chunkManager, 16, 20, 15, 24, 4);
     }
 
     public WorldStreamer(
@@ -42,6 +46,7 @@ public class WorldStreamer implements AutoCloseable {
         this.horizontalUnloadRadius = horizontalUnloadRadius;
         this.verticalUnloadHeight = verticalUnloadHeight;
         this.maxSubmissionsPerUpdate = maxSubmissionsPerUpdate;
+        this.sortedDesiredOffsets = createSortedDesiredOffsets();
 
         int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
         this.executor = Executors.newFixedThreadPool(workerCount);
@@ -49,8 +54,12 @@ public class WorldStreamer implements AutoCloseable {
 
     public void update(Vector3f playerPosition) {
         ChunkPosition playerChunk = toChunkPosition(playerPosition);
-        unloadFarChunks(playerChunk);
-        submitNeededChunks(playerChunk);
+        if (!playerChunk.equals(cachedPlayerChunk)) {
+            cachedDesiredPositions = translateDesiredOffsets(playerChunk);
+            cachedPlayerChunk = playerChunk;
+            unloadFarChunks(playerChunk);
+        }
+        submitNeededChunks();
     }
 
     @Override
@@ -77,11 +86,10 @@ public class WorldStreamer implements AutoCloseable {
         }
     }
 
-    private void submitNeededChunks(ChunkPosition playerChunk) {
-        List<ChunkPosition> desiredPositions = collectDesiredPositions(playerChunk);
+    private void submitNeededChunks() {
         int submitted = 0;
 
-        for (ChunkPosition position : desiredPositions) {
+        for (ChunkPosition position : cachedDesiredPositions) {
             if (submitted >= maxSubmissionsPerUpdate) {
                 break;
             }
@@ -107,28 +115,40 @@ public class WorldStreamer implements AutoCloseable {
         }
     }
 
-    private List<ChunkPosition> collectDesiredPositions(ChunkPosition playerChunk) {
-        List<ChunkPosition> positions = new ArrayList<>();
-        int minRenderY = getMinChunkY(playerChunk.y(), verticalRenderHeight);
-        int maxRenderY = getMaxChunkY(playerChunk.y(), verticalRenderHeight);
+    private List<ChunkOffset> createSortedDesiredOffsets() {
+        List<ChunkOffset> offsets = new ArrayList<>();
+        int minRenderY = getMinChunkY(0, verticalRenderHeight);
+        int maxRenderY = getMaxChunkY(0, verticalRenderHeight);
         int renderRadiusSquared = horizontalRenderRadius * horizontalRenderRadius;
 
-        for (int chunkY = minRenderY; chunkY <= maxRenderY; chunkY++) {
-            for (int chunkZ = playerChunk.z() - horizontalRenderRadius; chunkZ <= playerChunk.z() + horizontalRenderRadius; chunkZ++) {
-                for (int chunkX = playerChunk.x() - horizontalRenderRadius; chunkX <= playerChunk.x() + horizontalRenderRadius; chunkX++) {
-                    int dx = chunkX - playerChunk.x();
-                    int dz = chunkZ - playerChunk.z();
+        for (int offsetY = minRenderY; offsetY <= maxRenderY; offsetY++) {
+            for (int offsetZ = -horizontalRenderRadius; offsetZ <= horizontalRenderRadius; offsetZ++) {
+                for (int offsetX = -horizontalRenderRadius; offsetX <= horizontalRenderRadius; offsetX++) {
+                    int dx = offsetX;
+                    int dz = offsetZ;
 
                     if (dx * dx + dz * dz > renderRadiusSquared) {
                         continue;
                     }
 
-                    positions.add(new ChunkPosition(chunkX, chunkY, chunkZ));
+                    offsets.add(new ChunkOffset(offsetX, offsetY, offsetZ));
                 }
             }
         }
 
-        positions.sort(Comparator.comparingInt(position -> distancePriority(position, playerChunk)));
+        offsets.sort(Comparator.comparingInt(this::distancePriority));
+        return List.copyOf(offsets);
+    }
+
+    private List<ChunkPosition> translateDesiredOffsets(ChunkPosition playerChunk) {
+        List<ChunkPosition> positions = new ArrayList<>(sortedDesiredOffsets.size());
+        for (ChunkOffset offset : sortedDesiredOffsets) {
+            positions.add(new ChunkPosition(
+                    playerChunk.x() + offset.x(),
+                    playerChunk.y() + offset.y(),
+                    playerChunk.z() + offset.z()
+            ));
+        }
         return positions;
     }
 
@@ -150,10 +170,10 @@ public class WorldStreamer implements AutoCloseable {
         return centerChunkY + halfAbove;
     }
 
-    private int distancePriority(ChunkPosition position, ChunkPosition playerChunk) {
-        int dx = position.x() - playerChunk.x();
-        int dy = position.y() - playerChunk.y();
-        int dz = position.z() - playerChunk.z();
-        return dx * dx + dz * dz + dy * dy;
+    private int distancePriority(ChunkOffset offset) {
+        return offset.x() * offset.x() + offset.z() * offset.z() + offset.y() * offset.y();
+    }
+
+    private record ChunkOffset(int x, int y, int z) {
     }
 }
