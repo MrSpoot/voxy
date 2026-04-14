@@ -10,6 +10,8 @@ import org.weaw.game.utils.GenerationEngine;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -23,14 +25,16 @@ public class WorldStreamer implements AutoCloseable {
     private final int horizontalUnloadRadius;
     private final int verticalUnloadHeight;
     private final int maxSubmissionsPerUpdate;
+    private final int maxPublishesPerUpdate;
     private final int maxQueuedChunkCount;
     private final List<ChunkOffset> sortedDesiredOffsets;
+    private final Queue<CompletedChunk> completedChunks = new ConcurrentLinkedQueue<>();
 
     private ChunkPosition cachedPlayerChunk;
     private List<ChunkPosition> cachedDesiredPositions = List.of();
 
     public WorldStreamer(ChunkManager chunkManager) {
-        this(chunkManager, 16, 20, 18, 24, 12);
+        this(chunkManager, 32, 20, 34, 24, 12, 4);
     }
 
     public WorldStreamer(
@@ -41,12 +45,33 @@ public class WorldStreamer implements AutoCloseable {
             int verticalUnloadHeight,
             int maxSubmissionsPerUpdate
     ) {
+        this(
+                chunkManager,
+                horizontalRenderRadius,
+                verticalRenderHeight,
+                horizontalUnloadRadius,
+                verticalUnloadHeight,
+                maxSubmissionsPerUpdate,
+                Math.max(1, maxSubmissionsPerUpdate / 3)
+        );
+    }
+
+    public WorldStreamer(
+            ChunkManager chunkManager,
+            int horizontalRenderRadius,
+            int verticalRenderHeight,
+            int horizontalUnloadRadius,
+            int verticalUnloadHeight,
+            int maxSubmissionsPerUpdate,
+            int maxPublishesPerUpdate
+    ) {
         this.chunkManager = chunkManager;
         this.horizontalRenderRadius = horizontalRenderRadius;
         this.verticalRenderHeight = verticalRenderHeight;
         this.horizontalUnloadRadius = Math.max(horizontalUnloadRadius, horizontalRenderRadius + 2);
         this.verticalUnloadHeight = Math.max(verticalUnloadHeight, verticalRenderHeight + 4);
         this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
+        this.maxPublishesPerUpdate = Math.max(1, maxPublishesPerUpdate);
         int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
         this.maxQueuedChunkCount = Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2);
         this.sortedDesiredOffsets = createSortedDesiredOffsets();
@@ -60,6 +85,7 @@ public class WorldStreamer implements AutoCloseable {
             cachedPlayerChunk = playerChunk;
             unloadFarChunks(playerChunk);
         }
+        publishCompletedChunks();
         submitNeededChunks();
     }
 
@@ -115,10 +141,21 @@ public class WorldStreamer implements AutoCloseable {
             Chunk chunk = new Chunk(new Vector3i(position.x(), position.y(), position.z()));
             GenerationEngine.generateChunkData(chunk);
             ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, GenerationEngine::getBlockAtWorld);
-            chunkManager.publishBuiltChunk(chunk, meshData);
+            completedChunks.offer(new CompletedChunk(chunk, meshData));
         } catch (Exception exception) {
             LOGGER.error("Chunk generation failed for {}", position, exception);
             chunkManager.clearQueuedChunk(position);
+        }
+    }
+
+    private void publishCompletedChunks() {
+        for (int published = 0; published < maxPublishesPerUpdate; published++) {
+            CompletedChunk completedChunk = completedChunks.poll();
+            if (completedChunk == null) {
+                return;
+            }
+
+            chunkManager.publishBuiltChunk(completedChunk.chunk(), completedChunk.meshData());
         }
     }
 
@@ -194,5 +231,8 @@ public class WorldStreamer implements AutoCloseable {
     }
 
     private record ChunkOffset(int x, int y, int z) {
+    }
+
+    private record CompletedChunk(Chunk chunk, ChunkMeshData meshData) {
     }
 }
