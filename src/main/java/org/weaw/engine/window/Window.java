@@ -119,7 +119,7 @@ public class Window {
         glDepthFunc(GL_GREATER);
         glClearDepth(0.0);
 
-        glfwSwapInterval(0);
+        glfwSwapInterval(1);
         glViewport(0,0,width,height);
         glfwShowWindow(id);
     }

@@ -28,6 +28,8 @@ public class Game {
 
     private double lastTime;
 
+    private boolean wireframe = false;
+
     public void run() {
         init();
         loop();
@@ -52,7 +54,7 @@ public class Game {
         // Connect renderer to window for resize notifications
         window.setRenderer(renderer);
 
-        camera = new Camera(75f,window.aspectRatio());
+        camera = new Camera(90f,window.aspectRatio());
         camera.setPosition(new Vector3f(16.0f, 12.0f, 48.0f));
 
         lastTime = System.nanoTime() / 1_000_000_000.0; // secondes
@@ -71,8 +73,10 @@ public class Game {
             handleInputModes();
 
             if (inputManager.isActionDown(InputAction.QUIT)) window.close();
-            if (inputManager.isActionDown(InputAction.ENABLE_WIREFRAME)) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            if (inputManager.isActionDown(InputAction.DISABLE_WIREFRAME)) glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            if (inputManager.isActionPressed(InputAction.TOGGLE_WIREFRAME)) {
+                glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_FILL : GL_LINE);
+                wireframe = !wireframe;
+            }
 
             if (window.isCursorLocked()) {
                 camera.update(deltaTime, inputManager);
@@ -82,12 +86,11 @@ public class Game {
             renderer.render(camera);
 
             window.update();
-            long end = System.nanoTime();
-
-            if((end - start) / 1_000_000.0 > 10.0){
-                LOGGER.warn("Game loop took too long: {} ms",(end - start) / 1_000_000.0);
-                LOGGER.warn("Memory usage: {} MB on {} MB", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1_000_000.0, Runtime.getRuntime().totalMemory() / 1_000_000.0);
-            }
+//            long end = System.nanoTime();
+//            if((end - start) / 1_000_000.0 > 10.0){
+//                LOGGER.warn("Game loop took too long: {} ms",(end - start) / 1_000_000.0);
+//                LOGGER.warn("Memory usage: {} MB on {} MB", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1_000_000.0, Runtime.getRuntime().totalMemory() / 1_000_000.0);
+//            }
         }
     }
 

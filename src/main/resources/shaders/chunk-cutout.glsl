@@ -102,6 +102,7 @@ void main() {
     if (texel.a <= 0.05) {
         discard;
     }
-    fragColor = texel;
+    //TODO REMOVE *0.8
+    fragColor = texel * 0.8;
 }
 //@endfs
