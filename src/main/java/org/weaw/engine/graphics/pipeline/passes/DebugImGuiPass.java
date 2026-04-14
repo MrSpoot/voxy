@@ -53,15 +53,15 @@ public class DebugImGuiPass implements RenderPass {
     private int maxShaderStorageBindings;
     private double lastStatsRefreshTime;
     private boolean showOverviewWindow = true;
-    private boolean showFrameWindow = true;
-    private boolean showGpuWindow = true;
+    private boolean showFrameWindow = false;
+    private boolean showGpuWindow = false;
     private boolean showArenaWindow = false;
-    private boolean showChunkProfilingWindow = true;
+    private boolean showChunkProfilingWindow = false;
     private boolean showResourcesWindow = false;
     private boolean showJvmWindow = false;
     private boolean showDeviceWindow = false;
-    private boolean showPassBreakdownWindow = true;
-    private boolean layoutRefreshPending = true;
+    private boolean showPassBreakdownWindow = false;
+    private boolean layoutRefreshPending = false;
     private int lastLayoutWidth = -1;
     private int lastLayoutHeight = -1;
     private final Map<String, ChunkProfilingHistory> chunkProfilingHistories = new HashMap<>();
@@ -226,6 +226,9 @@ public class DebugImGuiPass implements RenderPass {
             }
             if (ImGui.menuItem("Show All")) {
                 showAllWindows();
+            }
+            if (ImGui.menuItem("Hide All")) {
+                hideAllWindows();
             }
             ImGui.endMenu();
         }
@@ -613,6 +616,19 @@ public class DebugImGuiPass implements RenderPass {
         showDeviceWindow = true;
         showPassBreakdownWindow = true;
         layoutRefreshPending = true;
+    }
+
+    private void hideAllWindows() {
+        showOverviewWindow = false;
+        showFrameWindow = false;
+        showGpuWindow = false;
+        showArenaWindow = false;
+        showChunkProfilingWindow = false;
+        showResourcesWindow = false;
+        showJvmWindow = false;
+        showDeviceWindow = false;
+        showPassBreakdownWindow = false;
+        layoutRefreshPending = false;
     }
 
     private static float nanosToMillis(long nanos) {
