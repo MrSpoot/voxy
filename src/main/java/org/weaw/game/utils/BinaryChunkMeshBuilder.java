@@ -70,6 +70,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            FACE_POS_X,
                             x,
                             y,
                             z,
@@ -100,6 +101,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            FACE_NEG_X,
                             x,
                             y,
                             z,
@@ -130,6 +132,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            FACE_POS_Y,
                             x,
                             y,
                             z,
@@ -160,6 +163,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            FACE_NEG_Y,
                             x,
                             y,
                             z,
@@ -190,6 +194,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            FACE_POS_Z,
                             x,
                             y,
                             z,
@@ -220,6 +225,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            FACE_NEG_Z,
                             x,
                             y,
                             z,
@@ -267,7 +273,7 @@ public final class BinaryChunkMeshBuilder {
                     Arrays.fill(mask, (row + dy) * SIZE + col, (row + dy) * SIZE + col + width, -1);
                 }
 
-                consumer.emit(col, row, width, height, decodeTextureIndex(key));
+                consumer.emit(col, row, width, height, key);
                 col += width;
             }
         }
@@ -277,6 +283,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            int faceDirection,
             int x,
             int y,
             int z,
@@ -298,7 +305,12 @@ public final class BinaryChunkMeshBuilder {
             return -1;
         }
 
-        return encodeMaskKey(blockId, blockDefinition.getTextureIndex());
+        if (transparencyType == BlockDefinition.TransparencyType.OPAQUE) {
+            int aoPacked = VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, faceDirection);
+            return VoxelAmbientOcclusion.packOpaqueFaceData(blockDefinition.getTextureIndex(), aoPacked);
+        }
+
+        return blockDefinition.getTextureIndex();
     }
 
     private static boolean shouldEmitFace(
@@ -353,14 +365,6 @@ public final class BinaryChunkMeshBuilder {
         int worldY = chunk.getPosition().y * SIZE + neighborY;
         int worldZ = chunk.getPosition().z * SIZE + neighborZ;
         return blockProvider.getBlockAtWorld(worldX, worldY, worldZ);
-    }
-
-    private static int encodeMaskKey(short blockId, int textureIndex) {
-        return (Short.toUnsignedInt(blockId) << 16) | (textureIndex & 0xFFFF);
-    }
-
-    private static int decodeTextureIndex(int key) {
-        return key & 0xFFFF;
     }
 
     /**

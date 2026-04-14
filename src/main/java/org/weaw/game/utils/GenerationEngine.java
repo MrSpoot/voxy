@@ -56,14 +56,14 @@ public class GenerationEngine {
             return baseBlock;
         }
 
-        for (int treeX = worldX - 2; treeX <= worldX + 2; treeX++) {
-            for (int treeZ = worldZ - 2; treeZ <= worldZ + 2; treeZ++) {
-                short treeBlock = getTreeBlockAt(treeX, treeZ, worldX, worldY, worldZ);
-                if (treeBlock != AIR.getId()) {
-                    return treeBlock;
-                }
-            }
-        }
+//        for (int treeX = worldX - 2; treeX <= worldX + 2; treeX++) {
+//            for (int treeZ = worldZ - 2; treeZ <= worldZ + 2; treeZ++) {
+//                short treeBlock = getTreeBlockAt(treeX, treeZ, worldX, worldY, worldZ);
+//                if (treeBlock != AIR.getId()) {
+//                    return treeBlock;
+//                }
+//            }
+//        }
 
         return baseBlock;
     }

@@ -15,6 +15,7 @@ uniform mat4 uView;
 out vec2 vTexCoord;
 flat out int vFace;
 flat out int vTextureIndex;
+out float vAo;
 
 vec2 getQuadUv(int vertexIndex) {
     if (vertexIndex == 0) {
@@ -48,7 +49,10 @@ void main() {
     ivec4 chunkDraw = drawData[gl_BaseInstance];
     int faceIndex = chunkDraw.x + (gl_InstanceID * 2);
     int faceData = int(faces[faceIndex]);
-    int textureIndex = int(faces[faceIndex + 1]);
+    uint facePayload = faces[faceIndex + 1];
+    int textureIndex = int(facePayload & 0xFFFFu);
+    uint aoPacked = (facePayload >> 16u) & 0xFFu;
+    uint aoLevel = (aoPacked >> (uint(gl_VertexID) * 2u)) & 0x3u;
 
     int x = faceData & 31;
     int y = (faceData >> 5) & 31;
@@ -65,6 +69,7 @@ void main() {
     vTexCoord = vec2(uv.x * quadWidth, uv.y * quadHeight);
     vFace = face;
     vTextureIndex = textureIndex;
+    vAo = 1.0 - (float(aoLevel) * 0.18);
 }
 //@endvs
 
@@ -76,6 +81,7 @@ uniform sampler2DArray uBlockTextures;
 in vec2 vTexCoord;
 flat in int vFace;
 flat in int vTextureIndex;
+in float vAo;
 
 out vec4 fragColor;
 
@@ -99,5 +105,6 @@ void main() {
 
     vec2 atlasCoord = vec2((faceSlot + correctedUv.x) / 6.0, correctedUv.y);
     fragColor = texture(uBlockTextures, vec3(atlasCoord, float(vTextureIndex)));
+    fragColor.rgb *= vAo;
 }
 //@endfs

@@ -43,75 +43,111 @@ public final class LegacyChunkMeshBuilder {
                             : (blockDefinition.isCutout() ? MeshLayer.CUTOUT : MeshLayer.OPAQUE);
 
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x + 1, y, z)) {
+                        int facePayload = layer == MeshLayer.OPAQUE
+                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                        textureIndex,
+                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_POS_X)
+                                )
+                                : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
-                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), textureIndex);
+                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
-                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), textureIndex);
+                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
                         } else {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
-                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), textureIndex);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x - 1, y, z)) {
+                        int facePayload = layer == MeshLayer.OPAQUE
+                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                        textureIndex,
+                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_NEG_X)
+                                )
+                                : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
-                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), textureIndex);
+                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
-                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), textureIndex);
+                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
                         } else {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
-                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), textureIndex);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y + 1, z)) {
+                        int facePayload = layer == MeshLayer.OPAQUE
+                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                        textureIndex,
+                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_POS_Y)
+                                )
+                                : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
-                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), textureIndex);
+                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
-                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), textureIndex);
+                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
                         } else {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
-                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), textureIndex);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y - 1, z)) {
+                        int facePayload = layer == MeshLayer.OPAQUE
+                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                        textureIndex,
+                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_NEG_Y)
+                                )
+                                : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
-                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), textureIndex);
+                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
-                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), textureIndex);
+                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
                         } else {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
-                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), textureIndex);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z + 1)) {
+                        int facePayload = layer == MeshLayer.OPAQUE
+                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                        textureIndex,
+                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_POS_Z)
+                                )
+                                : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
-                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), textureIndex);
+                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
-                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), textureIndex);
+                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
                         } else {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
-                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), textureIndex);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z - 1)) {
+                        int facePayload = layer == MeshLayer.OPAQUE
+                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                        textureIndex,
+                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_NEG_Z)
+                                )
+                                : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
-                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), textureIndex);
+                            writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), facePayload);
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
-                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), textureIndex);
+                            writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), facePayload);
                         } else {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
-                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), textureIndex);
+                            writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), facePayload);
                         }
                     }
                 }
