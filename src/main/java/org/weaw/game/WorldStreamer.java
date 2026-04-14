@@ -23,13 +23,14 @@ public class WorldStreamer implements AutoCloseable {
     private final int horizontalUnloadRadius;
     private final int verticalUnloadHeight;
     private final int maxSubmissionsPerUpdate;
+    private final int maxQueuedChunkCount;
     private final List<ChunkOffset> sortedDesiredOffsets;
 
     private ChunkPosition cachedPlayerChunk;
     private List<ChunkPosition> cachedDesiredPositions = List.of();
 
     public WorldStreamer(ChunkManager chunkManager) {
-        this(chunkManager, 16, 20, 15, 24, 4);
+        this(chunkManager, 16, 20, 18, 24, 12);
     }
 
     public WorldStreamer(
@@ -43,12 +44,12 @@ public class WorldStreamer implements AutoCloseable {
         this.chunkManager = chunkManager;
         this.horizontalRenderRadius = horizontalRenderRadius;
         this.verticalRenderHeight = verticalRenderHeight;
-        this.horizontalUnloadRadius = horizontalUnloadRadius;
-        this.verticalUnloadHeight = verticalUnloadHeight;
-        this.maxSubmissionsPerUpdate = maxSubmissionsPerUpdate;
-        this.sortedDesiredOffsets = createSortedDesiredOffsets();
-
+        this.horizontalUnloadRadius = Math.max(horizontalUnloadRadius, horizontalRenderRadius + 2);
+        this.verticalUnloadHeight = Math.max(verticalUnloadHeight, verticalRenderHeight + 4);
+        this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
         int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+        this.maxQueuedChunkCount = Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2);
+        this.sortedDesiredOffsets = createSortedDesiredOffsets();
         this.executor = Executors.newFixedThreadPool(workerCount);
     }
 
@@ -87,10 +88,16 @@ public class WorldStreamer implements AutoCloseable {
     }
 
     private void submitNeededChunks() {
+        int availableQueueSlots = maxQueuedChunkCount - chunkManager.getQueuedChunkCount();
+        if (availableQueueSlots <= 0) {
+            return;
+        }
+
+        int submissionBudget = Math.min(maxSubmissionsPerUpdate, availableQueueSlots);
         int submitted = 0;
 
         for (ChunkPosition position : cachedDesiredPositions) {
-            if (submitted >= maxSubmissionsPerUpdate) {
+            if (submitted >= submissionBudget) {
                 break;
             }
 
@@ -136,7 +143,11 @@ public class WorldStreamer implements AutoCloseable {
             }
         }
 
-        offsets.sort(Comparator.comparingInt(this::distancePriority));
+        offsets.sort(
+                Comparator.comparingInt(this::horizontalDistancePriority)
+                        .thenComparingInt(this::verticalDistancePriority)
+                        .thenComparingInt(this::distancePriority)
+        );
         return List.copyOf(offsets);
     }
 
@@ -172,6 +183,14 @@ public class WorldStreamer implements AutoCloseable {
 
     private int distancePriority(ChunkOffset offset) {
         return offset.x() * offset.x() + offset.z() * offset.z() + offset.y() * offset.y();
+    }
+
+    private int horizontalDistancePriority(ChunkOffset offset) {
+        return offset.x() * offset.x() + offset.z() * offset.z();
+    }
+
+    private int verticalDistancePriority(ChunkOffset offset) {
+        return Math.abs(offset.y());
     }
 
     private record ChunkOffset(int x, int y, int z) {
