@@ -67,11 +67,13 @@ Ce sont de bons choix pour un moteur voxel simple a moyen terme.
 
 ## Points faibles
 
-### 1. Le rendu pilote encore le monde
+### 1. ~~Le rendu pilote encore le monde~~
+
+Statut: fait
 
 C'est le probleme architectural principal.
 
-Aujourd'hui, `Renderer` cree `WorldStreamer` et appelle son `update()` pendant `render()`. Cela veut dire que:
+Avant, `Renderer` creait `WorldStreamer` et appelait son `update()` pendant `render()`. Cela voulait dire que:
 
 - le streaming depend du rendu
 - l'etat du monde depend du framerate
@@ -85,9 +87,11 @@ Cette direction devient vite limitante si vous voulez:
 - un serveur plus tard
 - une simulation independante du GPU
 
-### 2. La couche `World` est encore trop pauvre
+### 2. ~~La couche `World` est encore trop pauvre~~
 
-`World` encapsule surtout `ChunkManager` et ne joue pas encore le role de source de verite metier.
+Statut: largement corrige
+
+Avant refactor, `World` encapsulait surtout `ChunkManager` et ne jouait pas encore le role de source de verite metier.
 
 Symptomes:
 
@@ -95,13 +99,15 @@ Symptomes:
 - abstraction tres mince
 - methode `containsChunk()` non fiable telle qu'elle est ecrite
 
-Aujourd'hui, `World` n'est pas encore le centre du domaine. C'est un wrapper leger.
+`World` a maintenant un vrai role de coordination, mais reste encore simple. Ce n'est plus seulement un wrapper leger.
 
-### 3. Le maillage depend encore trop de la generation statique
+### 3. ~~Le maillage depend encore trop de la generation statique~~
 
-Le meshing des chunks s'appuie encore sur `GenerationEngine::getBlockAtWorld`.
+Statut: corrige avec fallback de compatibilite
 
-Cela veut dire qu'on reste tres proche d'un monde procedurale reconstitue "a la volee", plutot que d'un monde reellement porte par son etat charge.
+Le meshing des chunks s'appuyait directement sur `GenerationEngine::getBlockAtWorld`.
+
+Le meshing passe maintenant par `World` comme `WorldBlockProvider`, avec fallback sur la generation pour les chunks non charges afin de conserver le comportement actuel aux bordures.
 
 Ce point posera probleme des qu'il faudra:
 
@@ -199,10 +205,12 @@ Ce sont les changements a faire en premier. Ils auront le plus gros impact sur l
 
 ### 1. Decoupler le streaming du rendu
 
+Statut: fait
+
 Objectif:
 
-- sortir `WorldStreamer` de `Renderer`
-- faire porter le cycle de mise a jour par la boucle de jeu ou une couche `Game/Engine`
+- ~~sortir `WorldStreamer` de `Renderer`~~
+- ~~faire porter le cycle de mise a jour par la boucle de jeu ou une couche `Game/Engine`~~
 
 Effet attendu:
 
@@ -214,11 +222,13 @@ C'est la priorite numero 1.
 
 ### 2. Faire de `World` la source de verite du monde
 
+Statut: fait sur le perimetre actuel
+
 Objectif:
 
-- donner a `World` un vrai role fonctionnel
-- y centraliser l'acces coherent aux chunks et aux blocs
-- corriger les abstractions encore factices
+- ~~donner a `World` un vrai role fonctionnel~~
+- ~~y centraliser l'acces coherent aux chunks et aux blocs~~
+- ~~corriger les abstractions encore factices~~
 
 Effet attendu:
 
@@ -228,10 +238,12 @@ Effet attendu:
 
 ### 3. Arreter de mailler contre la generation brute
 
+Statut: fait
+
 Objectif:
 
-- utiliser un `WorldBlockProvider` branche sur l'etat reel du monde
-- ne plus dependre directement de `GenerationEngine::getBlockAtWorld` pour la coherence du mesh
+- ~~utiliser un `WorldBlockProvider` branche sur l'etat reel du monde~~
+- ~~ne plus dependre directement de `GenerationEngine::getBlockAtWorld` pour la coherence du mesh~~
 
 Effet attendu:
 
@@ -319,16 +331,16 @@ Mais si le projet grossit avec plus de systemes concurrents, il faudra probablem
 
 Refactor structurel minimal:
 
-- deplacer `WorldStreamer` hors de `Renderer`
-- introduire une vraie phase `update()`
-- garder `render()` uniquement pour l'affichage
+- ~~deplacer `WorldStreamer` hors de `Renderer`~~
+- ~~introduire une vraie phase `update()`~~
+- ~~garder `render()` uniquement pour l'affichage~~
 
 ### Etape 2
 
 Refactor domaine:
 
-- enrichir `World`
-- brancher le meshing sur l'etat reel du monde
+- ~~enrichir `World`~~
+- ~~brancher le meshing sur l'etat reel du monde~~
 - preparer les futures operations sur les blocs
 
 ### Etape 3
@@ -353,8 +365,8 @@ La vraie prochaine etape n'est pas d'ajouter une optimisation GPU de plus, mais 
 
 Si vous devez choisir une seule direction maintenant, prenez celle-ci:
 
-1. decoupler streaming et rendu
-2. faire de `World` la vraie source de verite
-3. brancher le meshing sur l'etat reel du monde
+1. ~~decoupler streaming et rendu~~
+2. ~~faire de `World` la vraie source de verite~~
+3. ~~brancher le meshing sur l'etat reel du monde~~
 
-Une fois ces trois points corriges, le projet deviendra beaucoup plus evolutif.
+Ces trois points ont ete traites. Le prochain chantier prioritaire se situe maintenant dans la priorite 2.
