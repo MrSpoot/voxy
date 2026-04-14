@@ -64,26 +64,12 @@ public class Game {
         LOGGER.info("Starting game loop");
 
         while (!window.shouldClose()) {
-            long start = System.nanoTime();
             double now = System.nanoTime() / 1_000_000_000.0;
             float deltaTime = (float)(now - lastTime);
             lastTime = now;
 
-            inputManager.update();
-            handleInputModes();
-
-            if (inputManager.isActionDown(InputAction.QUIT)) window.close();
-            if (inputManager.isActionPressed(InputAction.TOGGLE_WIREFRAME)) {
-                glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_FILL : GL_LINE);
-                wireframe = !wireframe;
-            }
-
-            if (window.isCursorLocked()) {
-                camera.update(deltaTime, inputManager);
-            }
-            camera.setAspectRatio(window.aspectRatio());
-
-            renderer.render(camera);
+            update(deltaTime);
+            render();
 
             window.update();
 //            long end = System.nanoTime();
@@ -97,6 +83,11 @@ public class Game {
     private void cleanup() {
         LOGGER.info("Cleanup Renderer");
         renderer.cleanup();
+        LOGGER.info("Cleanup World");
+        if (world != null) {
+            world.close();
+            world = null;
+        }
         LOGGER.info("Cleanup Input Manager");
         inputManager.cleanup();
         LOGGER.info("Cleanup windows");
@@ -116,5 +107,30 @@ public class Game {
             window.toggleCursorLock();
             inputManager.resetMouseDelta();
         }
+    }
+
+    private void update(float deltaTime) {
+        inputManager.update();
+        handleInputModes();
+
+        if (inputManager.isActionDown(InputAction.QUIT)) {
+            window.close();
+        }
+
+        if (inputManager.isActionPressed(InputAction.TOGGLE_WIREFRAME)) {
+            glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_FILL : GL_LINE);
+            wireframe = !wireframe;
+        }
+
+        if (window.isCursorLocked()) {
+            camera.update(deltaTime, inputManager);
+        }
+        camera.setAspectRatio(window.aspectRatio());
+
+        world.update(camera.getPosition());
+    }
+
+    private void render() {
+        renderer.render(camera);
     }
 }

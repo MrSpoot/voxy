@@ -13,7 +13,6 @@ import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
 import org.weaw.game.World;
-import org.weaw.game.WorldStreamer;
 
 public class Renderer {
     private static final Logger LOGGER = LoggerFactory.getLogger(Renderer.class);
@@ -21,7 +20,6 @@ public class Renderer {
     private final Window window;
     private final World world;
     private final InputManager inputManager;
-    private WorldStreamer worldStreamer;
     // Multi-pass rendering pipeline
     private RenderPipeline pipeline;
     private RenderContext context;
@@ -41,7 +39,6 @@ public class Renderer {
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);
         context.initializeSharedChunkGeometry();
-        worldStreamer = new WorldStreamer(world.getChunkManager());
 
         // Create and configure render pipeline
         pipeline = new RenderPipeline(context);
@@ -62,7 +59,6 @@ public class Renderer {
     public void render(Camera camera) {
         // Update camera in context
         context.setCamera(camera);
-        worldStreamer.update(camera.getPosition());
 
         // Execute all passes in sequence
         pipeline.execute();
@@ -83,10 +79,6 @@ public class Renderer {
         // Cleanup rendering pipeline (cleans up all passes and FBOs)
         if (pipeline != null) {
             pipeline.cleanup();
-        }
-        if (worldStreamer != null) {
-            worldStreamer.close();
-            worldStreamer = null;
         }
 
         LOGGER.info("Renderer cleanup complete");

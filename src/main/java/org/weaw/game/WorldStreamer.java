@@ -10,6 +10,7 @@ import org.weaw.game.utils.GenerationEngine;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -19,6 +20,7 @@ public class WorldStreamer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorldStreamer.class);
 
     private final ChunkManager chunkManager;
+    private final WorldBlockProvider blockProvider;
     private final ExecutorService executor;
     private final int horizontalRenderRadius;
     private final int verticalRenderHeight;
@@ -33,12 +35,13 @@ public class WorldStreamer implements AutoCloseable {
     private ChunkPosition cachedPlayerChunk;
     private List<ChunkPosition> cachedDesiredPositions = List.of();
 
-    public WorldStreamer(ChunkManager chunkManager) {
-        this(chunkManager, 32, 20, 34, 24, 12, 4);
+    public WorldStreamer(ChunkManager chunkManager, WorldBlockProvider blockProvider) {
+        this(chunkManager, blockProvider, 32, 20, 34, 24, 12, 4);
     }
 
     public WorldStreamer(
             ChunkManager chunkManager,
+            WorldBlockProvider blockProvider,
             int horizontalRenderRadius,
             int verticalRenderHeight,
             int horizontalUnloadRadius,
@@ -47,6 +50,7 @@ public class WorldStreamer implements AutoCloseable {
     ) {
         this(
                 chunkManager,
+                blockProvider,
                 horizontalRenderRadius,
                 verticalRenderHeight,
                 horizontalUnloadRadius,
@@ -58,6 +62,7 @@ public class WorldStreamer implements AutoCloseable {
 
     public WorldStreamer(
             ChunkManager chunkManager,
+            WorldBlockProvider blockProvider,
             int horizontalRenderRadius,
             int verticalRenderHeight,
             int horizontalUnloadRadius,
@@ -66,6 +71,7 @@ public class WorldStreamer implements AutoCloseable {
             int maxPublishesPerUpdate
     ) {
         this.chunkManager = chunkManager;
+        this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
         this.horizontalRenderRadius = horizontalRenderRadius;
         this.verticalRenderHeight = verticalRenderHeight;
         this.horizontalUnloadRadius = Math.max(horizontalUnloadRadius, horizontalRenderRadius + 2);
@@ -140,7 +146,7 @@ public class WorldStreamer implements AutoCloseable {
         try {
             Chunk chunk = new Chunk(new Vector3i(position.x(), position.y(), position.z()));
             GenerationEngine.generateChunkData(chunk);
-            ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, GenerationEngine::getBlockAtWorld);
+            ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, blockProvider);
             completedChunks.offer(new CompletedChunk(chunk, meshData));
         } catch (Exception exception) {
             LOGGER.error("Chunk generation failed for {}", position, exception);
