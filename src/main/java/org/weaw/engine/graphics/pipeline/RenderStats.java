@@ -12,6 +12,10 @@ import java.util.Map;
 public class RenderStats {
     private long frameIndex;
     private long totalPassCpuTimeNs;
+    private long frameCpuTimeNs;
+    private long updateCpuTimeNs;
+    private long renderCpuTimeNs;
+    private long windowCpuTimeNs;
 
     private int drawCalls;
     private int residentMeshCount;
@@ -92,6 +96,13 @@ public class RenderStats {
         totalPassCpuTimeNs += cpuTimeNs;
     }
 
+    public void recordFrameCpuTimes(long updateCpuTimeNs, long renderCpuTimeNs, long windowCpuTimeNs, long frameCpuTimeNs) {
+        this.updateCpuTimeNs = updateCpuTimeNs;
+        this.renderCpuTimeNs = renderCpuTimeNs;
+        this.windowCpuTimeNs = windowCpuTimeNs;
+        this.frameCpuTimeNs = frameCpuTimeNs;
+    }
+
     public void recordChunkPass(String passName, ChunkPassMetrics metrics) {
         PassStats stats = getOrCreatePassStats(passName);
         stats.residentMeshCount = metrics.residentMeshCount();
@@ -111,6 +122,7 @@ public class RenderStats {
         stats.visibilityCpuTimeNs = metrics.visibilityCpuTimeNs();
         stats.batchUploadCpuTimeNs = metrics.batchUploadCpuTimeNs();
         stats.drawSubmitCpuTimeNs = metrics.drawSubmitCpuTimeNs();
+        stats.otherCpuTimeNs = metrics.otherCpuTimeNs();
         stats.textureArrayCount = metrics.textureArrayCount();
         stats.textureGpuBytes = metrics.textureGpuBytes();
 
@@ -165,6 +177,7 @@ public class RenderStats {
         private long visibilityCpuTimeNs;
         private long batchUploadCpuTimeNs;
         private long drawSubmitCpuTimeNs;
+        private long otherCpuTimeNs;
         private long textureGpuBytes;
 
         private PassStats(String name) {
@@ -192,6 +205,7 @@ public class RenderStats {
             visibilityCpuTimeNs = 0L;
             batchUploadCpuTimeNs = 0L;
             drawSubmitCpuTimeNs = 0L;
+            otherCpuTimeNs = 0L;
             textureGpuBytes = 0L;
         }
     }
@@ -214,6 +228,7 @@ public class RenderStats {
             long visibilityCpuTimeNs,
             long batchUploadCpuTimeNs,
             long drawSubmitCpuTimeNs,
+            long otherCpuTimeNs,
             int textureArrayCount,
             long textureGpuBytes
     ) {

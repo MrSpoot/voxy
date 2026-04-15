@@ -5,7 +5,7 @@ import org.lwjgl.system.MemoryUtil;
 import java.nio.IntBuffer;
 import java.util.List;
 
-import static org.lwjgl.opengl.GL15.GL_DYNAMIC_DRAW;
+import static org.lwjgl.opengl.GL15.GL_STREAM_DRAW;
 import static org.lwjgl.opengl.GL15.glBindBuffer;
 import static org.lwjgl.opengl.GL15.glBufferData;
 import static org.lwjgl.opengl.GL15.glBufferSubData;
@@ -27,7 +27,7 @@ import static org.lwjgl.opengl.GL43C.glMultiDrawArraysIndirect;
 public final class ChunkMultiDrawBatch {
     private static final int COMMAND_INTS = 4;
     private static final int DRAW_DATA_INTS = 4;
-    private static final int MIN_DRAW_CAPACITY = 256;
+    private static final int MIN_DRAW_CAPACITY = 2048;
     private static final int DRAW_METADATA_BINDING = 1;
 
     private final int metadataSsbo;
@@ -46,11 +46,11 @@ public final class ChunkMultiDrawBatch {
         this.drawDataBuffer = MemoryUtil.memAllocInt(drawCapacity * DRAW_DATA_INTS);
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, metadataSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, (long) drawCapacity * DRAW_DATA_INTS * Integer.BYTES, GL_DYNAMIC_DRAW);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, (long) drawCapacity * DRAW_DATA_INTS * Integer.BYTES, GL_STREAM_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuffer);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER, (long) drawCapacity * COMMAND_INTS * Integer.BYTES, GL_DYNAMIC_DRAW);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, (long) drawCapacity * COMMAND_INTS * Integer.BYTES, GL_STREAM_DRAW);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     }
 
@@ -79,11 +79,15 @@ public final class ChunkMultiDrawBatch {
         commandBuffer.flip();
         drawDataBuffer.flip();
 
+        long metadataBytes = (long) drawCapacity * DRAW_DATA_INTS * Integer.BYTES;
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, metadataSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, metadataBytes, GL_STREAM_DRAW);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0L, drawDataBuffer);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+        long indirectBytes = (long) drawCapacity * COMMAND_INTS * Integer.BYTES;
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuffer);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, indirectBytes, GL_STREAM_DRAW);
         glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0L, commandBuffer);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     }
@@ -168,11 +172,11 @@ public final class ChunkMultiDrawBatch {
         drawDataBuffer = MemoryUtil.memRealloc(drawDataBuffer, newCapacity * DRAW_DATA_INTS);
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, metadataSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, (long) newCapacity * DRAW_DATA_INTS * Integer.BYTES, GL_DYNAMIC_DRAW);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, (long) newCapacity * DRAW_DATA_INTS * Integer.BYTES, GL_STREAM_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuffer);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER, (long) newCapacity * COMMAND_INTS * Integer.BYTES, GL_DYNAMIC_DRAW);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, (long) newCapacity * COMMAND_INTS * Integer.BYTES, GL_STREAM_DRAW);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
 
         drawCapacity = newCapacity;

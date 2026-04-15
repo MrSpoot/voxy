@@ -19,6 +19,7 @@ public class ChunkManager {
     private final Map<ChunkPosition, ChunkUpload> chunkUploads = new LinkedHashMap<>();
     private final List<ChunkUploadDelta> chunkUploadDeltas = new ArrayList<>();
     private final Set<ChunkPosition> queuedChunks = new HashSet<>();
+    private volatile Map<ChunkPosition, ChunkUpload> chunkUploadsSnapshot = Map.of();
 
     private long chunkUploadsVersion;
     private long firstRetainedChunkUploadVersion = 1L;
@@ -33,6 +34,10 @@ public class ChunkManager {
 
     public synchronized boolean hasChunk(int chunkX, int chunkY, int chunkZ) {
         return chunks.containsKey(new ChunkPosition(chunkX, chunkY, chunkZ));
+    }
+
+    public synchronized boolean hasChunk(ChunkPosition position) {
+        return chunks.containsKey(position);
     }
 
     public synchronized List<ChunkPosition> snapshotLoadedChunkPositions() {
@@ -105,6 +110,25 @@ public class ChunkManager {
                 position,
                 upload
         );
+        refreshChunkUploadsSnapshot();
+    }
+
+    public synchronized boolean publishRemeshedChunk(ChunkPosition position, ChunkMeshData meshData) {
+        Chunk existingChunk = chunks.get(position);
+        if (existingChunk == null) {
+            return false;
+        }
+
+        chunkMeshes.put(position, meshData);
+        ChunkUpload upload = new ChunkUpload(position, existingChunk, meshData);
+        ChunkUpload previousUpload = chunkUploads.put(position, upload);
+        recordChunkUploadDelta(
+                previousUpload == null ? ChunkUploadChangeType.ADDED : ChunkUploadChangeType.UPDATED,
+                position,
+                upload
+        );
+        refreshChunkUploadsSnapshot();
+        return true;
     }
 
     public synchronized void unloadChunk(ChunkPosition position) {
@@ -114,6 +138,7 @@ public class ChunkManager {
 
         if (chunkUploads.remove(position) != null) {
             recordChunkUploadDelta(ChunkUploadChangeType.REMOVED, position, null);
+            refreshChunkUploadsSnapshot();
         }
     }
 
@@ -121,8 +146,8 @@ public class ChunkManager {
         return chunkUploadsVersion;
     }
 
-    public synchronized Map<ChunkPosition, ChunkUpload> snapshotChunkUploads() {
-        return Collections.unmodifiableMap(new LinkedHashMap<>(chunkUploads));
+    public Map<ChunkPosition, ChunkUpload> snapshotChunkUploads() {
+        return chunkUploadsSnapshot;
     }
 
     public synchronized ChunkUploadSync snapshotChunkUploadSync(long lastSeenVersion) {
@@ -162,6 +187,11 @@ public class ChunkManager {
         );
     }
 
+    public synchronized Chunk copyChunk(ChunkPosition position) {
+        Chunk chunk = chunks.get(position);
+        return chunk == null ? null : chunk.copy();
+    }
+
     private void recordChunkUploadDelta(ChunkUploadChangeType changeType, ChunkPosition position, ChunkUpload upload) {
         chunkUploadsVersion++;
         chunkUploadDeltas.add(new ChunkUploadDelta(chunkUploadsVersion, changeType, position, upload));
@@ -181,6 +211,10 @@ public class ChunkManager {
         firstRetainedChunkUploadVersion = chunkUploadDeltas.isEmpty()
                 ? (chunkUploadsVersion + 1)
                 : chunkUploadDeltas.get(0).version();
+    }
+
+    private void refreshChunkUploadsSnapshot() {
+        chunkUploadsSnapshot = Collections.unmodifiableMap(new LinkedHashMap<>(chunkUploads));
     }
 
     public record ChunkPosition(int x, int y, int z) {

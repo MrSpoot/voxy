@@ -164,6 +164,24 @@ public class Chunk {
         return isUniform;
     }
 
+    public Chunk copy() {
+        Chunk copy = new Chunk(position);
+        copy.isUniform = isUniform;
+        copy.uniformBlockId = uniformBlockId;
+
+        if (isUniform) {
+            return copy;
+        }
+
+        copy.palette = Arrays.copyOf(palette, palette.length);
+        copy.paletteCounts = Arrays.copyOf(paletteCounts, paletteCounts.length);
+        copy.paletteSize = paletteSize;
+        copy.paletteIndexMap = new HashMap<>(paletteIndexMap);
+        copy.bitsPerBlock = bitsPerBlock;
+        copy.data = Arrays.copyOf(data, data.length);
+        return copy;
+    }
+
     public boolean isOutOfBounds(int x, int y, int z) {
         return (x < 0 || y < 0 || z < 0 || x >= SIZE || y >= SIZE || z >= SIZE);
     }

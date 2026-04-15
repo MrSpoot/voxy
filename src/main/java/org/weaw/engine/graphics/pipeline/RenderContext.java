@@ -47,6 +47,7 @@ public class RenderContext {
     private ChunkFaceArena transparentChunkFaceArena;
     private long chunkVisibilityFrameIndex = Long.MIN_VALUE;
     private long chunkVisibilityUploadsVersion = Long.MIN_VALUE;
+    private long chunkVisibilityCameraVersion = Long.MIN_VALUE;
     private final Set<ChunkPosition> visibleChunkPositions = new HashSet<>();
 
     public RenderContext(int viewportWidth, int viewportHeight) {
@@ -119,6 +120,7 @@ public class RenderContext {
         }
         chunkVisibilityFrameIndex = Long.MIN_VALUE;
         chunkVisibilityUploadsVersion = Long.MIN_VALUE;
+        chunkVisibilityCameraVersion = Long.MIN_VALUE;
         visibleChunkPositions.clear();
         renderTargets.values().forEach(RenderTarget::cleanup);
         renderTargets.clear();

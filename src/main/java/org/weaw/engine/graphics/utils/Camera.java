@@ -1,7 +1,6 @@
 package org.weaw.engine.graphics.utils;
 
 import lombok.Getter;
-import lombok.Setter;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -17,10 +16,11 @@ public class Camera {
     @Getter
     private final float fov;
     @Getter
-    @Setter
     private float aspectRatio;
     private final float near = 0.1f;
     private final float far = 2500f;
+    @Getter
+    private long visibilityVersion;
 
     private final Vector3f position = new Vector3f();
     private float pitch = 0; // top/bot
@@ -60,13 +60,21 @@ public class Camera {
     }
 
     public void move(Vector3f offset) {
+        if (offset.lengthSquared() == 0.0f) {
+            return;
+        }
         position.add(offset);
+        visibilityVersion++;
     }
 
     public void rotate(float yawDelta, float pitchDelta) {
+        if (yawDelta == 0.0f && pitchDelta == 0.0f) {
+            return;
+        }
         yaw += yawDelta;
         pitch += pitchDelta;
         pitch = Math.max(-89f, Math.min(89f, pitch));
+        visibilityVersion++;
     }
 
     public void moveRelative(Vector3f localOffset) {
@@ -76,6 +84,7 @@ public class Camera {
         position.add(new Vector3f(forward).mul(localOffset.z));
         position.add(new Vector3f(right).mul(localOffset.x));
         position.y += localOffset.y;
+        visibilityVersion++;
     }
 
     public Vector3f getUp(){
@@ -157,6 +166,15 @@ public class Camera {
 
     public void setPosition(Vector3f position) {
         this.position.set(position);
+        visibilityVersion++;
+    }
+
+    public void setAspectRatio(float aspectRatio) {
+        if (Float.compare(this.aspectRatio, aspectRatio) == 0) {
+            return;
+        }
+        this.aspectRatio = aspectRatio;
+        visibilityVersion++;
     }
 
     public Vector3f getPosition() {

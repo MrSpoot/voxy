@@ -5,22 +5,29 @@ import org.joml.Vector3i;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.game.ChunkManager.ChunkPosition;
-import org.weaw.game.utils.GenerationEngine;
+import org.weaw.game.generation.WorldGenerator;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class WorldStreamer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorldStreamer.class);
+    private static final long DEFAULT_UPDATE_BUDGET_NS = 2_000_000L;
 
     private final ChunkManager chunkManager;
     private final WorldBlockProvider blockProvider;
+    private final WorldGenerator worldGenerator;
     private final ExecutorService executor;
     private final int horizontalRenderRadius;
     private final int verticalRenderHeight;
@@ -29,19 +36,41 @@ public class WorldStreamer implements AutoCloseable {
     private final int maxSubmissionsPerUpdate;
     private final int maxPublishesPerUpdate;
     private final int maxQueuedChunkCount;
+    private final long maxUpdateBudgetNs;
     private final List<ChunkOffset> sortedDesiredOffsets;
     private final Queue<CompletedChunk> completedChunks = new ConcurrentLinkedQueue<>();
+    private final Object taskLock = new Object();
+    private final Map<ChunkPosition, ChunkBuildTask> activeChunkTasks = new LinkedHashMap<>();
+    private final Set<ChunkPosition> dirtyChunkPositions = new LinkedHashSet<>();
+    private final Set<ChunkPosition> desiredChunkPositions = new HashSet<>();
 
     private ChunkPosition cachedPlayerChunk;
     private List<ChunkPosition> cachedDesiredPositions = List.of();
+    private List<ChunkPosition> pendingUnloadPositions = List.of();
+    private ChunkPosition pendingUnloadPlayerChunk;
+    private int desiredSubmissionCursor;
+    private int unloadCursor;
+    private long nextBuildToken = 1L;
 
-    public WorldStreamer(ChunkManager chunkManager, WorldBlockProvider blockProvider) {
-        this(chunkManager, blockProvider, 32, 20, 34, 24, 12, 4);
+    public WorldStreamer(ChunkManager chunkManager, WorldBlockProvider blockProvider, WorldGenerator worldGenerator) {
+        this(
+                chunkManager,
+                blockProvider,
+                worldGenerator,
+                32,
+                20,
+                34,
+                24,
+                12,
+                4,
+                resolveUpdateBudgetNs()
+        );
     }
 
     public WorldStreamer(
             ChunkManager chunkManager,
             WorldBlockProvider blockProvider,
+            WorldGenerator worldGenerator,
             int horizontalRenderRadius,
             int verticalRenderHeight,
             int horizontalUnloadRadius,
@@ -51,33 +80,39 @@ public class WorldStreamer implements AutoCloseable {
         this(
                 chunkManager,
                 blockProvider,
+                worldGenerator,
                 horizontalRenderRadius,
                 verticalRenderHeight,
                 horizontalUnloadRadius,
                 verticalUnloadHeight,
                 maxSubmissionsPerUpdate,
-                Math.max(1, maxSubmissionsPerUpdate / 3)
+                Math.max(1, maxSubmissionsPerUpdate / 3),
+                resolveUpdateBudgetNs()
         );
     }
 
     public WorldStreamer(
             ChunkManager chunkManager,
             WorldBlockProvider blockProvider,
+            WorldGenerator worldGenerator,
             int horizontalRenderRadius,
             int verticalRenderHeight,
             int horizontalUnloadRadius,
             int verticalUnloadHeight,
             int maxSubmissionsPerUpdate,
-            int maxPublishesPerUpdate
+            int maxPublishesPerUpdate,
+            long maxUpdateBudgetNs
     ) {
         this.chunkManager = chunkManager;
         this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
+        this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
         this.horizontalRenderRadius = horizontalRenderRadius;
         this.verticalRenderHeight = verticalRenderHeight;
         this.horizontalUnloadRadius = Math.max(horizontalUnloadRadius, horizontalRenderRadius + 2);
         this.verticalUnloadHeight = Math.max(verticalUnloadHeight, verticalRenderHeight + 4);
         this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
         this.maxPublishesPerUpdate = Math.max(1, maxPublishesPerUpdate);
+        this.maxUpdateBudgetNs = Math.max(250_000L, maxUpdateBudgetNs);
         int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
         this.maxQueuedChunkCount = Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2);
         this.sortedDesiredOffsets = createSortedDesiredOffsets();
@@ -85,83 +120,243 @@ public class WorldStreamer implements AutoCloseable {
     }
 
     public void update(Vector3f playerPosition) {
+        long deadlineNs = System.nanoTime() + maxUpdateBudgetNs;
         ChunkPosition playerChunk = toChunkPosition(playerPosition);
         if (!playerChunk.equals(cachedPlayerChunk)) {
             cachedDesiredPositions = translateDesiredOffsets(playerChunk);
+            synchronized (taskLock) {
+                desiredChunkPositions.clear();
+                desiredChunkPositions.addAll(cachedDesiredPositions);
+            }
             cachedPlayerChunk = playerChunk;
-            unloadFarChunks(playerChunk);
+            desiredSubmissionCursor = 0;
+            pendingUnloadPlayerChunk = playerChunk;
+            pendingUnloadPositions = chunkManager.snapshotLoadedChunkPositions();
+            unloadCursor = 0;
+            cancelObsoleteLoadTasks();
         }
-        publishCompletedChunks();
-        submitNeededChunks();
+        processPendingUnloads(deadlineNs);
+        publishCompletedChunks(deadlineNs);
+        submitDirtyChunks(deadlineNs);
+        submitNeededChunks(deadlineNs);
     }
 
     @Override
     public void close() {
+        synchronized (taskLock) {
+            activeChunkTasks.clear();
+            dirtyChunkPositions.clear();
+            desiredChunkPositions.clear();
+        }
         executor.shutdownNow();
     }
 
-    private void unloadFarChunks(ChunkPosition playerChunk) {
-        int minUnloadY = getMinChunkY(playerChunk.y(), verticalUnloadHeight);
-        int maxUnloadY = getMaxChunkY(playerChunk.y(), verticalUnloadHeight);
+    public int getPendingTaskCount() {
+        synchronized (taskLock) {
+            return activeChunkTasks.size();
+        }
+    }
+
+    public void markChunkDirty(ChunkPosition position) {
+        synchronized (taskLock) {
+            dirtyChunkPositions.add(position);
+        }
+    }
+
+    private void processPendingUnloads(long deadlineNs) {
+        if (pendingUnloadPositions.isEmpty() || pendingUnloadPlayerChunk == null) {
+            return;
+        }
+
+        int minUnloadY = getMinChunkY(pendingUnloadPlayerChunk.y(), verticalUnloadHeight);
+        int maxUnloadY = getMaxChunkY(pendingUnloadPlayerChunk.y(), verticalUnloadHeight);
         int unloadRadiusSquared = horizontalUnloadRadius * horizontalUnloadRadius;
 
-        for (ChunkPosition position : chunkManager.snapshotLoadedChunkPositions()) {
-            int dx = position.x() - playerChunk.x();
-            int dz = position.z() - playerChunk.z();
+        while (unloadCursor < pendingUnloadPositions.size()) {
+            ChunkPosition position = pendingUnloadPositions.get(unloadCursor++);
+            int dx = position.x() - pendingUnloadPlayerChunk.x();
+            int dz = position.z() - pendingUnloadPlayerChunk.z();
 
             boolean outsideCylinder = (dx * dx + dz * dz) > unloadRadiusSquared
                     || position.y() < minUnloadY
                     || position.y() > maxUnloadY;
 
             if (outsideCylinder) {
+                cancelTask(position);
+                removeDirtyChunk(position);
                 chunkManager.unloadChunk(position);
             }
+
+            if (System.nanoTime() >= deadlineNs) {
+                return;
+            }
+        }
+
+        if (unloadCursor >= pendingUnloadPositions.size()) {
+            pendingUnloadPositions = List.of();
+            pendingUnloadPlayerChunk = null;
+            unloadCursor = 0;
         }
     }
 
-    private void submitNeededChunks() {
-        int availableQueueSlots = maxQueuedChunkCount - chunkManager.getQueuedChunkCount();
+    private void submitNeededChunks(long deadlineNs) {
+        if (cachedDesiredPositions.isEmpty() || System.nanoTime() >= deadlineNs) {
+            return;
+        }
+
+        int availableQueueSlots = maxQueuedChunkCount - getPendingTaskCount();
         if (availableQueueSlots <= 0) {
             return;
         }
 
         int submissionBudget = Math.min(maxSubmissionsPerUpdate, availableQueueSlots);
         int submitted = 0;
+        int scanned = 0;
 
-        for (ChunkPosition position : cachedDesiredPositions) {
-            if (submitted >= submissionBudget) {
-                break;
+        while (submitted < submissionBudget && scanned < cachedDesiredPositions.size()) {
+            ChunkPosition position = cachedDesiredPositions.get(desiredSubmissionCursor);
+            desiredSubmissionCursor = (desiredSubmissionCursor + 1) % cachedDesiredPositions.size();
+            scanned++;
+
+            if (hasActiveTask(position) || chunkManager.hasChunk(position)) {
+                if (System.nanoTime() >= deadlineNs) {
+                    return;
+                }
+                continue;
             }
 
             if (!chunkManager.tryMarkChunkQueued(position)) {
+                if (System.nanoTime() >= deadlineNs) {
+                    return;
+                }
+                continue;
+            }
+
+            ChunkBuildTask task = registerTask(position, ChunkTaskType.LOAD);
+            if (task == null) {
+                chunkManager.clearQueuedChunk(position);
+                if (System.nanoTime() >= deadlineNs) {
+                    return;
+                }
                 continue;
             }
 
             submitted++;
-            executor.submit(() -> buildChunk(position));
+            executor.submit(() -> buildChunk(task, null));
+
+            if (System.nanoTime() >= deadlineNs) {
+                return;
+            }
         }
     }
 
-    private void buildChunk(ChunkPosition position) {
+    private void submitDirtyChunks(long deadlineNs) {
+        if (System.nanoTime() >= deadlineNs) {
+            return;
+        }
+
+        int availableQueueSlots = maxQueuedChunkCount - getPendingTaskCount();
+        if (availableQueueSlots <= 0) {
+            return;
+        }
+
+        int submissionBudget = Math.min(maxSubmissionsPerUpdate, availableQueueSlots);
+        int submitted = 0;
+        List<ChunkPosition> dirtySnapshot = snapshotDirtyChunks();
+
+        for (ChunkPosition position : dirtySnapshot) {
+            if (submitted >= submissionBudget || System.nanoTime() >= deadlineNs) {
+                return;
+            }
+            if (hasActiveTask(position)) {
+                continue;
+            }
+
+            Chunk chunkSnapshot = chunkManager.copyChunk(position);
+            if (chunkSnapshot == null) {
+                removeDirtyChunk(position);
+                continue;
+            }
+
+            ChunkBuildTask task = registerTask(position, ChunkTaskType.REMESH);
+            if (task == null) {
+                continue;
+            }
+
+            removeDirtyChunk(position);
+            submitted++;
+            executor.submit(() -> buildChunk(task, chunkSnapshot));
+        }
+    }
+
+    private void buildChunk(ChunkBuildTask task, Chunk chunkSnapshot) {
+        if (!transitionTaskState(task.position(), task.token(), ChunkTaskState.QUEUED, ChunkTaskState.BUILDING)) {
+            return;
+        }
+
         try {
-            Chunk chunk = new Chunk(new Vector3i(position.x(), position.y(), position.z()));
-            GenerationEngine.generateChunkData(chunk);
+            Chunk chunk = chunkSnapshot;
+            if (task.type() == ChunkTaskType.LOAD) {
+                chunk = new Chunk(new Vector3i(task.position().x(), task.position().y(), task.position().z()));
+                worldGenerator.generateChunkData(chunk);
+            }
+
             ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, blockProvider);
-            completedChunks.offer(new CompletedChunk(chunk, meshData));
+            completedChunks.offer(new CompletedChunk(task.position(), task.token(), task.type(), chunk, meshData));
         } catch (Exception exception) {
-            LOGGER.error("Chunk generation failed for {}", position, exception);
-            chunkManager.clearQueuedChunk(position);
+            LOGGER.error("Chunk build failed for {} ({})", task.position(), task.type(), exception);
+            failTask(task);
         }
     }
 
-    private void publishCompletedChunks() {
+    private void publishCompletedChunks(long deadlineNs) {
         for (int published = 0; published < maxPublishesPerUpdate; published++) {
+            if (System.nanoTime() >= deadlineNs) {
+                return;
+            }
+
             CompletedChunk completedChunk = completedChunks.poll();
             if (completedChunk == null) {
                 return;
             }
 
-            chunkManager.publishBuiltChunk(completedChunk.chunk(), completedChunk.meshData());
+            ChunkBuildTask task = getActiveTask(completedChunk.position());
+            if (task == null || task.token() != completedChunk.token() || task.type() != completedChunk.type()) {
+                continue;
+            }
+
+            if (task.type() == ChunkTaskType.LOAD && !isDesiredChunkPosition(task.position())) {
+                cancelTask(task.position());
+                continue;
+            }
+
+            if (!transitionTaskToReady(task.position(), task.token())) {
+                continue;
+            }
+
+            boolean publishedChunk = true;
+            if (task.type() == ChunkTaskType.LOAD) {
+                chunkManager.publishBuiltChunk(completedChunk.chunk(), completedChunk.meshData());
+            } else {
+                publishedChunk = chunkManager.publishRemeshedChunk(completedChunk.position(), completedChunk.meshData());
+            }
+
+            completePublishedTask(task.position(), task.token(), publishedChunk);
+        }
+    }
+
+    private void cancelObsoleteLoadTasks() {
+        List<ChunkPosition> obsoletePositions = new ArrayList<>();
+        synchronized (taskLock) {
+            for (ChunkBuildTask task : activeChunkTasks.values()) {
+                if (task.type() == ChunkTaskType.LOAD && !desiredChunkPositions.contains(task.position())) {
+                    obsoletePositions.add(task.position());
+                }
+            }
+        }
+
+        for (ChunkPosition position : obsoletePositions) {
+            cancelTask(position);
         }
     }
 
@@ -236,9 +431,192 @@ public class WorldStreamer implements AutoCloseable {
         return Math.abs(offset.y());
     }
 
+    private static long resolveUpdateBudgetNs() {
+        Long configuredBudgetMs = Long.getLong("voxy.worldUpdateBudgetMs");
+        if (configuredBudgetMs != null) {
+            return configuredBudgetMs * 1_000_000L;
+        }
+        return Long.getLong("voxy.worldUpdateBudgetNs", DEFAULT_UPDATE_BUDGET_NS);
+    }
+
+    private ChunkBuildTask registerTask(ChunkPosition position, ChunkTaskType type) {
+        synchronized (taskLock) {
+            if (activeChunkTasks.containsKey(position)) {
+                return null;
+            }
+
+            ChunkBuildTask task = new ChunkBuildTask(position, nextBuildToken++, type, ChunkTaskState.QUEUED);
+            activeChunkTasks.put(position, task);
+            return task;
+        }
+    }
+
+    private boolean hasActiveTask(ChunkPosition position) {
+        synchronized (taskLock) {
+            return activeChunkTasks.containsKey(position);
+        }
+    }
+
+    private ChunkBuildTask getActiveTask(ChunkPosition position) {
+        synchronized (taskLock) {
+            return activeChunkTasks.get(position);
+        }
+    }
+
+    private void cancelTask(ChunkPosition position) {
+        ChunkBuildTask task;
+        synchronized (taskLock) {
+            task = activeChunkTasks.remove(position);
+            if (task == null) {
+                return;
+            }
+            task.setState(ChunkTaskState.OBSOLETE);
+        }
+
+        if (task.type() == ChunkTaskType.LOAD) {
+            chunkManager.clearQueuedChunk(position);
+        }
+    }
+
+    private void failTask(ChunkBuildTask task) {
+        boolean removed;
+        synchronized (taskLock) {
+            ChunkBuildTask currentTask = activeChunkTasks.get(task.position());
+            removed = currentTask != null && currentTask.token() == task.token();
+            if (removed) {
+                currentTask.setState(ChunkTaskState.OBSOLETE);
+                activeChunkTasks.remove(task.position());
+            }
+        }
+
+        if (removed && task.type() == ChunkTaskType.LOAD) {
+            chunkManager.clearQueuedChunk(task.position());
+        }
+        if (removed && task.type() == ChunkTaskType.REMESH) {
+            markChunkDirty(task.position());
+        }
+    }
+
+    private boolean transitionTaskState(
+            ChunkPosition position,
+            long token,
+            ChunkTaskState expectedState,
+            ChunkTaskState nextState
+    ) {
+        synchronized (taskLock) {
+            ChunkBuildTask task = activeChunkTasks.get(position);
+            if (task == null || task.token() != token || task.state() != expectedState) {
+                return false;
+            }
+            task.setState(nextState);
+            return true;
+        }
+    }
+
+    private boolean transitionTaskToReady(ChunkPosition position, long token) {
+        synchronized (taskLock) {
+            ChunkBuildTask task = activeChunkTasks.get(position);
+            if (task == null || task.token() != token) {
+                return false;
+            }
+            if (task.state() != ChunkTaskState.BUILDING && task.state() != ChunkTaskState.QUEUED) {
+                return false;
+            }
+            task.setState(ChunkTaskState.READY);
+            return true;
+        }
+    }
+
+    private void completePublishedTask(ChunkPosition position, long token, boolean publishedChunk) {
+        synchronized (taskLock) {
+            ChunkBuildTask task = activeChunkTasks.get(position);
+            if (task == null || task.token() != token) {
+                return;
+            }
+
+            task.setState(publishedChunk ? ChunkTaskState.PUBLISHED : ChunkTaskState.OBSOLETE);
+            activeChunkTasks.remove(position);
+        }
+
+        if (!publishedChunk) {
+            markChunkDirty(position);
+        }
+    }
+
+    private boolean isDesiredChunkPosition(ChunkPosition position) {
+        synchronized (taskLock) {
+            return desiredChunkPositions.contains(position);
+        }
+    }
+
+    private List<ChunkPosition> snapshotDirtyChunks() {
+        synchronized (taskLock) {
+            return List.copyOf(dirtyChunkPositions);
+        }
+    }
+
+    private void removeDirtyChunk(ChunkPosition position) {
+        synchronized (taskLock) {
+            dirtyChunkPositions.remove(position);
+        }
+    }
+
     private record ChunkOffset(int x, int y, int z) {
     }
 
-    private record CompletedChunk(Chunk chunk, ChunkMeshData meshData) {
+    private record CompletedChunk(
+            ChunkPosition position,
+            long token,
+            ChunkTaskType type,
+            Chunk chunk,
+            ChunkMeshData meshData
+    ) {
+    }
+
+    private enum ChunkTaskType {
+        LOAD,
+        REMESH
+    }
+
+    private enum ChunkTaskState {
+        QUEUED,
+        BUILDING,
+        READY,
+        PUBLISHED,
+        OBSOLETE
+    }
+
+    private static final class ChunkBuildTask {
+        private final ChunkPosition position;
+        private final long token;
+        private final ChunkTaskType type;
+        private ChunkTaskState state;
+
+        private ChunkBuildTask(ChunkPosition position, long token, ChunkTaskType type, ChunkTaskState state) {
+            this.position = position;
+            this.token = token;
+            this.type = type;
+            this.state = state;
+        }
+
+        private ChunkPosition position() {
+            return position;
+        }
+
+        private long token() {
+            return token;
+        }
+
+        private ChunkTaskType type() {
+            return type;
+        }
+
+        private ChunkTaskState state() {
+            return state;
+        }
+
+        private void setState(ChunkTaskState state) {
+            this.state = state;
+        }
     }
 }

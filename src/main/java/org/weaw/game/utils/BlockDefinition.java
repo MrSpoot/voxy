@@ -47,7 +47,7 @@ public final class BlockDefinition {
 
     public short getId() {
         if (runtimeId < 0) {
-            BlockRegistry.initialize();
+            throw new IllegalStateException("Block runtime id not assigned for " + stableId + ". Initialize BlockRegistry first.");
         }
         return runtimeId;
     }

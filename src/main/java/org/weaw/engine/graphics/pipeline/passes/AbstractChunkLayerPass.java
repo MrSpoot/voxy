@@ -28,6 +28,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     private static final String CHUNK_DRAW_MODE = System.getProperty("voxy.chunkDrawMode", "indirect");
     private static final boolean USE_MULTI_DRAW = !"legacy".equalsIgnoreCase(CHUNK_DRAW_MODE);
     private static final String DRAW_SUBMISSION_MODE = USE_MULTI_DRAW ? "Indirect" : "Legacy";
+    private static final int INITIAL_DRAW_BATCH_CAPACITY = Integer.getInteger("voxy.chunkBatchInitialCapacity", 8192);
 
     private final ChunkManager chunkManager;
     private final String name;
@@ -60,7 +61,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     @Override
     public final void create() {
         shader = new Shader(shaderPath);
-        multiDrawBatch = new ChunkMultiDrawBatch(512);
+        multiDrawBatch = new ChunkMultiDrawBatch(INITIAL_DRAW_BATCH_CAPACITY);
     }
 
     @Override
@@ -127,6 +128,10 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         arena.unbind();
         shader.unbind();
 
+        long accountedCpuTimeNs = syncCpuTimeNs + visibilityCpuTimeNs + batchUploadCpuTimeNs + drawSubmitCpuTimeNs;
+        long totalChunkPassCpuTimeNs = System.nanoTime() - syncStartNs;
+        long otherCpuTimeNs = Math.max(0L, totalChunkPassCpuTimeNs - accountedCpuTimeNs);
+
         int drawCalls = visibleDraws.isEmpty() ? 0 : (USE_MULTI_DRAW ? 1 : visibleDraws.size());
         context.getRenderStats().recordChunkPass(
                 getName(),
@@ -148,6 +153,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                         visibilityCpuTimeNs,
                         batchUploadCpuTimeNs,
                         drawSubmitCpuTimeNs,
+                        otherCpuTimeNs,
                         includeSharedTextureStats() && textureManager != null && textureManager.getTextureArrayId() != 0 ? 1 : 0,
                         includeSharedTextureStats() && textureManager != null ? textureManager.getEstimatedGpuBytes() : 0L
                 )
@@ -273,9 +279,9 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     }
 
     private Set<ChunkPosition> resolveVisibleChunkPositions(RenderContext context) {
-        long currentFrameIndex = context.getRenderStats().getFrameIndex();
         long currentUploadsVersion = chunkManager.getChunkUploadsVersion();
-        if (context.getChunkVisibilityFrameIndex() == currentFrameIndex
+        long currentCameraVersion = context.getCamera().getVisibilityVersion();
+        if (context.getChunkVisibilityCameraVersion() == currentCameraVersion
                 && context.getChunkVisibilityUploadsVersion() == currentUploadsVersion) {
             return context.getVisibleChunkPositions();
         }
@@ -283,8 +289,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         Set<ChunkPosition> visibleChunkPositions = context.getVisibleChunkPositions();
         visibleChunkPositions.clear();
 
-        for (Map.Entry<ChunkPosition, ChunkUpload> entry : chunkManager.snapshotChunkUploads().entrySet()) {
-            ChunkPosition position = entry.getKey();
+        for (ChunkPosition position : chunkManager.snapshotChunkUploads().keySet()) {
             float minX = position.x() * Chunk.SIZE;
             float minY = position.y() * Chunk.SIZE;
             float minZ = position.z() * Chunk.SIZE;
@@ -301,7 +306,8 @@ abstract class AbstractChunkLayerPass implements RenderPass {
             }
         }
 
-        context.setChunkVisibilityFrameIndex(currentFrameIndex);
+        context.setChunkVisibilityFrameIndex(context.getRenderStats().getFrameIndex());
+        context.setChunkVisibilityCameraVersion(currentCameraVersion);
         context.setChunkVisibilityUploadsVersion(currentUploadsVersion);
         return visibleChunkPositions;
     }

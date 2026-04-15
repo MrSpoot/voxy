@@ -6,13 +6,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.engine.utils.FileReader;
 import org.weaw.game.utils.BlockDefinition;
-import org.weaw.game.utils.BlockRegistry;
-import org.weaw.game.utils.Blocks;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 import static org.lwjgl.opengl.GL11.GL_LINEAR;
@@ -42,14 +41,19 @@ import static org.lwjgl.stb.STBImage.stbi_load_from_memory;
 public class BlockTextureManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(BlockTextureManager.class);
 
+    private final List<BlockDefinition> blockDefinitions;
     private int textureArrayId;
     private int textureWidth;
     private int textureHeight;
     private int layerCount;
 
+    public BlockTextureManager(Collection<BlockDefinition> blockDefinitions) {
+        this.blockDefinitions = List.copyOf(blockDefinitions);
+    }
+
     public void create() {
         List<BlockDefinition> texturedBlocks = new ArrayList<>();
-        for (BlockDefinition blockDefinition : BlockRegistry.getRegisteredBlocks().values()) {
+        for (BlockDefinition blockDefinition : blockDefinitions) {
             if (blockDefinition.getTexturePath() != null) {
                 texturedBlocks.add(blockDefinition);
             } else {
@@ -102,7 +106,6 @@ public class BlockTextureManager {
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
         glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
-        Blocks.AIR.setTextureIndex(0);
         LOGGER.info("Block texture array created with {} layers", layerCount);
     }
 

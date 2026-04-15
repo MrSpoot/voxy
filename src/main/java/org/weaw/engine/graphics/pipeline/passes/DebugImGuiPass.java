@@ -345,9 +345,10 @@ public class DebugImGuiPass implements RenderPass {
             ImGui.text(String.format("Sync: %.3f ms | Visibility: %.3f ms",
                     nanosToMillis(passStats.getSyncCpuTimeNs()),
                     nanosToMillis(passStats.getVisibilityCpuTimeNs())));
-            ImGui.text(String.format("Upload: %.3f ms | Submit: %.3f ms",
+            ImGui.text(String.format("Upload: %.3f ms | Submit: %.3f ms | Other: %.3f ms",
                     nanosToMillis(passStats.getBatchUploadCpuTimeNs()),
-                    nanosToMillis(passStats.getDrawSubmitCpuTimeNs())));
+                    nanosToMillis(passStats.getDrawSubmitCpuTimeNs()),
+                    nanosToMillis(passStats.getOtherCpuTimeNs())));
             if (history != null && history.sampleCount() > 1) {
                 float maxPhaseMs = Math.max(0.25f, history.maxPhaseMs());
                 float maxTotalMs = Math.max(0.25f, history.maxTotalMs());
@@ -381,6 +382,13 @@ public class DebugImGuiPass implements RenderPass {
                         maxPhaseMs);
                 ImGui.plotLines("Submit (ms)##" + passStats.getName(),
                         history.submitHistory(),
+                        history.sampleCount(),
+                        history.offset(),
+                        "",
+                        0.0f,
+                        maxPhaseMs);
+                ImGui.plotLines("Other (ms)##" + passStats.getName(),
+                        history.otherHistory(),
                         history.sampleCount(),
                         history.offset(),
                         "",
@@ -572,7 +580,8 @@ public class DebugImGuiPass implements RenderPass {
                     nanosToMillis(passStats.getSyncCpuTimeNs()),
                     nanosToMillis(passStats.getVisibilityCpuTimeNs()),
                     nanosToMillis(passStats.getBatchUploadCpuTimeNs()),
-                    nanosToMillis(passStats.getDrawSubmitCpuTimeNs())
+                    nanosToMillis(passStats.getDrawSubmitCpuTimeNs()),
+                    nanosToMillis(passStats.getOtherCpuTimeNs())
             );
         }
 
@@ -669,6 +678,7 @@ public class DebugImGuiPass implements RenderPass {
         private final float[] visibilityHistory;
         private final float[] uploadHistory;
         private final float[] submitHistory;
+        private final float[] otherHistory;
         private final float[] totalHistory;
         private int writeIndex;
         private int sampleCount;
@@ -678,15 +688,17 @@ public class DebugImGuiPass implements RenderPass {
             this.visibilityHistory = new float[capacity];
             this.uploadHistory = new float[capacity];
             this.submitHistory = new float[capacity];
+            this.otherHistory = new float[capacity];
             this.totalHistory = new float[capacity];
         }
 
-        private void add(float syncMs, float visibilityMs, float uploadMs, float submitMs) {
+        private void add(float syncMs, float visibilityMs, float uploadMs, float submitMs, float otherMs) {
             syncHistory[writeIndex] = syncMs;
             visibilityHistory[writeIndex] = visibilityMs;
             uploadHistory[writeIndex] = uploadMs;
             submitHistory[writeIndex] = submitMs;
-            totalHistory[writeIndex] = syncMs + visibilityMs + uploadMs + submitMs;
+            otherHistory[writeIndex] = otherMs;
+            totalHistory[writeIndex] = syncMs + visibilityMs + uploadMs + submitMs + otherMs;
             writeIndex = (writeIndex + 1) % totalHistory.length;
             sampleCount = Math.min(sampleCount + 1, totalHistory.length);
         }
@@ -715,6 +727,10 @@ public class DebugImGuiPass implements RenderPass {
             return submitHistory;
         }
 
+        private float[] otherHistory() {
+            return otherHistory;
+        }
+
         private float[] totalHistory() {
             return totalHistory;
         }
@@ -725,6 +741,7 @@ public class DebugImGuiPass implements RenderPass {
             max = Math.max(max, max(visibilityHistory));
             max = Math.max(max, max(uploadHistory));
             max = Math.max(max, max(submitHistory));
+            max = Math.max(max, max(otherHistory));
             return max;
         }
 
@@ -809,6 +826,9 @@ public class DebugImGuiPass implements RenderPass {
                                     nanosToMillis(passStats.getVisibilityCpuTimeNs()),
                                     nanosToMillis(passStats.getBatchUploadCpuTimeNs()),
                                     nanosToMillis(passStats.getDrawSubmitCpuTimeNs())),
+                            String.format("   other %.3f | pass total %.3f ms",
+                                    nanosToMillis(passStats.getOtherCpuTimeNs()),
+                                    nanosToMillis(passStats.getCpuTimeNs())),
                             String.format("   faces %d | resident meshes %d | mesh gpu %s | textures %s",
                                     passStats.getDrawnFaceCount(),
                                     passStats.getResidentMeshCount(),
@@ -822,7 +842,9 @@ public class DebugImGuiPass implements RenderPass {
             }
 
             return new DisplaySnapshot(
-                    String.format("CPU render passes: %.3f ms", nanosToMillis(stats.getTotalPassCpuTimeNs())),
+                    String.format("CPU render passes: %.3f ms | full frame CPU: %.3f ms",
+                            nanosToMillis(stats.getTotalPassCpuTimeNs()),
+                            nanosToMillis(stats.getFrameCpuTimeNs())),
                     String.format("Draw calls: %d", stats.getDrawCalls()),
                     String.format("Faces: %d | Triangles: %d | Vertices: %d",
                             stats.getDrawnFaceCount(),
@@ -832,7 +854,11 @@ public class DebugImGuiPass implements RenderPass {
                             stats.getVisibleMeshCount(),
                             stats.getCulledMeshCount(),
                             stats.getResidentMeshCount()),
-                    String.format("Resident face data: %d", stats.getResidentFaceCount()),
+                    String.format("Resident face data: %d | update %.3f ms | render %.3f ms | window %.3f ms",
+                            stats.getResidentFaceCount(),
+                            nanosToMillis(stats.getUpdateCpuTimeNs()),
+                            nanosToMillis(stats.getRenderCpuTimeNs()),
+                            nanosToMillis(stats.getWindowCpuTimeNs())),
                     String.format("Mesh buffers: %s", formatBytes(stats.getMeshGpuBytes())),
                     String.format("Texture arrays: %s", formatBytes(stats.getTextureGpuBytes())),
                     String.format("Render targets: %s", formatBytes(stats.getRenderTargetGpuBytes())),

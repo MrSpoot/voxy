@@ -13,6 +13,9 @@ import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
 import org.weaw.game.World;
+import org.weaw.game.utils.BlockDefinition;
+
+import java.util.Collection;
 
 public class Renderer {
     private static final Logger LOGGER = LoggerFactory.getLogger(Renderer.class);
@@ -20,14 +23,16 @@ public class Renderer {
     private final Window window;
     private final World world;
     private final InputManager inputManager;
+    private final Collection<BlockDefinition> blockDefinitions;
     // Multi-pass rendering pipeline
     private RenderPipeline pipeline;
     private RenderContext context;
 
-    public Renderer(Window window, World world, InputManager inputManager) {
+    public Renderer(Window window, World world, InputManager inputManager, Collection<BlockDefinition> blockDefinitions) {
         this.window = window;
         this.world = world;
         this.inputManager = inputManager;
+        this.blockDefinitions = blockDefinitions;
     }
 
     public void create(){
@@ -35,7 +40,7 @@ public class Renderer {
 
         // Create render context (shared state for all passes)
         context = new RenderContext(window.getWidth(), window.getHeight());
-        BlockTextureManager blockTextureManager = new BlockTextureManager();
+        BlockTextureManager blockTextureManager = new BlockTextureManager(blockDefinitions);
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);
         context.initializeSharedChunkGeometry();
@@ -82,5 +87,9 @@ public class Renderer {
         }
 
         LOGGER.info("Renderer cleanup complete");
+    }
+
+    public RenderContext getContext() {
+        return context;
     }
 }

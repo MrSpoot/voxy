@@ -9,6 +9,8 @@ import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
 import org.weaw.game.World;
+import org.weaw.game.generation.GenerationConfig;
+import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.utils.BlockRegistry;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
@@ -31,16 +33,19 @@ public class Game {
     private boolean wireframe = false;
 
     public void run() {
-        init();
-        loop();
-        cleanup();
+        try {
+            init();
+            loop();
+        } finally {
+            cleanup();
+        }
     }
 
     public void init(){
         LOGGER.info("Initializing");
         BlockRegistry.initialize();
 
-        window = new Window("Voxy", 1280, 720 );
+        window = new Window("Voxy", 1920, 1080 );
         window.create();
 
         inputManager = new InputManager(window.getId());
@@ -48,7 +53,7 @@ public class Game {
 
         world = createTestWorld();
 
-        renderer = new Renderer(window, world, inputManager);
+        renderer = new Renderer(window, world, inputManager, BlockRegistry.getRegisteredBlocks().values());
         renderer.create();
 
         // Connect renderer to window for resize notifications
@@ -64,14 +69,29 @@ public class Game {
         LOGGER.info("Starting game loop");
 
         while (!window.shouldClose()) {
+            long frameStartNs = System.nanoTime();
             double now = System.nanoTime() / 1_000_000_000.0;
             float deltaTime = (float)(now - lastTime);
             lastTime = now;
 
+            long updateStartNs = System.nanoTime();
             update(deltaTime);
-            render();
+            long updateCpuTimeNs = System.nanoTime() - updateStartNs;
 
+            long renderStartNs = System.nanoTime();
+            render();
+            long renderCpuTimeNs = System.nanoTime() - renderStartNs;
+
+            long windowStartNs = System.nanoTime();
             window.update();
+            long windowCpuTimeNs = System.nanoTime() - windowStartNs;
+
+            renderer.getContext().getRenderStats().recordFrameCpuTimes(
+                    updateCpuTimeNs,
+                    renderCpuTimeNs,
+                    windowCpuTimeNs,
+                    System.nanoTime() - frameStartNs
+            );
 //            long end = System.nanoTime();
 //            if((end - start) / 1_000_000.0 > 10.0){
 //                LOGGER.warn("Game loop took too long: {} ms",(end - start) / 1_000_000.0);
@@ -81,17 +101,30 @@ public class Game {
     }
 
     private void cleanup() {
-        LOGGER.info("Cleanup Renderer");
-        renderer.cleanup();
-        LOGGER.info("Cleanup World");
-        if (world != null) {
-            world.close();
-            world = null;
-        }
-        LOGGER.info("Cleanup Input Manager");
-        inputManager.cleanup();
-        LOGGER.info("Cleanup windows");
-        window.cleanup();
+        safeCleanup("Renderer", () -> {
+            if (renderer != null) {
+                renderer.cleanup();
+                renderer = null;
+            }
+        });
+        safeCleanup("World", () -> {
+            if (world != null) {
+                world.close();
+                world = null;
+            }
+        });
+        safeCleanup("Input Manager", () -> {
+            if (inputManager != null) {
+                inputManager.cleanup();
+                inputManager = null;
+            }
+        });
+        safeCleanup("Window", () -> {
+            if (window != null) {
+                window.cleanup();
+                window = null;
+            }
+        });
     }
 
     public static void main(String[] args) {
@@ -99,7 +132,7 @@ public class Game {
     }
 
     private World createTestWorld() {
-        return new World();
+        return new World(new NoiseWorldGenerator(GenerationConfig.defaults()));
     }
 
     private void handleInputModes() {
@@ -132,5 +165,14 @@ public class Game {
 
     private void render() {
         renderer.render(camera);
+    }
+
+    private void safeCleanup(String label, Runnable cleanupAction) {
+        try {
+            LOGGER.info("Cleanup {}", label);
+            cleanupAction.run();
+        } catch (Exception exception) {
+            LOGGER.error("Cleanup {} failed", label, exception);
+        }
     }
 }

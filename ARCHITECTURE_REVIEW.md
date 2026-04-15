@@ -119,6 +119,15 @@ Ce point posera probleme des qu'il faudra:
 
 ### 4. Usage important de statiques globaux
 
+Statut: en cours
+
+Progression recente:
+
+- la generation n'est plus pilotee par un moteur purement statique dans le flux principal
+- la configuration de generation est maintenant encapsulee
+- `World` et `WorldStreamer` peuvent recevoir un generateur injectable
+- le rendu ne va plus chercher directement le registre global pour construire les textures de blocs
+
 Le projet utilise encore plusieurs points globaux:
 
 - `BlockRegistry`
@@ -257,11 +266,26 @@ Ce sont les chantiers a engager juste apres le decouplage principal.
 
 ### 4. Reduire les etats globaux
 
+Statut: partiellement fait
+
 Objectif:
 
-- encapsuler la configuration de generation
-- limiter les points statiques
+- ~~encapsuler la configuration de generation~~
+- reduire progressivement l'usage direct de `BlockRegistry` et `Blocks`
 - preparer une architecture plus injectable
+
+Avancee actuelle:
+
+- un `WorldGenerator` configurable peut maintenant etre injecte dans `World`
+- `WorldStreamer` depend d'un generateur fourni et non d'un singleton statique
+- la configuration de generation est sortie du code statique pour devenir une vraie donnee explicite
+- le bootstrap applicatif fournit desormais les definitions de blocs au rendu
+
+Reste a faire:
+
+- sortir `BlockRegistry` d'un modele purement global
+- remplacer progressivement les references directes a `Blocks.AIR` et similaires par des dependances explicites
+- permettre a terme plusieurs catalogues de blocs ou plusieurs mondes configures differemment
 
 Effet attendu:
 
