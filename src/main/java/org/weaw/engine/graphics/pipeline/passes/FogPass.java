@@ -2,6 +2,7 @@ package org.weaw.engine.graphics.pipeline.passes;
 
 import org.joml.Matrix4f;
 import org.weaw.engine.graphics.pipeline.FogSettings;
+import org.weaw.engine.graphics.pipeline.LightingSettings;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.resources.FullscreenQuad;
@@ -23,8 +24,6 @@ import static org.lwjgl.opengl.GL11.glPolygonMode;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE1;
 import static org.lwjgl.opengl.GL13.glActiveTexture;
-import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER;
-import static org.lwjgl.opengl.GL30.glBindFramebuffer;
 
 public class FogPass implements RenderPass {
     private Shader shader;
@@ -47,12 +46,13 @@ public class FogPass implements RenderPass {
     @Override
     public void execute(RenderContext context) {
         RenderTarget sceneTarget = context.getRenderTarget("sceneColor");
-        RenderTarget colorTarget = context.getRenderTarget("postProcessColor");
-        if (sceneTarget == null || colorTarget == null) {
+        RenderTarget outputTarget = context.getRenderTarget("postProcessColor");
+        if (sceneTarget == null || outputTarget == null) {
             return;
         }
 
         FogSettings settings = context.getFogSettings();
+        LightingSettings lighting = context.getLightingSettings();
         WorldSettings worldSettings = context.getWorldSettings();
         float renderDistance = worldSettings.getRenderDistanceChunks() * Chunk.SIZE;
         float fogStart = renderDistance * settings.getStartRatio();
@@ -60,8 +60,7 @@ public class FogPass implements RenderPass {
 
         context.getCamera().getProjectionMatrix(inverseProjection).invert();
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        GLStateManager.setViewport(context.getViewportWidth(), context.getViewportHeight());
+        outputTarget.bind();
         GLStateManager.setDepthTest(false, false);
         GLStateManager.setBlending(false);
         glDisable(GL_CULL_FACE);
@@ -71,7 +70,7 @@ public class FogPass implements RenderPass {
         shader.useProgram();
 
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, colorTarget.getColorTexture());
+        glBindTexture(GL_TEXTURE_2D, sceneTarget.getColorTexture());
         shader.setUniform("uColorTexture", 0);
 
         glActiveTexture(GL_TEXTURE1);
@@ -80,7 +79,12 @@ public class FogPass implements RenderPass {
 
         shader.setUniform("uEnabled", settings.isEnabled() ? 1 : 0);
         shader.setUniform("uInverseProjection", inverseProjection);
-        shader.setUniform("uFogColor", settings.getRed(), settings.getGreen(), settings.getBlue());
+        shader.setUniform(
+                "uFogColor",
+                settings.getRed() * lighting.getSkyIntensity(),
+                settings.getGreen() * lighting.getSkyIntensity(),
+                settings.getBlue() * lighting.getSkyIntensity()
+        );
         shader.setUniform("uFogStart", fogStart);
         shader.setUniform("uFogEnd", fogEnd);
         shader.setUniform("uFogDensity", settings.getDensity());

@@ -2,6 +2,7 @@ package org.weaw.engine.graphics.pipeline.passes;
 
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
+import org.weaw.engine.graphics.pipeline.LightingSettings;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.RenderStats.ChunkPassMetrics;
@@ -121,6 +122,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         shader.setUniform("uBlockTextures", 0);
         shader.setUniform("uProjection", projectionMatrix);
         shader.setUniform("uView", viewMatrix);
+        setLightingUniforms(context);
 
         long drawSubmitStartNs = System.nanoTime();
         if (USE_MULTI_DRAW) {
@@ -194,6 +196,18 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     protected boolean includeSharedTextureStats() {
         return false;
+    }
+
+    private void setLightingUniforms(RenderContext context) {
+        LightingSettings lighting = context.getLightingSettings();
+        shader.setUniform("uLightingEnabled", lighting.isEnabled() ? 1 : 0);
+        shader.setUniform("uAmbientColor", lighting.getAmbientRed(), lighting.getAmbientGreen(), lighting.getAmbientBlue());
+        shader.setUniform("uAmbientIntensity", lighting.getAmbientIntensity());
+        shader.setUniform("uSunColor", lighting.getSunRed(), lighting.getSunGreen(), lighting.getSunBlue());
+        shader.setUniform("uSunIntensity", lighting.getSunIntensity());
+        shader.setUniform("uSunDirection", lighting.getSunDirectionX(), lighting.getSunDirectionY(), lighting.getSunDirectionZ());
+        shader.setUniform("uSkyColor", lighting.getSkyRed(), lighting.getSkyGreen(), lighting.getSkyBlue());
+        shader.setUniform("uSkyIntensity", lighting.getSkyIntensity());
     }
 
     protected void sortVisibleDraws(RenderContext context, List<ChunkRenderEntry> visibleDraws) {

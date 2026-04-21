@@ -8,6 +8,7 @@ import imgui.glfw.ImGuiImplGlfw;
 import imgui.type.ImBoolean;
 import org.weaw.engine.graphics.pipeline.ColorGradingSettings;
 import org.weaw.engine.graphics.pipeline.FogSettings;
+import org.weaw.engine.graphics.pipeline.LightingSettings;
 import org.lwjgl.glfw.GLFW;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
@@ -64,6 +65,7 @@ public class DebugImGuiPass implements RenderPass {
     private boolean showArenaWindow = false;
     private boolean showChunkProfilingWindow = false;
     private boolean showResourcesWindow = false;
+    private boolean showLightingWindow = true;
     private boolean showColorGradingWindow = true;
     private boolean showFogWindow = true;
     private boolean showJvmWindow = false;
@@ -81,8 +83,9 @@ public class DebugImGuiPass implements RenderPass {
     private WindowRect arenaRect = WindowRect.of(390.0f, 315.0f, 360.0f, 300.0f);
     private WindowRect chunkProfilingRect = WindowRect.of(770.0f, 315.0f, 460.0f, 200.0f);
     private WindowRect resourcesRect = WindowRect.of(770.0f, 170.0f, 360.0f, 155.0f);
-    private WindowRect colorGradingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 245.0f);
-    private WindowRect fogRect = WindowRect.of(770.0f, 590.0f, 360.0f, 265.0f);
+    private WindowRect lightingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 285.0f);
+    private WindowRect colorGradingRect = WindowRect.of(770.0f, 635.0f, 360.0f, 270.0f);
+    private WindowRect fogRect = WindowRect.of(770.0f, 920.0f, 360.0f, 265.0f);
     private WindowRect jvmRect = WindowRect.of(10.0f, 335.0f, 360.0f, 110.0f);
     private WindowRect deviceRect = WindowRect.of(390.0f, 555.0f, 360.0f, 150.0f);
     private WindowRect passBreakdownRect = WindowRect.of(770.0f, 530.0f, 460.0f, 230.0f);
@@ -141,6 +144,7 @@ public class DebugImGuiPass implements RenderPass {
         renderArenaWindow(context);
         renderChunkProfilingWindow(context);
         renderResourcesWindow();
+        renderLightingWindow(context);
         renderColorGradingWindow(context);
         renderFogWindow(context);
         renderJvmWindow();
@@ -217,7 +221,8 @@ public class DebugImGuiPass implements RenderPass {
             showArenaWindow = toggleWindowMenuItem("Chunk Arenas", showArenaWindow);
             showChunkProfilingWindow = toggleWindowMenuItem("Chunk Profiling", showChunkProfilingWindow);
             showResourcesWindow = toggleWindowMenuItem("Resources", showResourcesWindow);
-            showColorGradingWindow = toggleWindowMenuItem("Color Grading", showColorGradingWindow);
+            showLightingWindow = toggleWindowMenuItem("Lighting", showLightingWindow);
+            showColorGradingWindow = toggleWindowMenuItem("Tone Mapping", showColorGradingWindow);
             showFogWindow = toggleWindowMenuItem("Fog", showFogWindow);
             showPassBreakdownWindow = toggleWindowMenuItem("Pass Breakdown", showPassBreakdownWindow);
             ImGui.endMenu();
@@ -358,6 +363,32 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.end();
     }
 
+    private void renderLightingWindow(RenderContext context) {
+        if (!showLightingWindow) {
+            return;
+        }
+
+        LightingSettings settings = context.getLightingSettings();
+        applyWindowLayout(lightingRect, 0.9f);
+        ImGui.begin("Render Lighting");
+        ImBoolean enabled = new ImBoolean(settings.isEnabled());
+        if (ImGui.checkbox("Enabled", enabled)) {
+            settings.setEnabled(enabled.get());
+        }
+        ImGui.separator();
+        ImGui.colorEdit3("Ambient Color", settings.ambientColorRef());
+        ImGui.sliderFloat("Ambient Intensity", settings.ambientIntensityRef(), 0.0f, 2.0f);
+        ImGui.colorEdit3("Sun Color", settings.sunColorRef());
+        ImGui.sliderFloat("Sun Intensity", settings.sunIntensityRef(), 0.0f, 8.0f);
+        ImGui.sliderFloat3("Sun Direction", settings.sunDirectionRef(), -1.0f, 1.0f);
+        ImGui.colorEdit3("Sky Color", settings.skyColorRef());
+        ImGui.sliderFloat("Sky Intensity", settings.skyIntensityRef(), 0.0f, 4.0f);
+        if (ImGui.button("Reset##Lighting")) {
+            settings.reset();
+        }
+        ImGui.end();
+    }
+
     private void renderColorGradingWindow(RenderContext context) {
         if (!showColorGradingWindow) {
             return;
@@ -365,9 +396,13 @@ public class DebugImGuiPass implements RenderPass {
 
         ColorGradingSettings settings = context.getColorGradingSettings();
         applyWindowLayout(colorGradingRect, 0.9f);
-        ImGui.begin("Render Color Grading");
+        ImGui.begin("Render Tone Mapping");
+        ImBoolean toneMappingEnabled = new ImBoolean(settings.isToneMappingEnabled());
+        if (ImGui.checkbox("Tone Mapping", toneMappingEnabled)) {
+            settings.setToneMappingEnabled(toneMappingEnabled.get());
+        }
         ImBoolean enabled = new ImBoolean(settings.isEnabled());
-        if (ImGui.checkbox("Enabled", enabled)) {
+        if (ImGui.checkbox("Color Grading", enabled)) {
             settings.setEnabled(enabled.get());
         }
         ImGui.separator();
@@ -588,7 +623,8 @@ public class DebugImGuiPass implements RenderPass {
             deviceRect = WindowRect.of(middleX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
 
             resourcesRect = WindowRect.of(rightX, top + 135.0f, columnWidth, 155.0f);
-            colorGradingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 245.0f);
+            lightingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
+            colorGradingRect = WindowRect.of(rightX, lightingRect.bottom() + rowGap, columnWidth, 270.0f);
             fogRect = WindowRect.of(rightX, colorGradingRect.bottom() + rowGap, columnWidth, 265.0f);
             chunkProfilingRect = WindowRect.of(rightX, fogRect.bottom() + rowGap, columnWidth, 200.0f);
             float passHeight = Math.max(160.0f, viewportHeight - (chunkProfilingRect.bottom() + rowGap + margin));
@@ -608,7 +644,8 @@ public class DebugImGuiPass implements RenderPass {
             jvmRect = WindowRect.of(leftX, frameRect.bottom() + rowGap, columnWidth, 110.0f);
             arenaRect = WindowRect.of(rightX, gpuRect.bottom() + rowGap, columnWidth, 300.0f);
             resourcesRect = WindowRect.of(leftX, jvmRect.bottom() + rowGap, columnWidth, 155.0f);
-            colorGradingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 245.0f);
+            lightingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
+            colorGradingRect = WindowRect.of(leftX, lightingRect.bottom() + rowGap, columnWidth, 270.0f);
             deviceRect = WindowRect.of(rightX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
             fogRect = WindowRect.of(rightX, deviceRect.bottom() + rowGap, columnWidth, 265.0f);
             chunkProfilingRect = WindowRect.of(leftX, Math.max(colorGradingRect.bottom(), fogRect.bottom()) + rowGap, contentWidth, 200.0f);
@@ -626,7 +663,8 @@ public class DebugImGuiPass implements RenderPass {
         gpuRect = WindowRect.of(margin, frameRect.bottom() + rowGap, fullWidth, 125.0f);
         arenaRect = WindowRect.of(margin, gpuRect.bottom() + rowGap, fullWidth, 300.0f);
         resourcesRect = WindowRect.of(margin, arenaRect.bottom() + rowGap, fullWidth, 155.0f);
-        colorGradingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 245.0f);
+        lightingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 285.0f);
+        colorGradingRect = WindowRect.of(margin, lightingRect.bottom() + rowGap, fullWidth, 270.0f);
         fogRect = WindowRect.of(margin, colorGradingRect.bottom() + rowGap, fullWidth, 265.0f);
         jvmRect = WindowRect.of(margin, fogRect.bottom() + rowGap, fullWidth, 110.0f);
         deviceRect = WindowRect.of(margin, jvmRect.bottom() + rowGap, fullWidth, 150.0f);
@@ -696,6 +734,7 @@ public class DebugImGuiPass implements RenderPass {
         showArenaWindow = false;
         showChunkProfilingWindow = true;
         showResourcesWindow = false;
+        showLightingWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
         showJvmWindow = false;
@@ -712,6 +751,7 @@ public class DebugImGuiPass implements RenderPass {
         showArenaWindow = true;
         showChunkProfilingWindow = true;
         showResourcesWindow = true;
+        showLightingWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
         showJvmWindow = false;
@@ -728,6 +768,7 @@ public class DebugImGuiPass implements RenderPass {
         showArenaWindow = true;
         showChunkProfilingWindow = true;
         showResourcesWindow = true;
+        showLightingWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
         showJvmWindow = true;
@@ -744,6 +785,7 @@ public class DebugImGuiPass implements RenderPass {
         showArenaWindow = false;
         showChunkProfilingWindow = false;
         showResourcesWindow = false;
+        showLightingWindow = false;
         showColorGradingWindow = false;
         showFogWindow = false;
         showJvmWindow = false;

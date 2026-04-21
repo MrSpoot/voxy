@@ -155,7 +155,7 @@ public class RenderTarget {
         // Create color texture
         colorTexture = glGenTextures();
         glBindTexture(GL_TEXTURE_2D, colorTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, colorFormat, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, colorFormat, width, height, 0, GL_RGBA, colorDataType(colorFormat), 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -207,6 +207,14 @@ public class RenderTarget {
             case GL_RGB32F -> 12;
             case GL_RGBA32F -> 16;
             default -> 4;
+        };
+    }
+
+    private static int colorDataType(int internalFormat) {
+        return switch (internalFormat) {
+            case GL_R16F, GL_RG16F, GL_RGB16F, GL_RGBA16F,
+                 GL_R32F, GL_RG32F, GL_RGB32F, GL_RGBA32F -> GL_FLOAT;
+            default -> GL_UNSIGNED_BYTE;
         };
     }
 }

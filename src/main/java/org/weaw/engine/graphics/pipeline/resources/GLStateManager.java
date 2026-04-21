@@ -1,6 +1,10 @@
 package org.weaw.engine.graphics.pipeline.resources;
 
+import org.lwjgl.system.MemoryStack;
+
 import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.opengl.GL30.GL_COLOR;
+import static org.lwjgl.opengl.GL30.glClearBufferfv;
 
 /**
  * Helper for managing OpenGL state in render passes.
@@ -99,9 +103,11 @@ public class GLStateManager {
      * @param a Alpha component [0-1]
      */
     public static void clear(float r, float g, float b, float a) {
-        glClearColor(r, g, b, a);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            glClearBufferfv(GL_COLOR, 0, stack.floats(r, g, b, a));
+        }
         glClearDepth(0.0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_DEPTH_BUFFER_BIT);
     }
 
     /**

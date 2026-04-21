@@ -72,6 +72,14 @@ void main() {
 #version 460 core
 
 uniform sampler2DArray uBlockTextures;
+uniform int uLightingEnabled;
+uniform vec3 uAmbientColor;
+uniform float uAmbientIntensity;
+uniform vec3 uSunColor;
+uniform float uSunIntensity;
+uniform vec3 uSunDirection;
+uniform vec3 uSkyColor;
+uniform float uSkyIntensity;
 
 in vec2 vTexCoord;
 flat in int vFace;
@@ -88,6 +96,32 @@ float getFaceTextureSlot(int face) {
     return 5.0;
 }
 
+vec3 getFaceNormal(int face) {
+    if (face == 0) return vec3(1.0, 0.0, 0.0);
+    if (face == 1) return vec3(-1.0, 0.0, 0.0);
+    if (face == 2) return vec3(0.0, 1.0, 0.0);
+    if (face == 3) return vec3(0.0, -1.0, 0.0);
+    if (face == 4) return vec3(0.0, 0.0, 1.0);
+    return vec3(0.0, 0.0, -1.0);
+}
+
+vec3 applyHdrLighting(vec3 albedo, int face) {
+    if (uLightingEnabled == 0) {
+        return albedo;
+    }
+
+    vec3 normal = getFaceNormal(face);
+    vec3 sunDirection = normalize(uSunDirection + vec3(0.0, 0.00001, 0.0));
+    float sunFactor = max(dot(normal, sunDirection), 0.0);
+    float skyFactor = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+
+    vec3 ambient = uAmbientColor * uAmbientIntensity;
+    vec3 sky = uSkyColor * uSkyIntensity * skyFactor;
+    vec3 sun = uSunColor * uSunIntensity * sunFactor;
+
+    return albedo * (ambient + sky + sun);
+}
+
 void main() {
     float faceSlot = getFaceTextureSlot(vFace);
     vec2 correctedUv = vTexCoord;
@@ -102,7 +136,6 @@ void main() {
     if (texel.a <= 0.05) {
         discard;
     }
-    //TODO REMOVE *0.8
-    fragColor = texel * 0.8;
+    fragColor = vec4(applyHdrLighting(texel.rgb, vFace), texel.a);
 }
 //@endfs

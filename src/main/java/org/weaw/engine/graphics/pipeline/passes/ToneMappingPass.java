@@ -22,39 +22,37 @@ import static org.lwjgl.opengl.GL13.glActiveTexture;
 import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER;
 import static org.lwjgl.opengl.GL30.glBindFramebuffer;
 
-public class ColorGradingPass implements RenderPass {
+public class ToneMappingPass implements RenderPass {
     private Shader shader;
     private FullscreenQuad fullscreenQuad;
     private final int[] polygonMode = new int[2];
 
     @Override
     public String getName() {
-        return "ColorGradingPass";
+        return "ToneMappingPass";
     }
 
     @Override
     public void create() {
-        shader = new Shader("/shaders/color-grading.glsl");
+        shader = new Shader("/shaders/tone-mapping.glsl");
         fullscreenQuad = new FullscreenQuad();
         fullscreenQuad.create();
     }
 
     @Override
     public void execute(RenderContext context) {
-        RenderTarget sceneTarget = context.getRenderTarget("sceneColor");
-        RenderTarget outputTarget = context.getRenderTarget("postProcessColor");
-        if (sceneTarget == null) {
+        RenderTarget sourceTarget = context.getRenderTarget("postProcessColor");
+        if (sourceTarget == null) {
+            sourceTarget = context.getRenderTarget("sceneColor");
+        }
+        if (sourceTarget == null) {
             return;
         }
 
         ColorGradingSettings settings = context.getColorGradingSettings();
 
-        if (outputTarget != null) {
-            outputTarget.bind();
-        } else {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            GLStateManager.setViewport(context.getViewportWidth(), context.getViewportHeight());
-        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        GLStateManager.setViewport(context.getViewportWidth(), context.getViewportHeight());
         GLStateManager.setDepthTest(false, false);
         GLStateManager.setBlending(false);
         glDisable(GL_CULL_FACE);
@@ -63,10 +61,11 @@ public class ColorGradingPass implements RenderPass {
 
         shader.useProgram();
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, sceneTarget.getColorTexture());
+        glBindTexture(GL_TEXTURE_2D, sourceTarget.getColorTexture());
 
-        shader.setUniform("uSceneTexture", 0);
-        shader.setUniform("uEnabled", settings.isEnabled() ? 1 : 0);
+        shader.setUniform("uHdrTexture", 0);
+        shader.setUniform("uColorGradingEnabled", settings.isEnabled() ? 1 : 0);
+        shader.setUniform("uToneMappingEnabled", settings.isToneMappingEnabled() ? 1 : 0);
         shader.setUniform("uExposure", settings.getExposure());
         shader.setUniform("uContrast", settings.getContrast());
         shader.setUniform("uSaturation", settings.getSaturation());

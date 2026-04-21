@@ -2,6 +2,7 @@ package org.weaw.engine.graphics.pipeline;
 
 public class ColorGradingSettings {
     private final boolean[] enabled = {true};
+    private final boolean[] toneMappingEnabled = {true};
     private final float[] exposure = {0.039f};
     private final float[] contrast = {1.024f};
     private final float[] saturation = {1.095f};
@@ -15,6 +16,14 @@ public class ColorGradingSettings {
 
     public void setEnabled(boolean enabled) {
         this.enabled[0] = enabled;
+    }
+
+    public boolean isToneMappingEnabled() {
+        return toneMappingEnabled[0];
+    }
+
+    public void setToneMappingEnabled(boolean toneMappingEnabled) {
+        this.toneMappingEnabled[0] = toneMappingEnabled;
     }
 
     public float getExposure() {
@@ -67,11 +76,12 @@ public class ColorGradingSettings {
 
     public void reset() {
         enabled[0] = true;
-        exposure[0] = 0.039f;
-        contrast[0] = 1.024f;
-        saturation[0] = 1.095f;
-        vibrance[0] = 0.319f;
-        gamma[0] = 1f;
-        temperature[0] = 0.068f;
+        toneMappingEnabled[0] = true;
+        exposure[0] = 0.0f;
+        contrast[0] = 1.0f;
+        saturation[0] = 1.0f;
+        vibrance[0] = 0.0f;
+        gamma[0] = 1.0f;
+        temperature[0] = 0.0f;
     }
 }

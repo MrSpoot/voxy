@@ -42,6 +42,7 @@ public class RenderContext {
     private final Map<String, RenderTarget> renderTargets = new HashMap<>();
     private final RenderStats renderStats = new RenderStats();
     private final ColorGradingSettings colorGradingSettings = new ColorGradingSettings();
+    private final LightingSettings lightingSettings = new LightingSettings();
     private final FogSettings fogSettings = new FogSettings();
     private WorldSettings worldSettings = new WorldSettings();
     private BlockTextureManager blockTextureManager;

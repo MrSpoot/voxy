@@ -15,8 +15,9 @@ void main() {
 //@fs
 #version 460 core
 
-uniform sampler2D uSceneTexture;
-uniform int uEnabled;
+uniform sampler2D uHdrTexture;
+uniform int uColorGradingEnabled;
+uniform int uToneMappingEnabled;
 uniform float uExposure;
 uniform float uContrast;
 uniform float uSaturation;
@@ -27,6 +28,15 @@ uniform float uTemperature;
 in vec2 vTexCoord;
 
 out vec4 fragColor;
+
+vec3 acesToneMap(vec3 color) {
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), 0.0, 1.0);
+}
 
 vec3 applyContrast(vec3 color, float contrast) {
     return (color - 0.5) * contrast + 0.5;
@@ -51,19 +61,25 @@ vec3 applyTemperature(vec3 color, float temperature) {
 }
 
 void main() {
-    vec4 scene = texture(uSceneTexture, vTexCoord);
-    vec3 color = scene.rgb;
+    vec4 source = texture(uHdrTexture, vTexCoord);
+    vec3 color = max(source.rgb, vec3(0.0));
 
-    if (uEnabled != 0) {
-        color *= exp2(uExposure);
+    color *= exp2(uExposure);
+
+    if (uToneMappingEnabled != 0) {
+        color = acesToneMap(color);
+    }
+
+    if (uColorGradingEnabled != 0) {
         color = applyContrast(color, uContrast);
         color = applySaturation(color, uSaturation);
         color = applyVibrance(color, uVibrance);
         color = applyTemperature(color, uTemperature);
-        color = max(color, vec3(0.0));
-        color = pow(color, vec3(1.0 / max(uGamma, 0.01)));
     }
 
-    fragColor = vec4(clamp(color, 0.0, 1.0), scene.a);
+    color = max(color, vec3(0.0));
+    color = pow(color, vec3(1.0 / max(uGamma, 0.01)));
+
+    fragColor = vec4(clamp(color, 0.0, 1.0), source.a);
 }
 //@endfs
