@@ -159,6 +159,9 @@ public class RenderPipeline {
         RenderTarget sceneTarget = new RenderTarget("sceneColor", width, height, true);
         context.setRenderTarget("sceneColor", sceneTarget);
 
+        RenderTarget postProcessTarget = new RenderTarget("postProcessColor", width, height, false);
+        context.setRenderTarget("postProcessColor", postProcessTarget);
+
         LOGGER.info("Created shared render targets");
     }
 }

@@ -5,7 +5,9 @@ import org.slf4j.LoggerFactory;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPipeline;
 import org.weaw.engine.graphics.pipeline.passes.CutoutChunkRenderPass;
+import org.weaw.engine.graphics.pipeline.passes.ColorGradingPass;
 import org.weaw.engine.graphics.pipeline.passes.DebugImGuiPass;
+import org.weaw.engine.graphics.pipeline.passes.FogPass;
 import org.weaw.engine.graphics.pipeline.passes.OpaqueChunkRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.TransparentChunkRenderPass;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
@@ -35,6 +37,7 @@ public class Renderer {
 
         // Create render context (shared state for all passes)
         context = new RenderContext(window.getWidth(), window.getHeight());
+        context.setWorldSettings(world.getSettings());
         BlockTextureManager blockTextureManager = new BlockTextureManager();
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);
@@ -45,6 +48,8 @@ public class Renderer {
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
+        pipeline.addPass(new ColorGradingPass());
+        pipeline.addPass(new FogPass());
         pipeline.addPass(new DebugImGuiPass(window, inputManager));
 
         pipeline.create();

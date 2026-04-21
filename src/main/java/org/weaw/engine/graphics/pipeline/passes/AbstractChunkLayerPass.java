@@ -5,6 +5,7 @@ import org.joml.Matrix4f;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.RenderStats.ChunkPassMetrics;
+import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.ChunkFaceArena;
 import org.weaw.engine.graphics.utils.ChunkMultiDrawBatch;
@@ -68,6 +69,12 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         long syncStartNs = System.nanoTime();
         synchronizeRenderEntries(context);
         long syncCpuTimeNs = System.nanoTime() - syncStartNs;
+
+        RenderTarget sceneTarget = context.getRenderTarget("sceneColor");
+        if (sceneTarget != null) {
+            sceneTarget.bind();
+        }
+
         configureState(context);
 
         long visibilityStartNs = System.nanoTime();

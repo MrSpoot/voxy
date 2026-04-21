@@ -8,14 +8,20 @@ import org.weaw.game.utils.GenerationEngine;
 public class World implements AutoCloseable, WorldBlockProvider {
     private final ChunkManager chunkManager;
     private final WorldStreamer worldStreamer;
+    private final WorldSettings settings;
 
     public World() {
         this.chunkManager = new ChunkManager();
-        this.worldStreamer = new WorldStreamer(chunkManager, this);
+        this.settings = new WorldSettings();
+        this.worldStreamer = new WorldStreamer(chunkManager, this, settings);
     }
 
     public ChunkManager getChunkManager() {
         return chunkManager;
+    }
+
+    public WorldSettings getSettings() {
+        return settings;
     }
 
     public void update(Vector3f playerPosition) {
