@@ -83,6 +83,7 @@ public class RenderPipeline {
      */
     public void execute() {
         context.getRenderStats().beginFrame(context.getRenderTargets());
+        context.resetCurrentColorTarget();
         for (RenderPass pass : passes) {
             long start = System.nanoTime();
             pass.execute(context);
@@ -163,6 +164,9 @@ public class RenderPipeline {
 
         RenderTarget postProcessTarget = new RenderTarget("postProcessColor", width, height, false, GL_RGBA16F);
         context.setRenderTarget("postProcessColor", postProcessTarget);
+
+        RenderTarget antiAliasTarget = new RenderTarget("antiAliasColor", width, height, false, GL_RGBA16F);
+        context.setRenderTarget("antiAliasColor", antiAliasTarget);
 
         LOGGER.info("Created shared render targets");
     }

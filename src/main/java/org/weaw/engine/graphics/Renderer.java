@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPipeline;
+import org.weaw.engine.graphics.pipeline.passes.AntiAliasingPass;
 import org.weaw.engine.graphics.pipeline.passes.CutoutChunkRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.DebugImGuiPass;
 import org.weaw.engine.graphics.pipeline.passes.FogPass;
@@ -53,7 +54,8 @@ public class Renderer {
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
-        pipeline.addPass(new FogPass());
+        //pipeline.addPass(new FogPass());
+        pipeline.addPass(new AntiAliasingPass());
         pipeline.addPass(new ToneMappingPass());
         pipeline.addPass(new DebugImGuiPass(window, inputManager));
 

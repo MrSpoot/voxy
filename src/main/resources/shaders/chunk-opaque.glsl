@@ -12,6 +12,8 @@ layout(std430, binding = 1) readonly buffer ChunkDrawBuffer {
 uniform mat4 uProjection;
 uniform mat4 uView;
 
+const float AO_LEVELS[4] = float[](1.0, 0.75, 0.5, 0.3);
+
 out vec2 vTexCoord;
 flat out int vFace;
 flat out int vTextureIndex;
@@ -69,7 +71,7 @@ void main() {
     vTexCoord = vec2(uv.x * quadWidth, uv.y * quadHeight);
     vFace = face;
     vTextureIndex = textureIndex;
-    vAo = 1.0 - (float(aoLevel) * 0.18);
+    vAo = pow(AO_LEVELS[aoLevel], 1.3);
 }
 //@endvs
 

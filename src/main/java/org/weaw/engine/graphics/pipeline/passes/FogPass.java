@@ -45,9 +45,13 @@ public class FogPass implements RenderPass {
 
     @Override
     public void execute(RenderContext context) {
-        RenderTarget sceneTarget = context.getRenderTarget("sceneColor");
+        RenderTarget sceneTarget = context.getCurrentColorTarget();
+        if (sceneTarget == null) {
+            sceneTarget = context.getRenderTarget("sceneColor");
+        }
+        RenderTarget depthTarget = context.getRenderTarget("sceneColor");
         RenderTarget outputTarget = context.getRenderTarget("postProcessColor");
-        if (sceneTarget == null || outputTarget == null) {
+        if (sceneTarget == null || depthTarget == null || outputTarget == null) {
             return;
         }
 
@@ -74,7 +78,7 @@ public class FogPass implements RenderPass {
         shader.setUniform("uColorTexture", 0);
 
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, sceneTarget.getDepthTexture());
+        glBindTexture(GL_TEXTURE_2D, depthTarget.getDepthTexture());
         shader.setUniform("uDepthTexture", 1);
 
         shader.setUniform("uEnabled", settings.isEnabled() ? 1 : 0);
@@ -96,6 +100,7 @@ public class FogPass implements RenderPass {
         glActiveTexture(GL_TEXTURE0);
         shader.unbind();
         glPolygonMode(GL_FRONT_AND_BACK, polygonMode[0]);
+        context.setCurrentColorTarget("postProcessColor");
     }
 
     @Override

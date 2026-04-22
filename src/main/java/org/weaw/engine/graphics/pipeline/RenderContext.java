@@ -45,6 +45,7 @@ public class RenderContext {
     private final LightingSettings lightingSettings = new LightingSettings();
     private final FogSettings fogSettings = new FogSettings();
     private WorldSettings worldSettings = new WorldSettings();
+    private String currentColorTargetName;
     private BlockTextureManager blockTextureManager;
     private int sharedChunkVao;
     private ChunkFaceArena opaqueChunkFaceArena;
@@ -78,6 +79,24 @@ public class RenderContext {
      */
     public void setRenderTarget(String name, RenderTarget target) {
         renderTargets.put(name, target);
+    }
+
+    public void resetCurrentColorTarget() {
+        currentColorTargetName = "sceneColor";
+    }
+
+    public RenderTarget getCurrentColorTarget() {
+        if (currentColorTargetName == null) {
+            return null;
+        }
+        return getRenderTarget(currentColorTargetName);
+    }
+
+    public void setCurrentColorTarget(String name) {
+        if (!renderTargets.containsKey(name)) {
+            throw new IllegalArgumentException("Unknown render target: " + name);
+        }
+        currentColorTargetName = name;
     }
 
     /**
@@ -126,6 +145,7 @@ public class RenderContext {
         chunkVisibilityFrameIndex = Long.MIN_VALUE;
         chunkVisibilityUploadsVersion = Long.MIN_VALUE;
         chunkVisibilityCameraVersion = Long.MIN_VALUE;
+        currentColorTargetName = null;
         visibleChunkPositions.clear();
         renderTargets.values().forEach(RenderTarget::cleanup);
         renderTargets.clear();

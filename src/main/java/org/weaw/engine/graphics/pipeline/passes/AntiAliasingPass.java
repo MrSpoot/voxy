@@ -1,6 +1,6 @@
 package org.weaw.engine.graphics.pipeline.passes;
 
-import org.weaw.engine.graphics.pipeline.ColorGradingSettings;
+import org.joml.Vector2f;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.resources.FullscreenQuad;
@@ -19,22 +19,21 @@ import static org.lwjgl.opengl.GL11.glGetIntegerv;
 import static org.lwjgl.opengl.GL11.glPolygonMode;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL13.glActiveTexture;
-import static org.lwjgl.opengl.GL30.GL_FRAMEBUFFER;
-import static org.lwjgl.opengl.GL30.glBindFramebuffer;
 
-public class ToneMappingPass implements RenderPass {
+public class AntiAliasingPass implements RenderPass {
     private Shader shader;
     private FullscreenQuad fullscreenQuad;
+    private final Vector2f texelSize = new Vector2f();
     private final int[] polygonMode = new int[2];
 
     @Override
     public String getName() {
-        return "ToneMappingPass";
+        return "AntiAliasingPass";
     }
 
     @Override
     public void create() {
-        shader = new Shader("/shaders/tone-mapping.glsl");
+        shader = new Shader("/shaders/fxaa.glsl");
         fullscreenQuad = new FullscreenQuad();
         fullscreenQuad.create();
     }
@@ -45,14 +44,12 @@ public class ToneMappingPass implements RenderPass {
         if (sourceTarget == null) {
             sourceTarget = context.getRenderTarget("sceneColor");
         }
-        if (sourceTarget == null) {
+        RenderTarget outputTarget = context.getRenderTarget("antiAliasColor");
+        if (sourceTarget == null || outputTarget == null) {
             return;
         }
 
-        ColorGradingSettings settings = context.getColorGradingSettings();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        GLStateManager.setViewport(context.getViewportWidth(), context.getViewportHeight());
+        outputTarget.bind();
         GLStateManager.setDepthTest(false, false);
         GLStateManager.setBlending(false);
         glDisable(GL_CULL_FACE);
@@ -60,24 +57,20 @@ public class ToneMappingPass implements RenderPass {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         shader.useProgram();
+
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sourceTarget.getColorTexture());
 
-        shader.setUniform("uHdrTexture", 0);
-        shader.setUniform("uColorGradingEnabled", settings.isEnabled() ? 1 : 0);
-        shader.setUniform("uToneMappingEnabled", settings.isToneMappingEnabled() ? 1 : 0);
-        shader.setUniform("uExposure", settings.getExposure());
-        shader.setUniform("uContrast", settings.getContrast());
-        shader.setUniform("uSaturation", settings.getSaturation());
-        shader.setUniform("uVibrance", settings.getVibrance());
-        shader.setUniform("uGamma", settings.getGamma());
-        shader.setUniform("uTemperature", settings.getTemperature());
+        texelSize.set(1.0f / Math.max(1, context.getViewportWidth()), 1.0f / Math.max(1, context.getViewportHeight()));
+        shader.setUniform("uSourceTexture", 0);
+        shader.setUniform("uTexelSize", texelSize);
 
         fullscreenQuad.render();
 
         glBindTexture(GL_TEXTURE_2D, 0);
         shader.unbind();
         glPolygonMode(GL_FRONT_AND_BACK, polygonMode[0]);
+        context.setCurrentColorTarget("antiAliasColor");
     }
 
     @Override

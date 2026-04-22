@@ -2,13 +2,17 @@ package org.weaw.engine.graphics.pipeline;
 
 public class LightingSettings {
     private final boolean[] enabled = {true};
-    private final float[] ambientColor = {0.72f, 0.82f, 1.0f};
-    private final float[] ambientIntensity = {0.38f};
-    private final float[] sunColor = {1.0f, 0.94f, 0.82f};
-    private final float[] sunIntensity = {1.85f};
+
+    private final float[] ambientColor = {0.60f, 0.66f, 0.76f};
+    private final float[] ambientIntensity = {0.28f};
+
+    private final float[] sunColor = {1.0f, 0.90f, 0.72f};
+    private final float[] sunIntensity = {1.45f};
+
     private final float[] sunDirection = {-0.35f, 0.86f, -0.28f};
-    private final float[] skyColor = {0.53f, 0.78f, 0.92f};
-    private final float[] skyIntensity = {1.25f};
+
+    private final float[] skyColor = {0.47f, 0.68f, 0.90f};
+    private final float[] skyIntensity = {0.8f};
 
     public boolean isEnabled() {
         return enabled[0];

@@ -65,9 +65,9 @@ public class DebugImGuiPass implements RenderPass {
     private boolean showArenaWindow = false;
     private boolean showChunkProfilingWindow = false;
     private boolean showResourcesWindow = false;
-    private boolean showLightingWindow = true;
-    private boolean showColorGradingWindow = true;
-    private boolean showFogWindow = true;
+    private boolean showLightingWindow = false;
+    private boolean showColorGradingWindow = false;
+    private boolean showFogWindow = false;
     private boolean showJvmWindow = false;
     private boolean showDeviceWindow = false;
     private boolean showPassBreakdownWindow = false;

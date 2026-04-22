@@ -3,12 +3,12 @@ package org.weaw.engine.graphics.pipeline;
 public class ColorGradingSettings {
     private final boolean[] enabled = {true};
     private final boolean[] toneMappingEnabled = {true};
-    private final float[] exposure = {0.039f};
-    private final float[] contrast = {1.024f};
-    private final float[] saturation = {1.095f};
-    private final float[] vibrance = {0.319f};
-    private final float[] gamma = {1f};
-    private final float[] temperature = {0.068f};
+    private final float[] exposure = {0.045f};
+    private final float[] contrast = {1.18f};
+    private final float[] saturation = {1.05f};
+    private final float[] vibrance = {0.14f};
+    private final float[] gamma = {1.0f};
+    private final float[] temperature = {0.05f};
 
     public boolean isEnabled() {
         return enabled[0];
