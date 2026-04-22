@@ -12,6 +12,9 @@ import org.weaw.game.World;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.utils.BlockRegistry;
+import org.weaw.gameplay.GameplaySession;
+import org.weaw.gameplay.GameplaySettings;
+import org.weaw.gameplay.TargetedBlock;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
 import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
@@ -27,6 +30,7 @@ public class Game {
     private Renderer renderer;
     private Camera camera;
     private World world;
+    private GameplaySession gameplaySession;
 
     private double lastTime;
 
@@ -52,6 +56,8 @@ public class Game {
         inputManager.create();
 
         world = createTestWorld();
+        gameplaySession = new GameplaySession(world, new GameplaySettings());
+        gameplaySession.setPlayerPosition(new Vector3f(16.0f, 12.0f, 48.0f));
 
         renderer = new Renderer(window, world, inputManager, BlockRegistry.getRegisteredBlocks().values());
         renderer.create();
@@ -60,7 +66,7 @@ public class Game {
         window.setRenderer(renderer);
 
         camera = new Camera(90f,window.aspectRatio());
-        camera.setPosition(new Vector3f(16.0f, 12.0f, 48.0f));
+        syncCameraToPlayer();
 
         lastTime = System.nanoTime() / 1_000_000_000.0; // secondes
     }
@@ -155,16 +161,41 @@ public class Game {
             wireframe = !wireframe;
         }
 
-        if (window.isCursorLocked()) {
-            camera.update(deltaTime, inputManager);
-        }
+        gameplaySession.update(deltaTime, inputManager, window.isCursorLocked());
+        updateRenderInteractionTarget();
+        syncCameraToPlayer();
         camera.setAspectRatio(window.aspectRatio());
-
-        world.update(camera.getPosition());
     }
 
     private void render() {
         renderer.render(camera);
+    }
+
+    private void syncCameraToPlayer() {
+        camera.setPose(
+                gameplaySession.getPlayer().getPosition(),
+                gameplaySession.getPlayer().getYaw(),
+                gameplaySession.getPlayer().getPitch()
+        );
+    }
+
+    private void updateRenderInteractionTarget() {
+        if (!window.isCursorLocked()) {
+            renderer.getContext().clearBlockOutlineTarget();
+            return;
+        }
+
+        TargetedBlock targetedBlock = gameplaySession.getTargetedBlock();
+        if (targetedBlock == null) {
+            renderer.getContext().clearBlockOutlineTarget();
+            return;
+        }
+
+        renderer.getContext().setBlockOutlineTarget(
+                targetedBlock.blockX(),
+                targetedBlock.blockY(),
+                targetedBlock.blockZ()
+        );
     }
 
     private void safeCleanup(String label, Runnable cleanupAction) {

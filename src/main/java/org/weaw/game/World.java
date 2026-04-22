@@ -6,6 +6,7 @@ import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.generation.WorldGenerator;
 import org.weaw.game.utils.BlockDefinition;
+import org.weaw.game.utils.BlockRegistry;
 
 import java.util.Objects;
 
@@ -68,6 +69,25 @@ public class World implements AutoCloseable, WorldBlockProvider {
         markChunksDirtyForBlockChange(worldX, worldY, worldZ);
     }
 
+    public boolean trySetBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {
+        if (!containsChunkAtWorld(worldX, worldY, worldZ)) {
+            return false;
+        }
+
+        setBlockAtWorld(worldX, worldY, worldZ, block);
+        return true;
+    }
+
+    public boolean isSolidBlockAtWorld(int worldX, int worldY, int worldZ) {
+        BlockDefinition block = BlockRegistry.getBlock(getBlockAtWorld(worldX, worldY, worldZ));
+        return block != null && block.isSolid();
+    }
+
+    public boolean containsChunkAtWorld(int worldX, int worldY, int worldZ) {
+        ChunkPosition position = toChunkPosition(worldX, worldY, worldZ);
+        return chunkManager.hasChunk(position.x(), position.y(), position.z());
+    }
+
     @Override
     public void close() {
         worldStreamer.close();
@@ -94,7 +114,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
         for (int offsetX : offsetXs) {
             for (int offsetY : offsetYs) {
                 for (int offsetZ : offsetZs) {
-                    worldStreamer.markChunkDirty(new ChunkPosition(
+                    worldStreamer.markChunkDirtyPriority(new ChunkPosition(
                             center.x() + offsetX,
                             center.y() + offsetY,
                             center.z() + offsetZ

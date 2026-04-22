@@ -54,6 +54,10 @@ public class RenderContext {
     private long chunkVisibilityFrameIndex = Long.MIN_VALUE;
     private long chunkVisibilityUploadsVersion = Long.MIN_VALUE;
     private long chunkVisibilityCameraVersion = Long.MIN_VALUE;
+    private boolean hasBlockOutlineTarget;
+    private int blockOutlineTargetX;
+    private int blockOutlineTargetY;
+    private int blockOutlineTargetZ;
     private final Set<ChunkPosition> visibleChunkPositions = new HashSet<>();
 
     public RenderContext(int viewportWidth, int viewportHeight) {
@@ -116,6 +120,17 @@ public class RenderContext {
         opaqueChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 4096);
         cutoutChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
         transparentChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
+    }
+
+    public void setBlockOutlineTarget(int x, int y, int z) {
+        hasBlockOutlineTarget = true;
+        blockOutlineTargetX = x;
+        blockOutlineTargetY = y;
+        blockOutlineTargetZ = z;
+    }
+
+    public void clearBlockOutlineTarget() {
+        hasBlockOutlineTarget = false;
     }
 
     /**

@@ -6,8 +6,6 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.weaw.engine.input.InputAction;
-import org.weaw.engine.input.InputManager;
 
 public class Camera {
 
@@ -26,37 +24,10 @@ public class Camera {
     private float pitch = 0; // top/bot
     private float yaw = -90; // left/right
 
-    //TODO Temporary
-    private final float moveSpeed = 15.0f;
-    private final float mouseSensitivity = 0.15f;
-
     public Camera(float fov, float aspectRatio) {
         this.aspectRatio = aspectRatio;
         this.fov = fov;
         LOGGER.debug("Camera created. FOV: {} - Aspect Ratio: {}", this.fov, this.aspectRatio);
-    }
-
-    //TODO Temporary
-    public void update(float dt, InputManager input) {
-        Vector3f movement = new Vector3f();
-
-        float speed = moveSpeed * dt;
-
-        if (input.isActionDown(InputAction.MOVE_FORWARD)) movement.z += 1;
-        if (input.isActionDown(InputAction.MOVE_BACKWARD)) movement.z -= 1;
-        if (input.isActionDown(InputAction.MOVE_LEFT)) movement.x -= 1;
-        if (input.isActionDown(InputAction.MOVE_RIGHT)) movement.x += 1;
-        if (input.isActionDown(InputAction.SPRINT)) speed *= 2;
-
-        if (movement.lengthSquared() > 0) {
-            movement.normalize().mul(speed);
-            moveRelative(movement);
-        }
-
-        // Rotation via souris
-        float dx = input.getMousePosition().deltaX();
-        float dy = input.getMousePosition().deltaY();
-        rotate(dx * mouseSensitivity, dy * mouseSensitivity);
     }
 
     public void move(Vector3f offset) {
@@ -166,6 +137,29 @@ public class Camera {
 
     public void setPosition(Vector3f position) {
         this.position.set(position);
+        visibilityVersion++;
+    }
+
+    public void setRotation(float yaw, float pitch) {
+        float clampedPitch = Math.max(-89f, Math.min(89f, pitch));
+        if (Float.compare(this.yaw, yaw) == 0 && Float.compare(this.pitch, clampedPitch) == 0) {
+            return;
+        }
+        this.yaw = yaw;
+        this.pitch = clampedPitch;
+        visibilityVersion++;
+    }
+
+    public void setPose(Vector3f position, float yaw, float pitch) {
+        boolean changed = !this.position.equals(position);
+        float clampedPitch = Math.max(-89f, Math.min(89f, pitch));
+        changed = changed || Float.compare(this.yaw, yaw) != 0 || Float.compare(this.pitch, clampedPitch) != 0;
+        if (!changed) {
+            return;
+        }
+        this.position.set(position);
+        this.yaw = yaw;
+        this.pitch = clampedPitch;
         visibilityVersion++;
     }
 

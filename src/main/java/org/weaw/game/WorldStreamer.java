@@ -42,6 +42,7 @@ public class WorldStreamer implements AutoCloseable {
     private final Queue<CompletedChunk> completedChunks = new ConcurrentLinkedQueue<>();
     private final Object taskLock = new Object();
     private final Map<ChunkPosition, ChunkBuildTask> activeChunkTasks = new LinkedHashMap<>();
+    private final Set<ChunkPosition> priorityDirtyChunkPositions = new LinkedHashSet<>();
     private final Set<ChunkPosition> dirtyChunkPositions = new LinkedHashSet<>();
     private final Set<ChunkPosition> desiredChunkPositions = new HashSet<>();
 
@@ -176,6 +177,7 @@ public class WorldStreamer implements AutoCloseable {
     public void close() {
         synchronized (taskLock) {
             activeChunkTasks.clear();
+            priorityDirtyChunkPositions.clear();
             dirtyChunkPositions.clear();
             desiredChunkPositions.clear();
         }
@@ -190,7 +192,17 @@ public class WorldStreamer implements AutoCloseable {
 
     public void markChunkDirty(ChunkPosition position) {
         synchronized (taskLock) {
+            if (priorityDirtyChunkPositions.contains(position)) {
+                return;
+            }
             dirtyChunkPositions.add(position);
+        }
+    }
+
+    public void markChunkDirtyPriority(ChunkPosition position) {
+        synchronized (taskLock) {
+            dirtyChunkPositions.remove(position);
+            priorityDirtyChunkPositions.add(position);
         }
     }
 
@@ -582,12 +594,20 @@ public class WorldStreamer implements AutoCloseable {
 
     private List<ChunkPosition> snapshotDirtyChunks() {
         synchronized (taskLock) {
-            return List.copyOf(dirtyChunkPositions);
+            if (priorityDirtyChunkPositions.isEmpty()) {
+                return List.copyOf(dirtyChunkPositions);
+            }
+
+            List<ChunkPosition> snapshot = new ArrayList<>(priorityDirtyChunkPositions.size() + dirtyChunkPositions.size());
+            snapshot.addAll(priorityDirtyChunkPositions);
+            snapshot.addAll(dirtyChunkPositions);
+            return List.copyOf(snapshot);
         }
     }
 
     private void removeDirtyChunk(ChunkPosition position) {
         synchronized (taskLock) {
+            priorityDirtyChunkPositions.remove(position);
             dirtyChunkPositions.remove(position);
         }
     }
