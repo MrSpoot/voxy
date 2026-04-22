@@ -2,28 +2,40 @@ package org.weaw.game;
 
 import org.joml.Vector3f;
 import org.weaw.game.ChunkManager.ChunkPosition;
-import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.generation.WorldGenerator;
+import org.weaw.game.utils.BlockDefinition;
+
+import java.util.Objects;
 
 public class World implements AutoCloseable, WorldBlockProvider {
     private final ChunkManager chunkManager;
     private final WorldStreamer worldStreamer;
     private final WorldGenerator worldGenerator;
+    private final WorldSettings settings;
 
     public World() {
         this(new NoiseWorldGenerator(GenerationConfig.defaults()));
     }
 
     public World(WorldGenerator worldGenerator) {
+        this(worldGenerator, new WorldSettings());
+    }
+
+    public World(WorldGenerator worldGenerator, WorldSettings settings) {
         this.chunkManager = new ChunkManager();
-        this.worldGenerator = worldGenerator;
-        this.worldStreamer = new WorldStreamer(chunkManager, this, worldGenerator);
+        this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
+        this.settings = Objects.requireNonNull(settings, "settings");
+        this.worldStreamer = new WorldStreamer(chunkManager, this, worldGenerator, settings);
     }
 
     public ChunkManager getChunkManager() {
         return chunkManager;
+    }
+
+    public WorldSettings getSettings() {
+        return settings;
     }
 
     public void update(Vector3f playerPosition) {

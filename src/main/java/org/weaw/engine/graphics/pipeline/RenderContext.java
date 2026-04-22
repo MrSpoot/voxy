@@ -7,6 +7,7 @@ import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.graphics.utils.ChunkFaceArena;
 import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.WorldSettings;
 
 import java.util.HashSet;
 import java.util.HashMap;
@@ -40,6 +41,10 @@ public class RenderContext {
     // Key examples: "sceneColor", "sceneDepth", "postProcessOutput"
     private final Map<String, RenderTarget> renderTargets = new HashMap<>();
     private final RenderStats renderStats = new RenderStats();
+    private final ColorGradingSettings colorGradingSettings = new ColorGradingSettings();
+    private final LightingSettings lightingSettings = new LightingSettings();
+    private final FogSettings fogSettings = new FogSettings();
+    private WorldSettings worldSettings = new WorldSettings();
     private BlockTextureManager blockTextureManager;
     private int sharedChunkVao;
     private ChunkFaceArena opaqueChunkFaceArena;

@@ -5,6 +5,8 @@ import org.joml.Vector3i;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.generation.GenerationConfig;
+import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.generation.WorldGenerator;
 
 import java.util.ArrayList;
@@ -28,22 +30,24 @@ public class WorldStreamer implements AutoCloseable {
     private final ChunkManager chunkManager;
     private final WorldBlockProvider blockProvider;
     private final WorldGenerator worldGenerator;
+    private final WorldSettings settings;
     private final ExecutorService executor;
-    private final int horizontalRenderRadius;
+    private final int horizontalUnloadPadding;
     private final int verticalRenderHeight;
-    private final int horizontalUnloadRadius;
     private final int verticalUnloadHeight;
     private final int maxSubmissionsPerUpdate;
     private final int maxPublishesPerUpdate;
     private final int maxQueuedChunkCount;
     private final long maxUpdateBudgetNs;
-    private final List<ChunkOffset> sortedDesiredOffsets;
     private final Queue<CompletedChunk> completedChunks = new ConcurrentLinkedQueue<>();
     private final Object taskLock = new Object();
     private final Map<ChunkPosition, ChunkBuildTask> activeChunkTasks = new LinkedHashMap<>();
     private final Set<ChunkPosition> dirtyChunkPositions = new LinkedHashSet<>();
     private final Set<ChunkPosition> desiredChunkPositions = new HashSet<>();
 
+    private int activeHorizontalRenderRadius = -1;
+    private int activeHorizontalUnloadRadius = -1;
+    private List<ChunkOffset> sortedDesiredOffsets = List.of();
     private ChunkPosition cachedPlayerChunk;
     private List<ChunkPosition> cachedDesiredPositions = List.of();
     private List<ChunkPosition> pendingUnloadPositions = List.of();
@@ -52,15 +56,33 @@ public class WorldStreamer implements AutoCloseable {
     private int unloadCursor;
     private long nextBuildToken = 1L;
 
+    public WorldStreamer(ChunkManager chunkManager, WorldBlockProvider blockProvider) {
+        this(
+                chunkManager,
+                blockProvider,
+                new NoiseWorldGenerator(GenerationConfig.defaults()),
+                new WorldSettings()
+        );
+    }
+
     public WorldStreamer(ChunkManager chunkManager, WorldBlockProvider blockProvider, WorldGenerator worldGenerator) {
+        this(chunkManager, blockProvider, worldGenerator, new WorldSettings());
+    }
+
+    public WorldStreamer(
+            ChunkManager chunkManager,
+            WorldBlockProvider blockProvider,
+            WorldGenerator worldGenerator,
+            WorldSettings settings
+    ) {
         this(
                 chunkManager,
                 blockProvider,
                 worldGenerator,
-                32,
+                settings,
                 20,
-                34,
                 24,
+                2,
                 12,
                 4,
                 resolveUpdateBudgetNs()
@@ -81,10 +103,10 @@ public class WorldStreamer implements AutoCloseable {
                 chunkManager,
                 blockProvider,
                 worldGenerator,
-                horizontalRenderRadius,
+                new WorldSettings(horizontalRenderRadius),
                 verticalRenderHeight,
-                horizontalUnloadRadius,
                 verticalUnloadHeight,
+                Math.max(2, horizontalUnloadRadius - horizontalRenderRadius),
                 maxSubmissionsPerUpdate,
                 Math.max(1, maxSubmissionsPerUpdate / 3),
                 resolveUpdateBudgetNs()
@@ -95,10 +117,10 @@ public class WorldStreamer implements AutoCloseable {
             ChunkManager chunkManager,
             WorldBlockProvider blockProvider,
             WorldGenerator worldGenerator,
-            int horizontalRenderRadius,
+            WorldSettings settings,
             int verticalRenderHeight,
-            int horizontalUnloadRadius,
             int verticalUnloadHeight,
+            int horizontalUnloadPadding,
             int maxSubmissionsPerUpdate,
             int maxPublishesPerUpdate,
             long maxUpdateBudgetNs
@@ -106,23 +128,31 @@ public class WorldStreamer implements AutoCloseable {
         this.chunkManager = chunkManager;
         this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
-        this.horizontalRenderRadius = horizontalRenderRadius;
+        this.settings = Objects.requireNonNull(settings, "settings");
         this.verticalRenderHeight = verticalRenderHeight;
-        this.horizontalUnloadRadius = Math.max(horizontalUnloadRadius, horizontalRenderRadius + 2);
         this.verticalUnloadHeight = Math.max(verticalUnloadHeight, verticalRenderHeight + 4);
+        this.horizontalUnloadPadding = Math.max(2, horizontalUnloadPadding);
         this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
         this.maxPublishesPerUpdate = Math.max(1, maxPublishesPerUpdate);
         this.maxUpdateBudgetNs = Math.max(250_000L, maxUpdateBudgetNs);
         int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
         this.maxQueuedChunkCount = Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2);
-        this.sortedDesiredOffsets = createSortedDesiredOffsets();
         this.executor = Executors.newFixedThreadPool(workerCount);
     }
 
     public void update(Vector3f playerPosition) {
         long deadlineNs = System.nanoTime() + maxUpdateBudgetNs;
         ChunkPosition playerChunk = toChunkPosition(playerPosition);
-        if (!playerChunk.equals(cachedPlayerChunk)) {
+        int requestedRenderRadius = settings.getRenderDistanceChunks();
+        boolean renderRadiusChanged = requestedRenderRadius != activeHorizontalRenderRadius;
+
+        if (renderRadiusChanged) {
+            activeHorizontalRenderRadius = requestedRenderRadius;
+            activeHorizontalUnloadRadius = requestedRenderRadius + horizontalUnloadPadding;
+            sortedDesiredOffsets = createSortedDesiredOffsets(activeHorizontalRenderRadius);
+        }
+
+        if (renderRadiusChanged || !playerChunk.equals(cachedPlayerChunk)) {
             cachedDesiredPositions = translateDesiredOffsets(playerChunk);
             synchronized (taskLock) {
                 desiredChunkPositions.clear();
@@ -135,6 +165,7 @@ public class WorldStreamer implements AutoCloseable {
             unloadCursor = 0;
             cancelObsoleteLoadTasks();
         }
+
         processPendingUnloads(deadlineNs);
         publishCompletedChunks(deadlineNs);
         submitDirtyChunks(deadlineNs);
@@ -170,7 +201,7 @@ public class WorldStreamer implements AutoCloseable {
 
         int minUnloadY = getMinChunkY(pendingUnloadPlayerChunk.y(), verticalUnloadHeight);
         int maxUnloadY = getMaxChunkY(pendingUnloadPlayerChunk.y(), verticalUnloadHeight);
-        int unloadRadiusSquared = horizontalUnloadRadius * horizontalUnloadRadius;
+        int unloadRadiusSquared = activeHorizontalUnloadRadius * activeHorizontalUnloadRadius;
 
         while (unloadCursor < pendingUnloadPositions.size()) {
             ChunkPosition position = pendingUnloadPositions.get(unloadCursor++);
@@ -360,7 +391,7 @@ public class WorldStreamer implements AutoCloseable {
         }
     }
 
-    private List<ChunkOffset> createSortedDesiredOffsets() {
+    private List<ChunkOffset> createSortedDesiredOffsets(int horizontalRenderRadius) {
         List<ChunkOffset> offsets = new ArrayList<>();
         int minRenderY = getMinChunkY(0, verticalRenderHeight);
         int maxRenderY = getMaxChunkY(0, verticalRenderHeight);

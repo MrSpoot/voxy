@@ -5,6 +5,10 @@ import imgui.ImGuiIO;
 import imgui.flag.ImGuiCond;
 import imgui.gl3.ImGuiImplGl3;
 import imgui.glfw.ImGuiImplGlfw;
+import imgui.type.ImBoolean;
+import org.weaw.engine.graphics.pipeline.ColorGradingSettings;
+import org.weaw.engine.graphics.pipeline.FogSettings;
+import org.weaw.engine.graphics.pipeline.LightingSettings;
 import org.lwjgl.glfw.GLFW;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
@@ -13,6 +17,8 @@ import org.weaw.engine.graphics.utils.ChunkFaceArena;
 import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
+import org.weaw.game.Chunk;
+import org.weaw.game.WorldSettings;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,11 +59,15 @@ public class DebugImGuiPass implements RenderPass {
     private int maxShaderStorageBindings;
     private double lastStatsRefreshTime;
     private boolean showOverviewWindow = true;
+    private boolean showParametersWindow = true;
     private boolean showFrameWindow = false;
     private boolean showGpuWindow = false;
     private boolean showArenaWindow = false;
     private boolean showChunkProfilingWindow = false;
     private boolean showResourcesWindow = false;
+    private boolean showLightingWindow = true;
+    private boolean showColorGradingWindow = true;
+    private boolean showFogWindow = true;
     private boolean showJvmWindow = false;
     private boolean showDeviceWindow = false;
     private boolean showPassBreakdownWindow = false;
@@ -67,11 +77,15 @@ public class DebugImGuiPass implements RenderPass {
     private final Map<String, ChunkProfilingHistory> chunkProfilingHistories = new HashMap<>();
     private DisplaySnapshot displaySnapshot = DisplaySnapshot.empty();
     private WindowRect overviewRect = WindowRect.of(10.0f, 35.0f, 320.0f, 120.0f);
+    private WindowRect parametersRect = WindowRect.of(10.0f, 170.0f, 320.0f, 120.0f);
     private WindowRect frameRect = WindowRect.of(10.0f, 170.0f, 360.0f, 145.0f);
     private WindowRect gpuRect = WindowRect.of(390.0f, 170.0f, 360.0f, 125.0f);
     private WindowRect arenaRect = WindowRect.of(390.0f, 315.0f, 360.0f, 300.0f);
     private WindowRect chunkProfilingRect = WindowRect.of(770.0f, 315.0f, 460.0f, 200.0f);
     private WindowRect resourcesRect = WindowRect.of(770.0f, 170.0f, 360.0f, 155.0f);
+    private WindowRect lightingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 285.0f);
+    private WindowRect colorGradingRect = WindowRect.of(770.0f, 635.0f, 360.0f, 270.0f);
+    private WindowRect fogRect = WindowRect.of(770.0f, 920.0f, 360.0f, 265.0f);
     private WindowRect jvmRect = WindowRect.of(10.0f, 335.0f, 360.0f, 110.0f);
     private WindowRect deviceRect = WindowRect.of(390.0f, 555.0f, 360.0f, 150.0f);
     private WindowRect passBreakdownRect = WindowRect.of(770.0f, 530.0f, 460.0f, 230.0f);
@@ -124,11 +138,15 @@ public class DebugImGuiPass implements RenderPass {
 
         renderMainMenuBar();
         renderOverviewWindow(context);
+        renderParametersWindow(context);
         renderFrameWindow();
         renderGpuWindow();
         renderArenaWindow(context);
         renderChunkProfilingWindow(context);
         renderResourcesWindow();
+        renderLightingWindow(context);
+        renderColorGradingWindow(context);
+        renderFogWindow(context);
         renderJvmWindow();
         renderDeviceWindow();
         renderPassBreakdownWindow();
@@ -192,12 +210,20 @@ public class DebugImGuiPass implements RenderPass {
             ImGui.endMenu();
         }
 
+        if (ImGui.beginMenu("Debug")) {
+            showParametersWindow = toggleWindowMenuItem("Parameters", showParametersWindow);
+            ImGui.endMenu();
+        }
+
         if (ImGui.beginMenu("Render")) {
             showFrameWindow = toggleWindowMenuItem("Frame Stats", showFrameWindow);
             showGpuWindow = toggleWindowMenuItem("GPU Memory", showGpuWindow);
             showArenaWindow = toggleWindowMenuItem("Chunk Arenas", showArenaWindow);
             showChunkProfilingWindow = toggleWindowMenuItem("Chunk Profiling", showChunkProfilingWindow);
             showResourcesWindow = toggleWindowMenuItem("Resources", showResourcesWindow);
+            showLightingWindow = toggleWindowMenuItem("Lighting", showLightingWindow);
+            showColorGradingWindow = toggleWindowMenuItem("Tone Mapping", showColorGradingWindow);
+            showFogWindow = toggleWindowMenuItem("Fog", showFogWindow);
             showPassBreakdownWindow = toggleWindowMenuItem("Pass Breakdown", showPassBreakdownWindow);
             ImGui.endMenu();
         }
@@ -268,6 +294,30 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.end();
     }
 
+    private void renderParametersWindow(RenderContext context) {
+        if (!showParametersWindow) {
+            return;
+        }
+
+        WorldSettings settings = context.getWorldSettings();
+        applyWindowLayout(parametersRect, 0.9f);
+        ImGui.begin("Debug Parameters");
+        ImGui.sliderFloat(
+                "Render Distance",
+                settings.renderDistanceChunksRef(),
+                WorldSettings.MIN_RENDER_DISTANCE_CHUNKS,
+                WorldSettings.MAX_RENDER_DISTANCE_CHUNKS
+        );
+        int renderDistanceChunks = settings.getRenderDistanceChunks();
+        ImGui.text(String.format("Chunks: %d", renderDistanceChunks));
+        ImGui.text(String.format("Blocks: %d", renderDistanceChunks * Chunk.SIZE));
+        if (ImGui.button("Reset##DebugParameters")) {
+            settings.reset();
+        }
+        ImGui.end();
+    }
+
+
     private void renderGpuWindow() {
         if (!showGpuWindow) {
             return;
@@ -310,6 +360,91 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.text(displaySnapshot.indirectBufferLine);
         ImGui.text(displaySnapshot.renderTargetLine);
         ImGui.text(displaySnapshot.attachmentLine);
+        ImGui.end();
+    }
+
+    private void renderLightingWindow(RenderContext context) {
+        if (!showLightingWindow) {
+            return;
+        }
+
+        LightingSettings settings = context.getLightingSettings();
+        applyWindowLayout(lightingRect, 0.9f);
+        ImGui.begin("Render Lighting");
+        ImBoolean enabled = new ImBoolean(settings.isEnabled());
+        if (ImGui.checkbox("Enabled", enabled)) {
+            settings.setEnabled(enabled.get());
+        }
+        ImGui.separator();
+        ImGui.colorEdit3("Ambient Color", settings.ambientColorRef());
+        ImGui.sliderFloat("Ambient Intensity", settings.ambientIntensityRef(), 0.0f, 2.0f);
+        ImGui.colorEdit3("Sun Color", settings.sunColorRef());
+        ImGui.sliderFloat("Sun Intensity", settings.sunIntensityRef(), 0.0f, 8.0f);
+        ImGui.sliderFloat3("Sun Direction", settings.sunDirectionRef(), -1.0f, 1.0f);
+        ImGui.colorEdit3("Sky Color", settings.skyColorRef());
+        ImGui.sliderFloat("Sky Intensity", settings.skyIntensityRef(), 0.0f, 4.0f);
+        if (ImGui.button("Reset##Lighting")) {
+            settings.reset();
+        }
+        ImGui.end();
+    }
+
+    private void renderColorGradingWindow(RenderContext context) {
+        if (!showColorGradingWindow) {
+            return;
+        }
+
+        ColorGradingSettings settings = context.getColorGradingSettings();
+        applyWindowLayout(colorGradingRect, 0.9f);
+        ImGui.begin("Render Tone Mapping");
+        ImBoolean toneMappingEnabled = new ImBoolean(settings.isToneMappingEnabled());
+        if (ImGui.checkbox("Tone Mapping", toneMappingEnabled)) {
+            settings.setToneMappingEnabled(toneMappingEnabled.get());
+        }
+        ImBoolean enabled = new ImBoolean(settings.isEnabled());
+        if (ImGui.checkbox("Color Grading", enabled)) {
+            settings.setEnabled(enabled.get());
+        }
+        ImGui.separator();
+        ImGui.sliderFloat("Exposure", settings.exposureRef(), -2.0f, 2.0f);
+        ImGui.sliderFloat("Contrast", settings.contrastRef(), 0.5f, 2.0f);
+        ImGui.sliderFloat("Saturation", settings.saturationRef(), 0.0f, 2.5f);
+        ImGui.sliderFloat("Vibrance", settings.vibranceRef(), -1.0f, 1.0f);
+        ImGui.sliderFloat("Gamma", settings.gammaRef(), 1.0f, 3.0f);
+        ImGui.sliderFloat("Temperature", settings.temperatureRef(), -0.4f, 0.4f);
+        ImGui.separator();
+        if (ImGui.button("Reset")) {
+            settings.reset();
+        }
+        ImGui.end();
+    }
+
+    private void renderFogWindow(RenderContext context) {
+        if (!showFogWindow) {
+            return;
+        }
+
+        FogSettings settings = context.getFogSettings();
+        applyWindowLayout(fogRect, 0.9f);
+        ImGui.begin("Render Fog");
+        ImBoolean enabled = new ImBoolean(settings.isEnabled());
+        if (ImGui.checkbox("Enabled", enabled)) {
+            settings.setEnabled(enabled.get());
+        }
+        ImGui.separator();
+        ImGui.sliderFloat("Start Ratio", settings.startRatioRef(), 0.0f, 0.98f);
+        ImGui.sliderFloat("End Ratio", settings.endRatioRef(), 0.01f, 1.2f);
+        ImGui.sliderFloat("Intensity", settings.intensityRef(), 0.0f, 1.0f);
+        ImGui.sliderFloat("Density", settings.densityRef(), 0.05f, 4.0f);
+        ImGui.colorEdit3("Color", settings.colorRef());
+        ImGui.separator();
+        float renderDistance = context.getWorldSettings().getRenderDistanceChunks() * Chunk.SIZE;
+        ImGui.text(String.format("Render distance: %d chunks", context.getWorldSettings().getRenderDistanceChunks()));
+        ImGui.text(String.format("Fog start: %.0f blocks", renderDistance * settings.getStartRatio()));
+        ImGui.text(String.format("Fog end: %.0f blocks", renderDistance * settings.getEndRatio()));
+        if (ImGui.button("Reset##Fog")) {
+            settings.reset();
+        }
         ImGui.end();
     }
 
@@ -487,7 +622,8 @@ public class DebugImGuiPass implements RenderPass {
             float rightX = middleX + columnWidth + gap;
 
             overviewRect = WindowRect.of(leftX, top, columnWidth, 120.0f);
-            frameRect = WindowRect.of(leftX, overviewRect.bottom() + rowGap, columnWidth, 145.0f);
+            parametersRect = WindowRect.of(leftX, overviewRect.bottom() + rowGap, columnWidth, 120.0f);
+            frameRect = WindowRect.of(leftX, parametersRect.bottom() + rowGap, columnWidth, 145.0f);
             jvmRect = WindowRect.of(leftX, frameRect.bottom() + rowGap, columnWidth, 110.0f);
 
             gpuRect = WindowRect.of(middleX, top + 135.0f, columnWidth, 125.0f);
@@ -495,7 +631,10 @@ public class DebugImGuiPass implements RenderPass {
             deviceRect = WindowRect.of(middleX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
 
             resourcesRect = WindowRect.of(rightX, top + 135.0f, columnWidth, 155.0f);
-            chunkProfilingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 200.0f);
+            lightingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
+            colorGradingRect = WindowRect.of(rightX, lightingRect.bottom() + rowGap, columnWidth, 270.0f);
+            fogRect = WindowRect.of(rightX, colorGradingRect.bottom() + rowGap, columnWidth, 265.0f);
+            chunkProfilingRect = WindowRect.of(rightX, fogRect.bottom() + rowGap, columnWidth, 200.0f);
             float passHeight = Math.max(160.0f, viewportHeight - (chunkProfilingRect.bottom() + rowGap + margin));
             passBreakdownRect = WindowRect.of(rightX, chunkProfilingRect.bottom() + rowGap, columnWidth, passHeight);
             return;
@@ -507,13 +646,17 @@ public class DebugImGuiPass implements RenderPass {
             float rightX = leftX + columnWidth + gap;
 
             overviewRect = WindowRect.of(margin, top, contentWidth, 120.0f);
-            frameRect = WindowRect.of(leftX, overviewRect.bottom() + rowGap, columnWidth, 145.0f);
+            parametersRect = WindowRect.of(leftX, overviewRect.bottom() + rowGap, columnWidth, 120.0f);
+            frameRect = WindowRect.of(leftX, parametersRect.bottom() + rowGap, columnWidth, 145.0f);
             gpuRect = WindowRect.of(rightX, overviewRect.bottom() + rowGap, columnWidth, 125.0f);
             jvmRect = WindowRect.of(leftX, frameRect.bottom() + rowGap, columnWidth, 110.0f);
             arenaRect = WindowRect.of(rightX, gpuRect.bottom() + rowGap, columnWidth, 300.0f);
             resourcesRect = WindowRect.of(leftX, jvmRect.bottom() + rowGap, columnWidth, 155.0f);
+            lightingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
+            colorGradingRect = WindowRect.of(leftX, lightingRect.bottom() + rowGap, columnWidth, 270.0f);
             deviceRect = WindowRect.of(rightX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
-            chunkProfilingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, contentWidth, 200.0f);
+            fogRect = WindowRect.of(rightX, deviceRect.bottom() + rowGap, columnWidth, 265.0f);
+            chunkProfilingRect = WindowRect.of(leftX, Math.max(colorGradingRect.bottom(), fogRect.bottom()) + rowGap, contentWidth, 200.0f);
 
             float passY = Math.max(chunkProfilingRect.bottom(), deviceRect.bottom()) + rowGap;
             float passHeight = Math.max(180.0f, viewportHeight - (passY + margin));
@@ -523,11 +666,15 @@ public class DebugImGuiPass implements RenderPass {
 
         float fullWidth = contentWidth;
         overviewRect = WindowRect.of(margin, top, fullWidth, 120.0f);
-        frameRect = WindowRect.of(margin, overviewRect.bottom() + rowGap, fullWidth, 145.0f);
+        parametersRect = WindowRect.of(margin, overviewRect.bottom() + rowGap, fullWidth, 120.0f);
+        frameRect = WindowRect.of(margin, parametersRect.bottom() + rowGap, fullWidth, 145.0f);
         gpuRect = WindowRect.of(margin, frameRect.bottom() + rowGap, fullWidth, 125.0f);
         arenaRect = WindowRect.of(margin, gpuRect.bottom() + rowGap, fullWidth, 300.0f);
         resourcesRect = WindowRect.of(margin, arenaRect.bottom() + rowGap, fullWidth, 155.0f);
-        jvmRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 110.0f);
+        lightingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 285.0f);
+        colorGradingRect = WindowRect.of(margin, lightingRect.bottom() + rowGap, fullWidth, 270.0f);
+        fogRect = WindowRect.of(margin, colorGradingRect.bottom() + rowGap, fullWidth, 265.0f);
+        jvmRect = WindowRect.of(margin, fogRect.bottom() + rowGap, fullWidth, 110.0f);
         deviceRect = WindowRect.of(margin, jvmRect.bottom() + rowGap, fullWidth, 150.0f);
         chunkProfilingRect = WindowRect.of(margin, deviceRect.bottom() + rowGap, fullWidth, 220.0f);
         float passY = chunkProfilingRect.bottom() + rowGap;
@@ -590,11 +737,15 @@ public class DebugImGuiPass implements RenderPass {
 
     private void applyCompactLayout() {
         showOverviewWindow = true;
+        showParametersWindow = true;
         showFrameWindow = true;
         showGpuWindow = true;
         showArenaWindow = false;
         showChunkProfilingWindow = true;
         showResourcesWindow = false;
+        showLightingWindow = true;
+        showColorGradingWindow = true;
+        showFogWindow = true;
         showJvmWindow = false;
         showDeviceWindow = false;
         showPassBreakdownWindow = true;
@@ -603,11 +754,15 @@ public class DebugImGuiPass implements RenderPass {
 
     private void applyRenderingLayout() {
         showOverviewWindow = true;
+        showParametersWindow = true;
         showFrameWindow = true;
         showGpuWindow = true;
         showArenaWindow = true;
         showChunkProfilingWindow = true;
         showResourcesWindow = true;
+        showLightingWindow = true;
+        showColorGradingWindow = true;
+        showFogWindow = true;
         showJvmWindow = false;
         showDeviceWindow = false;
         showPassBreakdownWindow = true;
@@ -616,11 +771,15 @@ public class DebugImGuiPass implements RenderPass {
 
     private void showAllWindows() {
         showOverviewWindow = true;
+        showParametersWindow = true;
         showFrameWindow = true;
         showGpuWindow = true;
         showArenaWindow = true;
         showChunkProfilingWindow = true;
         showResourcesWindow = true;
+        showLightingWindow = true;
+        showColorGradingWindow = true;
+        showFogWindow = true;
         showJvmWindow = true;
         showDeviceWindow = true;
         showPassBreakdownWindow = true;
@@ -629,11 +788,15 @@ public class DebugImGuiPass implements RenderPass {
 
     private void hideAllWindows() {
         showOverviewWindow = false;
+        showParametersWindow = false;
         showFrameWindow = false;
         showGpuWindow = false;
         showArenaWindow = false;
         showChunkProfilingWindow = false;
         showResourcesWindow = false;
+        showLightingWindow = false;
+        showColorGradingWindow = false;
+        showFogWindow = false;
         showJvmWindow = false;
         showDeviceWindow = false;
         showPassBreakdownWindow = false;

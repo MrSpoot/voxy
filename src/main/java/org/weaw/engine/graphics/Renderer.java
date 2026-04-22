@@ -6,7 +6,9 @@ import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPipeline;
 import org.weaw.engine.graphics.pipeline.passes.CutoutChunkRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.DebugImGuiPass;
+import org.weaw.engine.graphics.pipeline.passes.FogPass;
 import org.weaw.engine.graphics.pipeline.passes.OpaqueChunkRenderPass;
+import org.weaw.engine.graphics.pipeline.passes.ToneMappingPass;
 import org.weaw.engine.graphics.pipeline.passes.TransparentChunkRenderPass;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.Camera;
@@ -35,11 +37,12 @@ public class Renderer {
         this.blockDefinitions = blockDefinitions;
     }
 
-    public void create(){
+    public void create() {
         LOGGER.info("Create Renderer with multi-pass pipeline");
 
         // Create render context (shared state for all passes)
         context = new RenderContext(window.getWidth(), window.getHeight());
+        context.setWorldSettings(world.getSettings());
         BlockTextureManager blockTextureManager = new BlockTextureManager(blockDefinitions);
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);
@@ -50,6 +53,8 @@ public class Renderer {
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
+        pipeline.addPass(new FogPass());
+        pipeline.addPass(new ToneMappingPass());
         pipeline.addPass(new DebugImGuiPass(window, inputManager));
 
         pipeline.create();
@@ -78,7 +83,7 @@ public class Renderer {
         pipeline.resize(width, height);
     }
 
-    public void cleanup(){
+    public void cleanup() {
         LOGGER.info("Cleaning up Renderer");
 
         // Cleanup rendering pipeline (cleans up all passes and FBOs)

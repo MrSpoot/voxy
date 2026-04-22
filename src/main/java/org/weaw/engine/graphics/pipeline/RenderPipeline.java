@@ -7,6 +7,8 @@ import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.lwjgl.opengl.GL30.GL_RGBA16F;
+
 /**
  * Manages and executes a sequence of render passes.
  *
@@ -156,8 +158,11 @@ public class RenderPipeline {
 
         // Main scene render target (color + depth)
         // Used by: OpaquePass (write), TransparentPass (read depth, write color), PostProcessPass (read)
-        RenderTarget sceneTarget = new RenderTarget("sceneColor", width, height, true);
+        RenderTarget sceneTarget = new RenderTarget("sceneColor", width, height, true, GL_RGBA16F);
         context.setRenderTarget("sceneColor", sceneTarget);
+
+        RenderTarget postProcessTarget = new RenderTarget("postProcessColor", width, height, false, GL_RGBA16F);
+        context.setRenderTarget("postProcessColor", postProcessTarget);
 
         LOGGER.info("Created shared render targets");
     }
