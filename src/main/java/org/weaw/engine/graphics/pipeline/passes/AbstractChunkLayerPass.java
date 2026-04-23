@@ -9,6 +9,7 @@ import org.weaw.engine.graphics.pipeline.RenderStats.ChunkPassMetrics;
 import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.ChunkFaceArena;
+import org.weaw.engine.graphics.utils.ChunkLightCache;
 import org.weaw.engine.graphics.utils.ChunkMultiDrawBatch;
 import org.weaw.engine.graphics.utils.Shader;
 import org.weaw.game.Chunk;
@@ -69,7 +70,11 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     @Override
     public final void execute(RenderContext context) {
         long syncStartNs = System.nanoTime();
-        synchronizeRenderEntries(context);
+        boolean requiresLightData = context.isLightDebugVisualizationEnabled()
+                || context.getLightingSettings().isBlockLightEnabled();
+        ChunkLightCache lightCache = context.getChunkLightCache();
+        lightCache.synchronize(requiresLightData);
+        synchronizeRenderEntries(context, lightCache);
         long syncCpuTimeNs = System.nanoTime() - syncStartNs;
 
         RenderTarget sceneTarget = context.getRenderTarget("sceneColor");
@@ -118,11 +123,15 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
         shader.useProgram();
         arena.bind();
+        lightCache.bind();
         multiDrawBatch.bind();
         textureManager.bind(0);
         shader.setUniform("uBlockTextures", 0);
         shader.setUniform("uProjection", projectionMatrix);
         shader.setUniform("uView", viewMatrix);
+        shader.setUniform("uDebugLightVisualizationEnabled", context.isLightDebugVisualizationEnabled() ? 1 : 0);
+        shader.setUniform("uBlockLightEnabled", context.getLightingSettings().isBlockLightEnabled() ? 1 : 0);
+        shader.setUniform("uBlockLightIntensity", context.getLightingSettings().getBlockLightIntensity());
         setLightingUniforms(context);
 
         long drawSubmitStartNs = System.nanoTime();
@@ -153,7 +162,9 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                         drawnFaceCount,
                         drawnFaceCount * 2,
                         drawnFaceCount * 4,
-                        arena.getEstimatedGpuBytes() + multiDrawBatch.getEstimatedGpuBytes(),
+                        arena.getEstimatedGpuBytes()
+                                + multiDrawBatch.getEstimatedGpuBytes()
+                                + (includeSharedLightStats() ? lightCache.getEstimatedGpuBytes() : 0L),
                         DRAW_SUBMISSION_MODE,
                         multiDrawBatch.getActiveDrawCount(),
                         multiDrawBatch.getDrawCapacity(),
@@ -204,6 +215,10 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         return false;
     }
 
+    protected boolean includeSharedLightStats() {
+        return false;
+    }
+
     private void setLightingUniforms(RenderContext context) {
         LightingSettings lighting = context.getLightingSettings();
         shader.setUniform("uLightingEnabled", lighting.isEnabled() ? 1 : 0);
@@ -220,7 +235,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         // Most chunk layers do not need a sort step.
     }
 
-    private void synchronizeRenderEntries(RenderContext context) {
+    private void synchronizeRenderEntries(RenderContext context, ChunkLightCache lightCache) {
         long currentVersion = chunkManager.getChunkUploadsVersion();
         if (currentVersion == synchronizedChunkUploadsVersion) {
             return;
@@ -231,10 +246,10 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         ChunkUploadSync uploadSync = chunkManager.snapshotChunkUploadSync(synchronizedChunkUploadsVersion);
 
         if (uploadSync.requiresFullSnapshot()) {
-            applyFullUploadSnapshot(uploadSync.fullSnapshot(), arena);
+            applyFullUploadSnapshot(uploadSync.fullSnapshot(), arena, lightCache);
         } else {
             for (ChunkUploadDelta delta : uploadSync.deltas()) {
-                applyUploadDelta(delta, arena);
+                applyUploadDelta(delta, arena, lightCache);
             }
         }
 
@@ -242,7 +257,11 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         synchronizedChunkUploadsVersion = uploadSync.version();
     }
 
-    private void applyFullUploadSnapshot(Map<ChunkPosition, ChunkUpload> fullSnapshot, ChunkFaceArena arena) {
+    private void applyFullUploadSnapshot(
+            Map<ChunkPosition, ChunkUpload> fullSnapshot,
+            ChunkFaceArena arena,
+            ChunkLightCache lightCache
+    ) {
         renderEntries.entrySet().removeIf(entry -> {
             if (!fullSnapshot.containsKey(entry.getKey())) {
                 arena.free(entry.getValue().allocation());
@@ -252,11 +271,11 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         });
 
         for (Map.Entry<ChunkPosition, ChunkUpload> entry : fullSnapshot.entrySet()) {
-            upsertRenderEntry(entry.getKey(), entry.getValue(), arena);
+            upsertRenderEntry(entry.getKey(), entry.getValue(), arena, lightCache);
         }
     }
 
-    private void applyUploadDelta(ChunkUploadDelta delta, ChunkFaceArena arena) {
+    private void applyUploadDelta(ChunkUploadDelta delta, ChunkFaceArena arena, ChunkLightCache lightCache) {
         if (delta.changeType() == ChunkUploadChangeType.REMOVED) {
             ChunkRenderEntry removed = renderEntries.remove(delta.position());
             if (removed != null) {
@@ -266,11 +285,16 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         }
 
         if (delta.upload() != null) {
-            upsertRenderEntry(delta.position(), delta.upload(), arena);
+            upsertRenderEntry(delta.position(), delta.upload(), arena, lightCache);
         }
     }
 
-    private void upsertRenderEntry(ChunkPosition position, ChunkUpload upload, ChunkFaceArena arena) {
+    private void upsertRenderEntry(
+            ChunkPosition position,
+            ChunkUpload upload,
+            ChunkFaceArena arena,
+            ChunkLightCache lightCache
+    ) {
         ChunkRenderEntry existing = renderEntries.get(position);
         LayerMeshData layerMesh = selectLayerMesh(upload);
 
@@ -287,8 +311,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                 layerMesh.faceCount(),
                 existing != null ? existing.allocation() : null
         );
-
-        renderEntries.put(position, ChunkRenderEntry.create(upload.chunk(), allocation));
+        renderEntries.put(position, ChunkRenderEntry.create(position, upload.chunk(), allocation, lightCache));
     }
 
     private void recomputeResidentStats() {
@@ -334,8 +357,10 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     }
 
     protected record ChunkRenderEntry(
+            ChunkPosition position,
             Chunk chunk,
             ChunkFaceArena.Allocation allocation,
+            ChunkLightCache lightCache,
             int originX,
             int originY,
             int originZ
@@ -350,10 +375,22 @@ abstract class AbstractChunkLayerPass implements RenderPass {
             return allocation.faceCount();
         }
 
-        private static ChunkRenderEntry create(Chunk chunk, ChunkFaceArena.Allocation allocation) {
+        @Override
+        public int lightOffsetInts() {
+            return lightCache != null ? lightCache.getLightOffsetInts(position) : 0;
+        }
+
+        private static ChunkRenderEntry create(
+                ChunkPosition position,
+                Chunk chunk,
+                ChunkFaceArena.Allocation allocation,
+                ChunkLightCache lightCache
+        ) {
             return new ChunkRenderEntry(
+                    position,
                     chunk,
                     allocation,
+                    lightCache,
                     chunk.getPosition().x * Chunk.SIZE,
                     chunk.getPosition().y * Chunk.SIZE,
                     chunk.getPosition().z * Chunk.SIZE

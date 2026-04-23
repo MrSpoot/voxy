@@ -13,6 +13,8 @@ public class LightingSettings {
 
     private final float[] skyColor = {0.47f, 0.68f, 0.90f};
     private final float[] skyIntensity = {0.8f};
+    private final boolean[] blockLightEnabled = {true};
+    private final float[] blockLightIntensity = {1.15f};
 
     public boolean isEnabled() {
         return enabled[0];
@@ -127,5 +129,23 @@ public class LightingSettings {
         skyColor[1] = 0.78f;
         skyColor[2] = 0.92f;
         skyIntensity[0] = 1.25f;
+        blockLightEnabled[0] = true;
+        blockLightIntensity[0] = 1.15f;
+    }
+
+    public boolean isBlockLightEnabled() {
+        return blockLightEnabled[0];
+    }
+
+    public void setBlockLightEnabled(boolean enabled) {
+        blockLightEnabled[0] = enabled;
+    }
+
+    public float[] blockLightIntensityRef() {
+        return blockLightIntensity;
+    }
+
+    public float getBlockLightIntensity() {
+        return blockLightIntensity[0];
     }
 }

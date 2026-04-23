@@ -18,11 +18,14 @@ public class ChunkManager {
     private final Map<ChunkPosition, ChunkMeshData> chunkMeshes = new LinkedHashMap<>();
     private final Map<ChunkPosition, ChunkUpload> chunkUploads = new LinkedHashMap<>();
     private final List<ChunkUploadDelta> chunkUploadDeltas = new ArrayList<>();
+    private final List<ChunkLightDelta> chunkLightDeltas = new ArrayList<>();
     private final Set<ChunkPosition> queuedChunks = new HashSet<>();
     private volatile Map<ChunkPosition, ChunkUpload> chunkUploadsSnapshot = Map.of();
 
     private long chunkUploadsVersion;
+    private long chunkLightVersion;
     private long firstRetainedChunkUploadVersion = 1L;
+    private long firstRetainedChunkLightVersion = 1L;
 
     public synchronized void addChunk(Chunk chunk) {
         chunks.put(ChunkPosition.fromChunk(chunk), chunk);
@@ -68,6 +71,22 @@ public class ChunkManager {
         return chunk.getBlock(localX, localY, localZ);
     }
 
+    public synchronized short getPackedLightAtWorld(int worldX, int worldY, int worldZ) {
+        int chunkX = Math.floorDiv(worldX, Chunk.SIZE);
+        int chunkY = Math.floorDiv(worldY, Chunk.SIZE);
+        int chunkZ = Math.floorDiv(worldZ, Chunk.SIZE);
+
+        Chunk chunk = chunks.get(new ChunkPosition(chunkX, chunkY, chunkZ));
+        if (chunk == null) {
+            return 0;
+        }
+
+        int localX = Math.floorMod(worldX, Chunk.SIZE);
+        int localY = Math.floorMod(worldY, Chunk.SIZE);
+        int localZ = Math.floorMod(worldZ, Chunk.SIZE);
+        return chunk.getPackedLight(localX, localY, localZ);
+    }
+
     public synchronized void setBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {
         int chunkX = Math.floorDiv(worldX, Chunk.SIZE);
         int chunkY = Math.floorDiv(worldY, Chunk.SIZE);
@@ -82,6 +101,38 @@ public class ChunkManager {
         int localY = Math.floorMod(worldY, Chunk.SIZE);
         int localZ = Math.floorMod(worldZ, Chunk.SIZE);
         chunk.setBlock(localX, localY, localZ, block);
+    }
+
+    public synchronized void setPackedLightAtWorld(int worldX, int worldY, int worldZ, short packedLight) {
+        int chunkX = Math.floorDiv(worldX, Chunk.SIZE);
+        int chunkY = Math.floorDiv(worldY, Chunk.SIZE);
+        int chunkZ = Math.floorDiv(worldZ, Chunk.SIZE);
+
+        Chunk chunk = chunks.get(new ChunkPosition(chunkX, chunkY, chunkZ));
+        if (chunk == null) {
+            throw new IllegalArgumentException("No chunk loaded at world position: " + worldX + ", " + worldY + ", " + worldZ);
+        }
+
+        int localX = Math.floorMod(worldX, Chunk.SIZE);
+        int localY = Math.floorMod(worldY, Chunk.SIZE);
+        int localZ = Math.floorMod(worldZ, Chunk.SIZE);
+        chunk.setPackedLight(localX, localY, localZ, packedLight);
+    }
+
+    public synchronized void setLightAtWorld(int worldX, int worldY, int worldZ, int red, int green, int blue, int sky) {
+        int chunkX = Math.floorDiv(worldX, Chunk.SIZE);
+        int chunkY = Math.floorDiv(worldY, Chunk.SIZE);
+        int chunkZ = Math.floorDiv(worldZ, Chunk.SIZE);
+
+        Chunk chunk = chunks.get(new ChunkPosition(chunkX, chunkY, chunkZ));
+        if (chunk == null) {
+            throw new IllegalArgumentException("No chunk loaded at world position: " + worldX + ", " + worldY + ", " + worldZ);
+        }
+
+        int localX = Math.floorMod(worldX, Chunk.SIZE);
+        int localY = Math.floorMod(worldY, Chunk.SIZE);
+        int localZ = Math.floorMod(worldZ, Chunk.SIZE);
+        chunk.setLight(localX, localY, localZ, red, green, blue, sky);
     }
 
     public synchronized boolean tryMarkChunkQueued(ChunkPosition position) {
@@ -110,6 +161,7 @@ public class ChunkManager {
                 position,
                 upload
         );
+        recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
         refreshChunkUploadsSnapshot();
     }
 
@@ -127,6 +179,7 @@ public class ChunkManager {
                 position,
                 upload
         );
+        recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
         refreshChunkUploadsSnapshot();
         return true;
     }
@@ -138,12 +191,21 @@ public class ChunkManager {
 
         if (chunkUploads.remove(position) != null) {
             recordChunkUploadDelta(ChunkUploadChangeType.REMOVED, position, null);
+            recordChunkLightDelta(ChunkUploadChangeType.REMOVED, position);
             refreshChunkUploadsSnapshot();
         }
     }
 
     public synchronized long getChunkUploadsVersion() {
         return chunkUploadsVersion;
+    }
+
+    public synchronized long getChunkLightVersion() {
+        return chunkLightVersion;
+    }
+
+    public synchronized ChunkUpload getChunkUpload(ChunkPosition position) {
+        return chunkUploads.get(position);
     }
 
     public Map<ChunkPosition, ChunkUpload> snapshotChunkUploads() {
@@ -187,6 +249,52 @@ public class ChunkManager {
         );
     }
 
+    public synchronized ChunkLightSync snapshotChunkLightSync(long lastSeenVersion) {
+        if (lastSeenVersion == chunkLightVersion) {
+            return new ChunkLightSync(chunkLightVersion, false, Set.of(), List.of());
+        }
+
+        boolean requiresFullSnapshot = lastSeenVersion < (firstRetainedChunkLightVersion - 1);
+        if (requiresFullSnapshot) {
+            return new ChunkLightSync(
+                    chunkLightVersion,
+                    true,
+                    Set.copyOf(chunks.keySet()),
+                    List.of()
+            );
+        }
+
+        if (chunkLightDeltas.isEmpty()) {
+            return new ChunkLightSync(chunkLightVersion, false, Set.of(), List.of());
+        }
+
+        int startIndex = 0;
+        while (startIndex < chunkLightDeltas.size()
+                && chunkLightDeltas.get(startIndex).version() <= lastSeenVersion) {
+            startIndex++;
+        }
+
+        if (startIndex >= chunkLightDeltas.size()) {
+            return new ChunkLightSync(chunkLightVersion, false, Set.of(), List.of());
+        }
+
+        return new ChunkLightSync(
+                chunkLightVersion,
+                false,
+                Set.of(),
+                List.copyOf(chunkLightDeltas.subList(startIndex, chunkLightDeltas.size()))
+        );
+    }
+
+    public synchronized void markChunksLightUpdated(Set<ChunkPosition> positions) {
+        for (ChunkPosition position : positions) {
+            if (!chunks.containsKey(position)) {
+                continue;
+            }
+            recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
+        }
+    }
+
     public synchronized Chunk copyChunk(ChunkPosition position) {
         Chunk chunk = chunks.get(position);
         return chunk == null ? null : chunk.copy();
@@ -196,6 +304,12 @@ public class ChunkManager {
         chunkUploadsVersion++;
         chunkUploadDeltas.add(new ChunkUploadDelta(chunkUploadsVersion, changeType, position, upload));
         trimRetainedChunkUploadDeltas();
+    }
+
+    private void recordChunkLightDelta(ChunkUploadChangeType changeType, ChunkPosition position) {
+        chunkLightVersion++;
+        chunkLightDeltas.add(new ChunkLightDelta(chunkLightVersion, changeType, position));
+        trimRetainedChunkLightDeltas();
     }
 
     private void trimRetainedChunkUploadDeltas() {
@@ -211,6 +325,21 @@ public class ChunkManager {
         firstRetainedChunkUploadVersion = chunkUploadDeltas.isEmpty()
                 ? (chunkUploadsVersion + 1)
                 : chunkUploadDeltas.get(0).version();
+    }
+
+    private void trimRetainedChunkLightDeltas() {
+        int excess = chunkLightDeltas.size() - MAX_RETAINED_UPLOAD_DELTAS;
+        if (excess <= 0) {
+            if (!chunkLightDeltas.isEmpty()) {
+                firstRetainedChunkLightVersion = chunkLightDeltas.get(0).version();
+            }
+            return;
+        }
+
+        chunkLightDeltas.subList(0, excess).clear();
+        firstRetainedChunkLightVersion = chunkLightDeltas.isEmpty()
+                ? (chunkLightVersion + 1)
+                : chunkLightDeltas.get(0).version();
     }
 
     private void refreshChunkUploadsSnapshot() {
@@ -239,6 +368,21 @@ public class ChunkManager {
             boolean requiresFullSnapshot,
             Map<ChunkPosition, ChunkUpload> fullSnapshot,
             List<ChunkUploadDelta> deltas
+    ) {
+    }
+
+    public record ChunkLightDelta(
+            long version,
+            ChunkUploadChangeType changeType,
+            ChunkPosition position
+    ) {
+    }
+
+    public record ChunkLightSync(
+            long version,
+            boolean requiresFullSnapshot,
+            Set<ChunkPosition> fullSnapshot,
+            List<ChunkLightDelta> deltas
     ) {
     }
 

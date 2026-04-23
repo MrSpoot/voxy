@@ -18,7 +18,11 @@ import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
 import org.weaw.game.Chunk;
+import org.weaw.game.ChunkLighting;
+import org.weaw.game.World;
 import org.weaw.game.WorldSettings;
+import org.weaw.game.utils.BlockDefinition;
+import org.weaw.game.utils.BlockRegistry;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -66,6 +70,7 @@ public class DebugImGuiPass implements RenderPass {
     private boolean showChunkProfilingWindow = false;
     private boolean showResourcesWindow = false;
     private boolean showLightingWindow = false;
+    private boolean showLightDebugWindow = true;
     private boolean showColorGradingWindow = false;
     private boolean showFogWindow = false;
     private boolean showJvmWindow = false;
@@ -84,8 +89,9 @@ public class DebugImGuiPass implements RenderPass {
     private WindowRect chunkProfilingRect = WindowRect.of(770.0f, 315.0f, 460.0f, 200.0f);
     private WindowRect resourcesRect = WindowRect.of(770.0f, 170.0f, 360.0f, 155.0f);
     private WindowRect lightingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 285.0f);
-    private WindowRect colorGradingRect = WindowRect.of(770.0f, 635.0f, 360.0f, 270.0f);
-    private WindowRect fogRect = WindowRect.of(770.0f, 920.0f, 360.0f, 265.0f);
+    private WindowRect lightDebugRect = WindowRect.of(770.0f, 635.0f, 360.0f, 210.0f);
+    private WindowRect colorGradingRect = WindowRect.of(770.0f, 860.0f, 360.0f, 270.0f);
+    private WindowRect fogRect = WindowRect.of(770.0f, 1145.0f, 360.0f, 265.0f);
     private WindowRect jvmRect = WindowRect.of(10.0f, 335.0f, 360.0f, 110.0f);
     private WindowRect deviceRect = WindowRect.of(390.0f, 555.0f, 360.0f, 150.0f);
     private WindowRect passBreakdownRect = WindowRect.of(770.0f, 530.0f, 460.0f, 230.0f);
@@ -145,6 +151,7 @@ public class DebugImGuiPass implements RenderPass {
         renderChunkProfilingWindow(context);
         renderResourcesWindow();
         renderLightingWindow(context);
+        renderLightDebugWindow(context);
         renderColorGradingWindow(context);
         renderFogWindow(context);
         renderJvmWindow();
@@ -222,6 +229,7 @@ public class DebugImGuiPass implements RenderPass {
             showChunkProfilingWindow = toggleWindowMenuItem("Chunk Profiling", showChunkProfilingWindow);
             showResourcesWindow = toggleWindowMenuItem("Resources", showResourcesWindow);
             showLightingWindow = toggleWindowMenuItem("Lighting", showLightingWindow);
+            showLightDebugWindow = toggleWindowMenuItem("Light Debug", showLightDebugWindow);
             showColorGradingWindow = toggleWindowMenuItem("Tone Mapping", showColorGradingWindow);
             showFogWindow = toggleWindowMenuItem("Fog", showFogWindow);
             showPassBreakdownWindow = toggleWindowMenuItem("Pass Breakdown", showPassBreakdownWindow);
@@ -383,8 +391,89 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.sliderFloat3("Sun Direction", settings.sunDirectionRef(), -1.0f, 1.0f);
         ImGui.colorEdit3("Sky Color", settings.skyColorRef());
         ImGui.sliderFloat("Sky Intensity", settings.skyIntensityRef(), 0.0f, 4.0f);
+        ImGui.separator();
+        ImBoolean blockLightEnabled = new ImBoolean(settings.isBlockLightEnabled());
+        if (ImGui.checkbox("Block Light", blockLightEnabled)) {
+            settings.setBlockLightEnabled(blockLightEnabled.get());
+        }
+        ImGui.sliderFloat("Block Light Intensity", settings.blockLightIntensityRef(), 0.0f, 4.0f);
         if (ImGui.button("Reset##Lighting")) {
             settings.reset();
+        }
+        ImGui.end();
+    }
+
+    private void renderLightDebugWindow(RenderContext context) {
+        if (!showLightDebugWindow) {
+            return;
+        }
+
+        applyWindowLayout(lightDebugRect, 0.9f);
+        ImGui.begin("Render Light Debug");
+        ImBoolean enabled = new ImBoolean(context.isLightDebugVisualizationEnabled());
+        if (ImGui.checkbox("Visualize Block Light", enabled)) {
+            context.setLightDebugVisualizationEnabled(enabled.get());
+        }
+        ImGui.text("Chunk faces are colored with local block light.");
+        ImGui.separator();
+
+        World world = context.getWorld();
+        if (world == null || !context.hasBlockOutlineTarget()) {
+            ImGui.text("Targeted block: none");
+            ImGui.end();
+            return;
+        }
+
+        int blockX = context.getBlockOutlineTargetX();
+        int blockY = context.getBlockOutlineTargetY();
+        int blockZ = context.getBlockOutlineTargetZ();
+        short blockId = world.getBlockAtWorld(blockX, blockY, blockZ);
+        BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+        short packedLight = world.getPackedLightAtWorld(blockX, blockY, blockZ);
+        int red = ChunkLighting.getRed(packedLight);
+        int green = ChunkLighting.getGreen(packedLight);
+        int blue = ChunkLighting.getBlue(packedLight);
+        int sky = ChunkLighting.getSky(packedLight);
+        int intensity = Math.max(red, Math.max(green, blue));
+        int chunkX = Math.floorDiv(blockX, Chunk.SIZE);
+        int chunkY = Math.floorDiv(blockY, Chunk.SIZE);
+        int chunkZ = Math.floorDiv(blockZ, Chunk.SIZE);
+        int localX = Math.floorMod(blockX, Chunk.SIZE);
+        int localY = Math.floorMod(blockY, Chunk.SIZE);
+        int localZ = Math.floorMod(blockZ, Chunk.SIZE);
+        int sampleX = context.getBlockOutlinePlacementX();
+        int sampleY = context.getBlockOutlinePlacementY();
+        int sampleZ = context.getBlockOutlinePlacementZ();
+        short sampledPackedLight = world.getPackedLightAtWorld(sampleX, sampleY, sampleZ);
+        int sampleRed = ChunkLighting.getRed(sampledPackedLight);
+        int sampleGreen = ChunkLighting.getGreen(sampledPackedLight);
+        int sampleBlue = ChunkLighting.getBlue(sampledPackedLight);
+        int sampleSky = ChunkLighting.getSky(sampledPackedLight);
+        int sampleIntensity = Math.max(sampleRed, Math.max(sampleGreen, sampleBlue));
+
+        ImGui.text(String.format("Block: %s", blockDefinition != null ? blockDefinition.getStableId() : Short.toString(blockId)));
+        ImGui.text(String.format("World: (%d, %d, %d)", blockX, blockY, blockZ));
+        ImGui.text(String.format("Chunk: (%d, %d, %d) | Local: (%d, %d, %d)", chunkX, chunkY, chunkZ, localX, localY, localZ));
+        ImGui.text(String.format("Chunk loaded: %s", world.containsChunkAtWorld(blockX, blockY, blockZ) ? "yes" : "no"));
+        ImGui.text(String.format("Block cell light RGB: (%d, %d, %d)", red, green, blue));
+        ImGui.text(String.format("Block intensity: %d/15 | Sky: %d | Packed: 0x%04X", intensity, sky, packedLight & 0xFFFF));
+        ImGui.separator();
+        ImGui.text(String.format("Face sample: (%d, %d, %d)", sampleX, sampleY, sampleZ));
+        ImGui.text(String.format("Face light RGB: (%d, %d, %d)", sampleRed, sampleGreen, sampleBlue));
+        ImGui.text(String.format("Face intensity: %d/15 | Sky: %d | Packed: 0x%04X", sampleIntensity, sampleSky, sampledPackedLight & 0xFFFF));
+        if (blockDefinition != null) {
+            ImGui.text(String.format(
+                    "Opaque: %s | Blocks light: %s | Emitter: %s",
+                    blockDefinition.isOpaque() ? "yes" : "no",
+                    blockDefinition.blocksLight() ? "yes" : "no",
+                    blockDefinition.isLightEmitter() ? "yes" : "no"
+            ));
+            ImGui.text(String.format(
+                    "Emission RGB: (%d, %d, %d)",
+                    blockDefinition.getLightEmissionRed(),
+                    blockDefinition.getLightEmissionGreen(),
+                    blockDefinition.getLightEmissionBlue()
+            ));
         }
         ImGui.end();
     }
@@ -632,7 +721,8 @@ public class DebugImGuiPass implements RenderPass {
 
             resourcesRect = WindowRect.of(rightX, top + 135.0f, columnWidth, 155.0f);
             lightingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
-            colorGradingRect = WindowRect.of(rightX, lightingRect.bottom() + rowGap, columnWidth, 270.0f);
+            lightDebugRect = WindowRect.of(rightX, lightingRect.bottom() + rowGap, columnWidth, 210.0f);
+            colorGradingRect = WindowRect.of(rightX, lightDebugRect.bottom() + rowGap, columnWidth, 270.0f);
             fogRect = WindowRect.of(rightX, colorGradingRect.bottom() + rowGap, columnWidth, 265.0f);
             chunkProfilingRect = WindowRect.of(rightX, fogRect.bottom() + rowGap, columnWidth, 200.0f);
             float passHeight = Math.max(160.0f, viewportHeight - (chunkProfilingRect.bottom() + rowGap + margin));
@@ -653,7 +743,8 @@ public class DebugImGuiPass implements RenderPass {
             arenaRect = WindowRect.of(rightX, gpuRect.bottom() + rowGap, columnWidth, 300.0f);
             resourcesRect = WindowRect.of(leftX, jvmRect.bottom() + rowGap, columnWidth, 155.0f);
             lightingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
-            colorGradingRect = WindowRect.of(leftX, lightingRect.bottom() + rowGap, columnWidth, 270.0f);
+            lightDebugRect = WindowRect.of(leftX, lightingRect.bottom() + rowGap, columnWidth, 210.0f);
+            colorGradingRect = WindowRect.of(leftX, lightDebugRect.bottom() + rowGap, columnWidth, 270.0f);
             deviceRect = WindowRect.of(rightX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
             fogRect = WindowRect.of(rightX, deviceRect.bottom() + rowGap, columnWidth, 265.0f);
             chunkProfilingRect = WindowRect.of(leftX, Math.max(colorGradingRect.bottom(), fogRect.bottom()) + rowGap, contentWidth, 200.0f);
@@ -672,7 +763,8 @@ public class DebugImGuiPass implements RenderPass {
         arenaRect = WindowRect.of(margin, gpuRect.bottom() + rowGap, fullWidth, 300.0f);
         resourcesRect = WindowRect.of(margin, arenaRect.bottom() + rowGap, fullWidth, 155.0f);
         lightingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 285.0f);
-        colorGradingRect = WindowRect.of(margin, lightingRect.bottom() + rowGap, fullWidth, 270.0f);
+        lightDebugRect = WindowRect.of(margin, lightingRect.bottom() + rowGap, fullWidth, 210.0f);
+        colorGradingRect = WindowRect.of(margin, lightDebugRect.bottom() + rowGap, fullWidth, 270.0f);
         fogRect = WindowRect.of(margin, colorGradingRect.bottom() + rowGap, fullWidth, 265.0f);
         jvmRect = WindowRect.of(margin, fogRect.bottom() + rowGap, fullWidth, 110.0f);
         deviceRect = WindowRect.of(margin, jvmRect.bottom() + rowGap, fullWidth, 150.0f);
@@ -744,6 +836,7 @@ public class DebugImGuiPass implements RenderPass {
         showChunkProfilingWindow = true;
         showResourcesWindow = false;
         showLightingWindow = true;
+        showLightDebugWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
         showJvmWindow = false;
@@ -761,6 +854,7 @@ public class DebugImGuiPass implements RenderPass {
         showChunkProfilingWindow = true;
         showResourcesWindow = true;
         showLightingWindow = true;
+        showLightDebugWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
         showJvmWindow = false;
@@ -778,6 +872,7 @@ public class DebugImGuiPass implements RenderPass {
         showChunkProfilingWindow = true;
         showResourcesWindow = true;
         showLightingWindow = true;
+        showLightDebugWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
         showJvmWindow = true;
@@ -795,6 +890,7 @@ public class DebugImGuiPass implements RenderPass {
         showChunkProfilingWindow = false;
         showResourcesWindow = false;
         showLightingWindow = false;
+        showLightDebugWindow = false;
         showColorGradingWindow = false;
         showFogWindow = false;
         showJvmWindow = false;

@@ -6,18 +6,26 @@ layout(std430, binding = 0) readonly buffer FaceBuffer {
 };
 
 layout(std430, binding = 1) readonly buffer ChunkDrawBuffer {
-    ivec4 drawData[];
+    uint drawData[];
+};
+
+layout(std430, binding = 2) readonly buffer ChunkLightBuffer {
+    uint lightData[];
 };
 
 uniform mat4 uProjection;
 uniform mat4 uView;
+uniform int uDebugLightVisualizationEnabled;
 
 const float AO_LEVELS[4] = float[](1.0, 0.75, 0.5, 0.3);
+const int DEBUG_LIGHT_PADDED_DIMENSION = 34;
 
 out vec2 vTexCoord;
 flat out int vFace;
 flat out int vTextureIndex;
 out float vAo;
+flat out int vLightOffset;
+out vec3 vChunkLocalPosition;
 
 vec2 getQuadUv(int vertexIndex) {
     if (vertexIndex == 0) {
@@ -47,9 +55,29 @@ vec3 getFaceVertexOffset(int face, vec2 uv, float quadWidth, float quadHeight) {
     return vec3((1.0 - uv.x) * quadWidth, uv.y * quadHeight, 0.0);
 }
 
+uint getPackedLight(int lightOffset, int x, int y, int z) {
+    int voxelIndex = x + (z * DEBUG_LIGHT_PADDED_DIMENSION) + (y * DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION);
+    uint packedPair = lightData[lightOffset + (voxelIndex >> 1)];
+    if ((voxelIndex & 1) == 0) {
+        return packedPair & 0xFFFFu;
+    }
+    return packedPair >> 16u;
+}
+
+vec3 getDebugLightColor(uint packedLight) {
+    vec3 lightRgb = vec3(
+        float(packedLight & 0xFu),
+        float((packedLight >> 4u) & 0xFu),
+        float((packedLight >> 8u) & 0xFu)
+    ) / 15.0;
+    return lightRgb;
+}
+
 void main() {
-    ivec4 chunkDraw = drawData[gl_BaseInstance];
-    int faceIndex = chunkDraw.x + (gl_InstanceID * 2);
+    int drawBase = gl_BaseInstance * 5;
+    int faceOffset = int(drawData[drawBase]);
+    int lightOffset = int(drawData[drawBase + 1]);
+    int faceIndex = faceOffset + (gl_InstanceID * 2);
     int faceData = int(faces[faceIndex]);
     uint facePayload = faces[faceIndex + 1];
     int textureIndex = int(facePayload & 0xFFFFu);
@@ -64,14 +92,21 @@ void main() {
     float quadHeight = float(((faceData >> 23) & 31) + 1);
     vec2 uv = getQuadUv(gl_VertexID);
 
-    vec3 chunkOrigin = vec3(chunkDraw.y, chunkDraw.z, chunkDraw.w);
-    vec3 worldPosition = chunkOrigin + vec3(x, y, z) + getFaceVertexOffset(face, uv, quadWidth, quadHeight);
+    vec3 chunkOrigin = vec3(
+        int(drawData[drawBase + 2]),
+        int(drawData[drawBase + 3]),
+        int(drawData[drawBase + 4])
+    );
+    vec3 localPosition = vec3(x, y, z) + getFaceVertexOffset(face, uv, quadWidth, quadHeight);
+    vec3 worldPosition = chunkOrigin + localPosition;
     gl_Position = uProjection * uView * vec4(worldPosition, 1.0);
 
     vTexCoord = vec2(uv.x * quadWidth, uv.y * quadHeight);
     vFace = face;
     vTextureIndex = textureIndex;
     vAo = pow(AO_LEVELS[aoLevel], 1.3);
+    vLightOffset = lightOffset;
+    vChunkLocalPosition = localPosition;
 }
 //@endvs
 
@@ -79,7 +114,10 @@ void main() {
 #version 460 core
 
 uniform sampler2DArray uBlockTextures;
+uniform int uDebugLightVisualizationEnabled;
 uniform int uLightingEnabled;
+uniform int uBlockLightEnabled;
+uniform float uBlockLightIntensity;
 uniform vec3 uAmbientColor;
 uniform float uAmbientIntensity;
 uniform vec3 uSunColor;
@@ -87,11 +125,18 @@ uniform float uSunIntensity;
 uniform vec3 uSunDirection;
 uniform vec3 uSkyColor;
 uniform float uSkyIntensity;
+const int DEBUG_LIGHT_PADDED_DIMENSION = 34;
+
+layout(std430, binding = 2) readonly buffer ChunkLightBuffer {
+    uint lightData[];
+};
 
 in vec2 vTexCoord;
 flat in int vFace;
 flat in int vTextureIndex;
 in float vAo;
+flat in int vLightOffset;
+in vec3 vChunkLocalPosition;
 
 out vec4 fragColor;
 
@@ -113,9 +158,23 @@ vec3 getFaceNormal(int face) {
     return vec3(0.0, 0.0, -1.0);
 }
 
+uint getPackedLight(int lightOffset, int x, int y, int z);
+vec3 getDebugLightColor(uint packedLight);
+ivec3 resolveDebugSampleCoords(int face, vec3 localPosition);
+vec4 sampleLightComponents(ivec3 sampleCoords);
+vec4 sampleSmoothedLight(int face, vec3 localPosition);
+
 vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
+    vec4 smoothedLight = sampleSmoothedLight(face, vChunkLocalPosition);
+    vec3 blockLight = smoothedLight.rgb * uBlockLightIntensity;
+    vec3 propagatedSkyLight = uSkyColor * smoothedLight.a * uBlockLightIntensity;
+
     if (uLightingEnabled == 0) {
-        return albedo * ao;
+        vec3 lighting = vec3(1.0);
+        if (uBlockLightEnabled != 0) {
+            lighting += blockLight + propagatedSkyLight;
+        }
+        return albedo * lighting * ao;
     }
 
     vec3 normal = getFaceNormal(face);
@@ -127,11 +186,94 @@ vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
     vec3 sky = uSkyColor * uSkyIntensity * skyFactor;
     vec3 sun = uSunColor * uSunIntensity * sunFactor;
     vec3 lighting = ambient + sky + sun;
+    if (uBlockLightEnabled != 0) {
+        lighting += blockLight + propagatedSkyLight;
+    }
 
     return albedo * lighting * ao;
 }
 
+uint getPackedLight(int lightOffset, int x, int y, int z) {
+    int voxelIndex = x + (z * DEBUG_LIGHT_PADDED_DIMENSION) + (y * DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION);
+    uint packedPair = lightData[lightOffset + (voxelIndex >> 1)];
+    if ((voxelIndex & 1) == 0) {
+        return packedPair & 0xFFFFu;
+    }
+    return packedPair >> 16u;
+}
+
+vec3 getDebugLightColor(uint packedLight) {
+    return vec3(
+        float(packedLight & 0xFu),
+        float((packedLight >> 4u) & 0xFu),
+        float((packedLight >> 8u) & 0xFu)
+    ) / 15.0;
+}
+
+vec4 sampleLightComponents(ivec3 sampleCoords) {
+    uint packedLight = getPackedLight(vLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z);
+    return vec4(
+        getDebugLightColor(packedLight),
+        float((packedLight >> 12u) & 0xFu) / 15.0
+    );
+}
+
+ivec3 resolveDebugSampleCoords(int face, vec3 localPosition) {
+    float epsilon = 0.001;
+    int sampleX = clamp(int(floor(localPosition.x)), -1, 32);
+    int sampleY = clamp(int(floor(localPosition.y)), -1, 32);
+    int sampleZ = clamp(int(floor(localPosition.z)), -1, 32);
+
+    if (face == 0) sampleX = clamp(int(floor(localPosition.x + epsilon)), -1, 32);
+    else if (face == 1) sampleX = clamp(int(floor(localPosition.x - epsilon)), -1, 32);
+    else if (face == 2) sampleY = clamp(int(floor(localPosition.y + epsilon)), -1, 32);
+    else if (face == 3) sampleY = clamp(int(floor(localPosition.y - epsilon)), -1, 32);
+    else if (face == 4) sampleZ = clamp(int(floor(localPosition.z + epsilon)), -1, 32);
+    else sampleZ = clamp(int(floor(localPosition.z - epsilon)), -1, 32);
+
+    return ivec3(sampleX + 1, sampleY + 1, sampleZ + 1);
+}
+
+vec4 sampleSmoothedLight(int face, vec3 localPosition) {
+    vec3 samplePosition = localPosition;
+    if (face == 0) samplePosition.x += 0.5;
+    else if (face == 1) samplePosition.x -= 0.5;
+    else if (face == 2) samplePosition.y += 0.5;
+    else if (face == 3) samplePosition.y -= 0.5;
+    else if (face == 4) samplePosition.z += 0.5;
+    else samplePosition.z -= 0.5;
+
+    samplePosition += vec3(1.0);
+    samplePosition = clamp(samplePosition, vec3(0.0), vec3(float(DEBUG_LIGHT_PADDED_DIMENSION - 1) - 0.001));
+
+    ivec3 base = ivec3(floor(samplePosition));
+    vec3 fraction = fract(samplePosition);
+
+    vec4 c000 = sampleLightComponents(base);
+    vec4 c100 = sampleLightComponents(base + ivec3(1, 0, 0));
+    vec4 c010 = sampleLightComponents(base + ivec3(0, 1, 0));
+    vec4 c110 = sampleLightComponents(base + ivec3(1, 1, 0));
+    vec4 c001 = sampleLightComponents(base + ivec3(0, 0, 1));
+    vec4 c101 = sampleLightComponents(base + ivec3(1, 0, 1));
+    vec4 c011 = sampleLightComponents(base + ivec3(0, 1, 1));
+    vec4 c111 = sampleLightComponents(base + ivec3(1, 1, 1));
+
+    vec4 c00 = mix(c000, c100, fraction.x);
+    vec4 c10 = mix(c010, c110, fraction.x);
+    vec4 c01 = mix(c001, c101, fraction.x);
+    vec4 c11 = mix(c011, c111, fraction.x);
+    vec4 c0 = mix(c00, c10, fraction.y);
+    vec4 c1 = mix(c01, c11, fraction.y);
+    return mix(c0, c1, fraction.z);
+}
+
 void main() {
+    if (uDebugLightVisualizationEnabled != 0) {
+        ivec3 sampleCoords = resolveDebugSampleCoords(vFace, vChunkLocalPosition);
+        fragColor = vec4(getDebugLightColor(getPackedLight(vLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z)), 1.0);
+        return;
+    }
+
     float faceSlot = getFaceTextureSlot(vFace);
     vec2 correctedUv = vTexCoord;
     if (vFace == 4 || vFace == 5 || vFace == 1 || vFace == 0) {

@@ -22,11 +22,11 @@ import static org.lwjgl.opengl.GL43C.glMultiDrawArraysIndirect;
  *
  * One entry contains:
  * - 4 ints for DrawArraysIndirectCommand
- * - 4 ints for chunk metadata (face offset + chunk origin)
+ * - 5 ints for chunk metadata (face offset + light offset + chunk origin)
  */
 public final class ChunkMultiDrawBatch {
     private static final int COMMAND_INTS = 4;
-    private static final int DRAW_DATA_INTS = 4;
+    private static final int DRAW_DATA_INTS = 5;
     private static final int MIN_DRAW_CAPACITY = 2048;
     private static final int DRAW_METADATA_BINDING = 1;
 
@@ -72,6 +72,7 @@ public final class ChunkMultiDrawBatch {
             commandBuffer.put(drawIndex);
 
             drawDataBuffer.put(draw.faceOffsetInts());
+            drawDataBuffer.put(draw.lightOffsetInts());
             drawDataBuffer.put(draw.originX());
             drawDataBuffer.put(draw.originY());
             drawDataBuffer.put(draw.originZ());
@@ -186,6 +187,8 @@ public final class ChunkMultiDrawBatch {
         int faceOffsetInts();
 
         int faceCount();
+
+        int lightOffsetInts();
 
         int originX();
 

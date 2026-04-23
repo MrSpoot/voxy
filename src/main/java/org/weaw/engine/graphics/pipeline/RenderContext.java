@@ -6,7 +6,10 @@ import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.graphics.utils.ChunkFaceArena;
+import org.weaw.engine.graphics.utils.ChunkLightCache;
+import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.World;
 import org.weaw.game.WorldSettings;
 
 import java.util.HashSet;
@@ -51,6 +54,7 @@ public class RenderContext {
     private ChunkFaceArena opaqueChunkFaceArena;
     private ChunkFaceArena cutoutChunkFaceArena;
     private ChunkFaceArena transparentChunkFaceArena;
+    private ChunkLightCache chunkLightCache;
     private long chunkVisibilityFrameIndex = Long.MIN_VALUE;
     private long chunkVisibilityUploadsVersion = Long.MIN_VALUE;
     private long chunkVisibilityCameraVersion = Long.MIN_VALUE;
@@ -58,6 +62,12 @@ public class RenderContext {
     private int blockOutlineTargetX;
     private int blockOutlineTargetY;
     private int blockOutlineTargetZ;
+    private int blockOutlinePlacementX;
+    private int blockOutlinePlacementY;
+    private int blockOutlinePlacementZ;
+    private int selectedLampHotbarIndex = 3;
+    private boolean lightDebugVisualizationEnabled;
+    private World world;
     private final Set<ChunkPosition> visibleChunkPositions = new HashSet<>();
 
     public RenderContext(int viewportWidth, int viewportHeight) {
@@ -122,15 +132,32 @@ public class RenderContext {
         transparentChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
     }
 
-    public void setBlockOutlineTarget(int x, int y, int z) {
+    public void initializeSharedChunkResources(ChunkManager chunkManager) {
+        initializeSharedChunkGeometry();
+        if (chunkLightCache != null) {
+            return;
+        }
+
+        chunkLightCache = new ChunkLightCache(chunkManager);
+        chunkLightCache.create();
+    }
+
+    public void setBlockOutlineTarget(int x, int y, int z, int placementX, int placementY, int placementZ) {
         hasBlockOutlineTarget = true;
         blockOutlineTargetX = x;
         blockOutlineTargetY = y;
         blockOutlineTargetZ = z;
+        blockOutlinePlacementX = placementX;
+        blockOutlinePlacementY = placementY;
+        blockOutlinePlacementZ = placementZ;
     }
 
     public void clearBlockOutlineTarget() {
         hasBlockOutlineTarget = false;
+    }
+
+    public boolean hasBlockOutlineTarget() {
+        return hasBlockOutlineTarget;
     }
 
     /**
@@ -152,6 +179,10 @@ public class RenderContext {
         if (transparentChunkFaceArena != null) {
             transparentChunkFaceArena.cleanup();
             transparentChunkFaceArena = null;
+        }
+        if (chunkLightCache != null) {
+            chunkLightCache.cleanup();
+            chunkLightCache = null;
         }
         if (sharedChunkVao != 0) {
             glDeleteVertexArrays(sharedChunkVao);

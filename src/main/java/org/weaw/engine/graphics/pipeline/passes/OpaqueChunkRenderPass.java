@@ -44,4 +44,9 @@ public class OpaqueChunkRenderPass extends AbstractChunkLayerPass {
     protected boolean includeSharedTextureStats() {
         return true;
     }
+
+    @Override
+    protected boolean includeSharedLightStats() {
+        return true;
+    }
 }

@@ -22,6 +22,7 @@ public class Chunk {
 
     @Getter
     private final Vector3i position;
+    private final ChunkLighting lighting;
 
     private boolean isUniform = true;
     @Getter
@@ -36,6 +37,7 @@ public class Chunk {
 
     public Chunk(Vector3i position) {
         this.position = new Vector3i(position);
+        this.lighting = new ChunkLighting();
         applyUniformBlock(Blocks.AIR.getId());
     }
 
@@ -160,6 +162,29 @@ public class Chunk {
         applyUniformBlock(block.getId());
     }
 
+    public ChunkLighting getLighting() {
+        return lighting;
+    }
+
+    public short getPackedLight(int x, int y, int z) {
+        checkBounds(x, y, z);
+        return lighting.getPackedLight(x, y, z);
+    }
+
+    public void setPackedLight(int x, int y, int z, short packedLight) {
+        checkBounds(x, y, z);
+        lighting.setPackedLight(x, y, z, packedLight);
+    }
+
+    public void setLight(int x, int y, int z, int red, int green, int blue, int sky) {
+        checkBounds(x, y, z);
+        lighting.setLight(x, y, z, red, green, blue, sky);
+    }
+
+    public void clearLighting() {
+        lighting.clear();
+    }
+
     public boolean isUniform() {
         return isUniform;
     }
@@ -168,6 +193,7 @@ public class Chunk {
         Chunk copy = new Chunk(position);
         copy.isUniform = isUniform;
         copy.uniformBlockId = uniformBlockId;
+        copy.lighting.copyFrom(lighting);
 
         if (isUniform) {
             return copy;

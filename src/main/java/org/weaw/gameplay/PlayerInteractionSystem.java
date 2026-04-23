@@ -9,9 +9,15 @@ import org.weaw.game.utils.Blocks;
 
 public class PlayerInteractionSystem {
     private static final float RAY_STEP = 0.05f;
+    private static final BlockDefinition[] LAMP_SELECTION = {
+            Blocks.RED_LAMP,
+            Blocks.GREEN_LAMP,
+            Blocks.BLUE_LAMP,
+            Blocks.WHITE_LAMP
+    };
 
     private final GameplaySettings settings;
-    private BlockDefinition selectedBlock = Blocks.DIRT;
+    private BlockDefinition selectedBlock = Blocks.WHITE_LAMP;
     private TargetedBlock targetedBlock;
 
     public PlayerInteractionSystem(GameplaySettings settings) {
@@ -19,6 +25,7 @@ public class PlayerInteractionSystem {
     }
 
     public void update(Player player, World world, InputManager inputManager) {
+        updateSelectedLamp(inputManager);
         targetedBlock = raycastBlock(player, world);
         if (!inputManager.isActionPressed(InputAction.BREAK_BLOCK)
                 && !inputManager.isActionPressed(InputAction.PLACE_BLOCK)) {
@@ -53,6 +60,26 @@ public class PlayerInteractionSystem {
 
     public TargetedBlock getTargetedBlock() {
         return targetedBlock;
+    }
+
+    private void updateSelectedLamp(InputManager inputManager) {
+        int scrollDelta = inputManager.getMouseScroll();
+        if (scrollDelta == 0) {
+            return;
+        }
+
+        int selectedIndex = getSelectedLampIndex();
+        selectedIndex = Math.floorMod(selectedIndex + scrollDelta, LAMP_SELECTION.length);
+        selectedBlock = LAMP_SELECTION[selectedIndex];
+    }
+
+    private int getSelectedLampIndex() {
+        for (int index = 0; index < LAMP_SELECTION.length; index++) {
+            if (selectedBlock == LAMP_SELECTION[index]) {
+                return index;
+            }
+        }
+        return LAMP_SELECTION.length - 1;
     }
 
     private TargetedBlock raycastBlock(Player player, World world) {

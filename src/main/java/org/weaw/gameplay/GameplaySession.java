@@ -3,6 +3,7 @@ package org.weaw.gameplay;
 import org.joml.Vector3f;
 import org.weaw.engine.input.InputManager;
 import org.weaw.game.World;
+import org.weaw.game.utils.BlockDefinition;
 
 import java.util.Objects;
 
@@ -34,6 +35,10 @@ public class GameplaySession {
 
     public TargetedBlock getTargetedBlock() {
         return playerInteractionSystem.getTargetedBlock();
+    }
+
+    public BlockDefinition getSelectedBlock() {
+        return playerInteractionSystem.getSelectedBlock();
     }
 
     public void setPlayerPosition(Vector3f position) {

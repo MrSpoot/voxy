@@ -30,6 +30,10 @@ public final class BlockRegistry {
         register(Blocks.SAND);
         register(Blocks.WOOD_LOG);
         register(Blocks.TEST);
+        register(Blocks.RED_LAMP);
+        register(Blocks.GREEN_LAMP);
+        register(Blocks.BLUE_LAMP);
+        register(Blocks.WHITE_LAMP);
         register(Blocks.LEAVES);
         register(Blocks.GLASS);
         register(Blocks.WATER);

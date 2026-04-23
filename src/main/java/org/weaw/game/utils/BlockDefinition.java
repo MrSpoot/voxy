@@ -11,14 +11,32 @@ public final class BlockDefinition {
     private final String texturePath;
     private final TransparencyType transparencyType;
     private final boolean cullSameTypeFaces;
+    private final int lightEmissionRed;
+    private final int lightEmissionGreen;
+    private final int lightEmissionBlue;
     private volatile int textureIndex = -1;
     private short runtimeId = -1;
 
     public BlockDefinition(String stableId, String texturePath, TransparencyType transparencyType, boolean cullSameTypeFaces) {
+        this(stableId, texturePath, transparencyType, cullSameTypeFaces, 0, 0, 0);
+    }
+
+    public BlockDefinition(
+            String stableId,
+            String texturePath,
+            TransparencyType transparencyType,
+            boolean cullSameTypeFaces,
+            int lightEmissionRed,
+            int lightEmissionGreen,
+            int lightEmissionBlue
+    ) {
         this.stableId = stableId;
         this.texturePath = texturePath;
         this.transparencyType = transparencyType;
         this.cullSameTypeFaces = cullSameTypeFaces;
+        this.lightEmissionRed = validateLightComponent(lightEmissionRed, "lightEmissionRed");
+        this.lightEmissionGreen = validateLightComponent(lightEmissionGreen, "lightEmissionGreen");
+        this.lightEmissionBlue = validateLightComponent(lightEmissionBlue, "lightEmissionBlue");
     }
 
     public String getStableId() {
@@ -72,8 +90,35 @@ public final class BlockDefinition {
         return this != Blocks.AIR;
     }
 
+    public int getLightEmissionRed() {
+        return lightEmissionRed;
+    }
+
+    public int getLightEmissionGreen() {
+        return lightEmissionGreen;
+    }
+
+    public int getLightEmissionBlue() {
+        return lightEmissionBlue;
+    }
+
+    public boolean isLightEmitter() {
+        return lightEmissionRed > 0 || lightEmissionGreen > 0 || lightEmissionBlue > 0;
+    }
+
+    public boolean blocksLight() {
+        return isOpaque() && this != Blocks.AIR;
+    }
+
     @Override
     public String toString() {
         return stableId;
+    }
+
+    private static int validateLightComponent(int value, String fieldName) {
+        if (value < 0 || value > 15) {
+            throw new IllegalArgumentException(fieldName + " must be in range [0, 15], got " + value);
+        }
+        return value;
     }
 }

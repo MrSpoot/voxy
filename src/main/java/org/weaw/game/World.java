@@ -9,12 +9,21 @@ import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockRegistry;
 
 import java.util.Objects;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.HashSet;
+import java.util.Set;
 
 public class World implements AutoCloseable, WorldBlockProvider {
+    private static final int MAX_LIGHTING_UPDATES_PER_FRAME = Integer.getInteger("voxy.maxLightingUpdatesPerFrame", 4);
+
     private final ChunkManager chunkManager;
     private final WorldStreamer worldStreamer;
     private final WorldGenerator worldGenerator;
     private final WorldSettings settings;
+    private final WorldLightingSystem lightingSystem;
+    private final Set<ChunkPosition> pendingLightingUpdates = new LinkedHashSet<>();
+    private long synchronizedLightingUploadsVersion;
 
     public World() {
         this(new NoiseWorldGenerator(GenerationConfig.defaults()));
@@ -29,6 +38,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.worldStreamer = new WorldStreamer(chunkManager, this, worldGenerator, settings);
+        this.lightingSystem = new WorldLightingSystem();
     }
 
     public ChunkManager getChunkManager() {
@@ -41,6 +51,8 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     public void update(Vector3f playerPosition) {
         worldStreamer.update(playerPosition);
+        collectChunkLightingUpdates();
+        synchronizeLighting();
     }
 
     public int getLoadedChunkCount() {
@@ -66,7 +78,20 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     public void setBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {
         chunkManager.setBlockAtWorld(worldX, worldY, worldZ, block);
+        pendingLightingUpdates.add(toChunkPosition(worldX, worldY, worldZ));
         markChunksDirtyForBlockChange(worldX, worldY, worldZ);
+    }
+
+    public short getPackedLightAtWorld(int worldX, int worldY, int worldZ) {
+        return chunkManager.getPackedLightAtWorld(worldX, worldY, worldZ);
+    }
+
+    public void setPackedLightAtWorld(int worldX, int worldY, int worldZ, short packedLight) {
+        chunkManager.setPackedLightAtWorld(worldX, worldY, worldZ, packedLight);
+    }
+
+    public void setLightAtWorld(int worldX, int worldY, int worldZ, int red, int green, int blue, int sky) {
+        chunkManager.setLightAtWorld(worldX, worldY, worldZ, red, green, blue, sky);
     }
 
     public boolean trySetBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {
@@ -99,6 +124,66 @@ public class World implements AutoCloseable, WorldBlockProvider {
                 Math.floorDiv(worldY, Chunk.SIZE),
                 Math.floorDiv(worldZ, Chunk.SIZE)
         );
+    }
+
+    private void synchronizeLighting() {
+        if (pendingLightingUpdates.isEmpty()) {
+            return;
+        }
+
+        Set<ChunkPosition> batch = drainLightingUpdateBatch();
+        if (batch.isEmpty()) {
+            return;
+        }
+
+        Set<ChunkPosition> updatedPositions = expandLightingUpdatePositions(batch);
+        lightingSystem.rebuildLightingAround(chunkManager, batch);
+        chunkManager.markChunksLightUpdated(updatedPositions);
+    }
+
+    private void collectChunkLightingUpdates() {
+        ChunkManager.ChunkUploadSync uploadSync = chunkManager.snapshotChunkUploadSync(synchronizedLightingUploadsVersion);
+        if (uploadSync.requiresFullSnapshot()) {
+            pendingLightingUpdates.addAll(uploadSync.fullSnapshot().keySet());
+            synchronizedLightingUploadsVersion = uploadSync.version();
+            return;
+        }
+
+        for (ChunkManager.ChunkUploadDelta delta : uploadSync.deltas()) {
+            pendingLightingUpdates.add(delta.position());
+        }
+        synchronizedLightingUploadsVersion = uploadSync.version();
+    }
+
+    private Set<ChunkPosition> drainLightingUpdateBatch() {
+        int maxUpdates = Math.max(1, MAX_LIGHTING_UPDATES_PER_FRAME);
+        Set<ChunkPosition> batch = new LinkedHashSet<>(Math.min(maxUpdates, pendingLightingUpdates.size()));
+        Iterator<ChunkPosition> iterator = pendingLightingUpdates.iterator();
+        while (iterator.hasNext() && batch.size() < maxUpdates) {
+            ChunkPosition position = iterator.next();
+            batch.add(position);
+            iterator.remove();
+        }
+        return batch;
+    }
+
+    private Set<ChunkPosition> expandLightingUpdatePositions(Set<ChunkPosition> positions) {
+        Set<ChunkPosition> expanded = new HashSet<>();
+        int radius = WorldLightingSystem.BLOCK_LIGHT_CHUNK_RADIUS;
+        for (ChunkPosition position : positions) {
+            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
+                for (int offsetY = -radius; offsetY <= radius; offsetY++) {
+                    for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                        expanded.add(new ChunkPosition(
+                                position.x() + offsetX,
+                                position.y() + offsetY,
+                                position.z() + offsetZ
+                        ));
+                    }
+                }
+            }
+        }
+        return expanded;
     }
 
     private void markChunksDirtyForBlockChange(int worldX, int worldY, int worldZ) {

@@ -11,7 +11,9 @@ import org.weaw.engine.window.Window;
 import org.weaw.game.World;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
+import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockRegistry;
+import org.weaw.game.utils.Blocks;
 import org.weaw.gameplay.GameplaySession;
 import org.weaw.gameplay.GameplaySettings;
 import org.weaw.gameplay.TargetedBlock;
@@ -162,6 +164,7 @@ public class Game {
         }
 
         gameplaySession.update(deltaTime, inputManager, window.isCursorLocked());
+        syncSelectedBlockHud();
         updateRenderInteractionTarget();
         syncCameraToPlayer();
         camera.setAspectRatio(window.aspectRatio());
@@ -194,8 +197,24 @@ public class Game {
         renderer.getContext().setBlockOutlineTarget(
                 targetedBlock.blockX(),
                 targetedBlock.blockY(),
-                targetedBlock.blockZ()
+                targetedBlock.blockZ(),
+                targetedBlock.placeX(),
+                targetedBlock.placeY(),
+                targetedBlock.placeZ()
         );
+    }
+
+    private void syncSelectedBlockHud() {
+        BlockDefinition selectedBlock = gameplaySession.getSelectedBlock();
+        int hotbarIndex = 3;
+        if (selectedBlock == Blocks.RED_LAMP) {
+            hotbarIndex = 0;
+        } else if (selectedBlock == Blocks.GREEN_LAMP) {
+            hotbarIndex = 1;
+        } else if (selectedBlock == Blocks.BLUE_LAMP) {
+            hotbarIndex = 2;
+        }
+        renderer.getContext().setSelectedLampHotbarIndex(hotbarIndex);
     }
 
     private void safeCleanup(String label, Runnable cleanupAction) {

@@ -1,7 +1,6 @@
 package org.weaw.game.generation;
 
 import org.weaw.game.Chunk;
-import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 import org.weaw.game.utils.FastNoiseLite;
 
@@ -23,18 +22,31 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         int chunkGlobalX = chunk.getPosition().x * Chunk.SIZE;
         int chunkGlobalZ = chunk.getPosition().z * Chunk.SIZE;
         int chunkGlobalY = chunk.getPosition().y * Chunk.SIZE;
+        short[] blocks = new short[Chunk.TOTAL_BLOCKS];
+        int[] surfaceHeights = new int[Chunk.SIZE * Chunk.SIZE];
+        FastNoiseLite terrainNoise = noise.get();
 
         for (int x = 0; x < Chunk.SIZE; x++) {
             for (int z = 0; z < Chunk.SIZE; z++) {
                 int globalX = chunkGlobalX + x;
                 int globalZ = chunkGlobalZ + z;
+                surfaceHeights[x + (z * Chunk.SIZE)] = getSurfaceHeight(terrainNoise, globalX, globalZ);
+            }
+        }
 
-                for (int y = 0; y < Chunk.SIZE; y++) {
-                    int globalY = chunkGlobalY + y;
-                    chunk.setBlock(x, y, z, BlockRegistry.getBlock(getBlockAtWorld(globalX, globalY, globalZ)));
+        for (int y = 0; y < Chunk.SIZE; y++) {
+            int globalY = chunkGlobalY + y;
+            int yOffset = y * Chunk.SIZE * Chunk.SIZE;
+            for (int z = 0; z < Chunk.SIZE; z++) {
+                int zOffset = yOffset + (z * Chunk.SIZE);
+                for (int x = 0; x < Chunk.SIZE; x++) {
+                    int height = surfaceHeights[x + (z * Chunk.SIZE)];
+                    blocks[zOffset + x] = getBaseTerrainBlock(globalY, height);
                 }
             }
         }
+
+        chunk.setAllBlocks(blocks);
     }
 
     @Override
@@ -58,8 +70,12 @@ public final class NoiseWorldGenerator implements WorldGenerator {
 
     @Override
     public int getSurfaceHeight(int worldX, int worldZ) {
+        return getSurfaceHeight(noise.get(), worldX, worldZ);
+    }
+
+    private int getSurfaceHeight(FastNoiseLite terrainNoise, int worldX, int worldZ) {
         float height = getFractalNoise(
-                noise.get(),
+                terrainNoise,
                 worldX * config.terrainFrequency(),
                 worldZ * config.terrainFrequency(),
                 config.terrainOctaves(),
@@ -71,7 +87,10 @@ public final class NoiseWorldGenerator implements WorldGenerator {
 
     private short getBaseTerrainBlock(int worldX, int worldY, int worldZ) {
         int height = getSurfaceHeight(worldX, worldZ);
+        return getBaseTerrainBlock(worldY, height);
+    }
 
+    private short getBaseTerrainBlock(int worldY, int height) {
         if (worldY > height) {
             return worldY <= config.waterLevel() ? Blocks.WATER.getId() : Blocks.AIR.getId();
         }

@@ -46,10 +46,11 @@ public class Renderer {
         // Create render context (shared state for all passes)
         context = new RenderContext(window.getWidth(), window.getHeight());
         context.setWorldSettings(world.getSettings());
+        context.setWorld(world);
         BlockTextureManager blockTextureManager = new BlockTextureManager(blockDefinitions);
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);
-        context.initializeSharedChunkGeometry();
+        context.initializeSharedChunkResources(world.getChunkManager());
 
         // Create and configure render pipeline
         pipeline = new RenderPipeline(context);
