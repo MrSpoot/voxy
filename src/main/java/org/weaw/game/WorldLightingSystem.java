@@ -25,19 +25,38 @@ public final class WorldLightingSystem {
             {0, 0, -1}
     };
 
-    public void rebuildLightingAround(ChunkManager chunkManager, Set<ChunkPosition> affectedPositions) {
+    public WorldLightingProfilingSnapshot rebuildLightingAround(ChunkManager chunkManager, Set<ChunkPosition> affectedPositions) {
         Objects.requireNonNull(chunkManager, "chunkManager");
         Objects.requireNonNull(affectedPositions, "affectedPositions");
         if (affectedPositions.isEmpty()) {
-            return;
+            return WorldLightingProfilingSnapshot.empty();
         }
 
         Set<ChunkPosition> targetPositions = expandPositions(affectedPositions, BLOCK_LIGHT_CHUNK_RADIUS);
         Set<ChunkPosition> calculationPositions = targetPositions;
 
+        long snapshotLoadedChunksStartNs = System.nanoTime();
         Map<ChunkPosition, Chunk> loadedChunks = snapshotLoadedChunks(chunkManager, calculationPositions);
+        long snapshotLoadedChunksCpuTimeNs = System.nanoTime() - snapshotLoadedChunksStartNs;
         if (loadedChunks.isEmpty()) {
-            return;
+            return new WorldLightingProfilingSnapshot(
+                    snapshotLoadedChunksCpuTimeNs,
+                    0L,
+                    0L,
+                    0L,
+                    affectedPositions.size(),
+                    targetPositions.size(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+            );
         }
 
         Set<ChunkPosition> loadedTargetPositions = new HashSet<>();
@@ -47,13 +66,54 @@ public final class WorldLightingSystem {
             }
         }
         if (loadedTargetPositions.isEmpty()) {
-            return;
+            return new WorldLightingProfilingSnapshot(
+                    snapshotLoadedChunksCpuTimeNs,
+                    0L,
+                    0L,
+                    0L,
+                    affectedPositions.size(),
+                    targetPositions.size(),
+                    loadedChunks.size(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+            );
         }
 
         Queue<LightNode> queue = new ArrayDeque<>();
-        clearLighting(loadedChunks, loadedTargetPositions);
-        seedEmitters(loadedChunks, queue);
-        propagate(queue, loadedChunks);
+        long clearLightingStartNs = System.nanoTime();
+        int clearedChunkCount = clearLighting(loadedChunks, loadedTargetPositions);
+        long clearLightingCpuTimeNs = System.nanoTime() - clearLightingStartNs;
+        long seedEmittersStartNs = System.nanoTime();
+        EmitterSeedResult emitterSeedResult = seedEmitters(loadedChunks, queue);
+        long seedEmittersCpuTimeNs = System.nanoTime() - seedEmittersStartNs;
+        long propagateStartNs = System.nanoTime();
+        PropagationResult propagationResult = propagate(queue, loadedChunks);
+        long propagateCpuTimeNs = System.nanoTime() - propagateStartNs;
+        return new WorldLightingProfilingSnapshot(
+                snapshotLoadedChunksCpuTimeNs,
+                clearLightingCpuTimeNs,
+                seedEmittersCpuTimeNs,
+                propagateCpuTimeNs,
+                affectedPositions.size(),
+                targetPositions.size(),
+                loadedChunks.size(),
+                loadedTargetPositions.size(),
+                clearedChunkCount,
+                emitterSeedResult.emitterCount(),
+                emitterSeedResult.seededNodeCount(),
+                propagationResult.processedNodeCount(),
+                propagationResult.lightWriteCount(),
+                propagationResult.blockedByOpaqueCount(),
+                propagationResult.missingChunkNeighborCount(),
+                propagationResult.noGainCount()
+        );
     }
 
     private Map<ChunkPosition, Chunk> snapshotLoadedChunks(ChunkManager chunkManager, Set<ChunkPosition> positions) {
@@ -67,53 +127,57 @@ public final class WorldLightingSystem {
         return loadedChunks;
     }
 
-    private void clearLighting(Map<ChunkPosition, Chunk> loadedChunks, Set<ChunkPosition> targetPositions) {
+    private int clearLighting(Map<ChunkPosition, Chunk> loadedChunks, Set<ChunkPosition> targetPositions) {
+        int clearedChunkCount = 0;
         for (ChunkPosition position : targetPositions) {
             Chunk chunk = loadedChunks.get(position);
             if (chunk == null) {
                 continue;
             }
             chunk.clearLighting();
+            clearedChunkCount++;
         }
+        return clearedChunkCount;
     }
 
-    private void seedEmitters(Map<ChunkPosition, Chunk> loadedChunks, Queue<LightNode> queue) {
+    private EmitterSeedResult seedEmitters(Map<ChunkPosition, Chunk> loadedChunks, Queue<LightNode> queue) {
+        int emitterCount = 0;
+        int seededNodeCount = 0;
         for (Map.Entry<ChunkPosition, Chunk> entry : loadedChunks.entrySet()) {
             ChunkPosition position = entry.getKey();
             Chunk chunk = entry.getValue();
+            if (!chunk.hasLightEmitters()) {
+                continue;
+            }
             int originX = position.x() * Chunk.SIZE;
             int originY = position.y() * Chunk.SIZE;
             int originZ = position.z() * Chunk.SIZE;
-
-            for (int y = 0; y < Chunk.SIZE; y++) {
-                for (int z = 0; z < Chunk.SIZE; z++) {
-                    for (int x = 0; x < Chunk.SIZE; x++) {
-                        BlockDefinition block = BlockRegistry.getBlock(chunk.getBlock(x, y, z));
-                        if (block == null || !block.isLightEmitter()) {
-                            continue;
-                        }
-
-                        int red = block.getLightEmissionRed();
-                        int green = block.getLightEmissionGreen();
-                        int blue = block.getLightEmissionBlue();
-                        chunk.setLight(x, y, z, red, green, blue, 0);
-                        queue.add(new LightNode(
-                                originX + x,
-                                originY + y,
-                                originZ + z,
-                                red,
-                                green,
-                                blue
-                        ));
-                    }
-                }
-            }
+            chunk.forEachLightEmitter((x, y, z, red, green, blue) -> {
+                chunk.setLight(x, y, z, red, green, blue, 0);
+                queue.add(new LightNode(
+                        originX + x,
+                        originY + y,
+                        originZ + z,
+                        red,
+                        green,
+                        blue
+                ));
+            });
+            emitterCount += chunk.getLightEmitterCount();
+            seededNodeCount += chunk.getLightEmitterCount();
         }
+        return new EmitterSeedResult(emitterCount, seededNodeCount);
     }
 
-    private void propagate(Queue<LightNode> queue, Map<ChunkPosition, Chunk> loadedChunks) {
+    private PropagationResult propagate(Queue<LightNode> queue, Map<ChunkPosition, Chunk> loadedChunks) {
+        int processedNodeCount = 0;
+        int lightWriteCount = 0;
+        int blockedByOpaqueCount = 0;
+        int missingChunkNeighborCount = 0;
+        int noGainCount = 0;
         while (!queue.isEmpty()) {
             LightNode node = queue.poll();
+             processedNodeCount++;
             if (node.red() <= 1 && node.green() <= 1 && node.blue() <= 1) {
                 continue;
             }
@@ -130,6 +194,7 @@ public final class WorldLightingSystem {
                 );
                 Chunk nextChunk = loadedChunks.get(nextChunkPosition);
                 if (nextChunk == null) {
+                    missingChunkNeighborCount++;
                     continue;
                 }
 
@@ -139,6 +204,7 @@ public final class WorldLightingSystem {
 
                 BlockDefinition nextBlock = BlockRegistry.getBlock(nextChunk.getBlock(localX, localY, localZ));
                 if (nextBlock != null && nextBlock.blocksLight() && !nextBlock.isLightEmitter()) {
+                    blockedByOpaqueCount++;
                     continue;
                 }
 
@@ -158,14 +224,23 @@ public final class WorldLightingSystem {
                 int nextGreen = Math.max(currentGreen, propagatedGreen);
                 int nextBlue = Math.max(currentBlue, propagatedBlue);
                 if (nextRed == currentRed && nextGreen == currentGreen && nextBlue == currentBlue) {
+                    noGainCount++;
                     continue;
                 }
 
                 int sky = ChunkLighting.getSky(currentPackedLight);
                 nextChunk.setLight(localX, localY, localZ, nextRed, nextGreen, nextBlue, sky);
+                lightWriteCount++;
                 queue.add(new LightNode(nextWorldX, nextWorldY, nextWorldZ, nextRed, nextGreen, nextBlue));
             }
         }
+        return new PropagationResult(
+                processedNodeCount,
+                lightWriteCount,
+                blockedByOpaqueCount,
+                missingChunkNeighborCount,
+                noGainCount
+        );
     }
 
     private Set<ChunkPosition> expandPositions(Set<ChunkPosition> positions, int radiusChunks) {
@@ -187,5 +262,17 @@ public final class WorldLightingSystem {
     }
 
     private record LightNode(int worldX, int worldY, int worldZ, int red, int green, int blue) {
+    }
+
+    private record EmitterSeedResult(int emitterCount, int seededNodeCount) {
+    }
+
+    private record PropagationResult(
+            int processedNodeCount,
+            int lightWriteCount,
+            int blockedByOpaqueCount,
+            int missingChunkNeighborCount,
+            int noGainCount
+    ) {
     }
 }

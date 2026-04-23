@@ -44,4 +44,13 @@ public class GameplaySession {
     public void setPlayerPosition(Vector3f position) {
         player.setPosition(position);
     }
+
+    public void setPlayerPose(Vector3f position, float yaw, float pitch) {
+        player.setPose(position, yaw, pitch);
+    }
+
+    public void updateBenchmarkPose(Vector3f position, float yaw, float pitch) {
+        player.setPose(position, yaw, pitch);
+        world.update(player.getPosition());
+    }
 }

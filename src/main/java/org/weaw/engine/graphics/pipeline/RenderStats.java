@@ -119,6 +119,8 @@ public class RenderStats {
         stats.indirectDrawCapacity = metrics.indirectDrawCapacity();
         stats.indirectBufferGpuBytes = metrics.indirectBufferGpuBytes();
         stats.syncCpuTimeNs = metrics.syncCpuTimeNs();
+        stats.meshUploadCpuTimeNs = metrics.meshUploadCpuTimeNs();
+        stats.lightUploadCpuTimeNs = metrics.lightUploadCpuTimeNs();
         stats.visibilityCpuTimeNs = metrics.visibilityCpuTimeNs();
         stats.batchUploadCpuTimeNs = metrics.batchUploadCpuTimeNs();
         stats.drawSubmitCpuTimeNs = metrics.drawSubmitCpuTimeNs();
@@ -174,6 +176,8 @@ public class RenderStats {
         private int indirectDrawCapacity;
         private long indirectBufferGpuBytes;
         private long syncCpuTimeNs;
+        private long meshUploadCpuTimeNs;
+        private long lightUploadCpuTimeNs;
         private long visibilityCpuTimeNs;
         private long batchUploadCpuTimeNs;
         private long drawSubmitCpuTimeNs;
@@ -202,6 +206,8 @@ public class RenderStats {
             indirectDrawCapacity = 0;
             indirectBufferGpuBytes = 0L;
             syncCpuTimeNs = 0L;
+            meshUploadCpuTimeNs = 0L;
+            lightUploadCpuTimeNs = 0L;
             visibilityCpuTimeNs = 0L;
             batchUploadCpuTimeNs = 0L;
             drawSubmitCpuTimeNs = 0L;
@@ -225,6 +231,8 @@ public class RenderStats {
             int indirectDrawCapacity,
             long indirectBufferGpuBytes,
             long syncCpuTimeNs,
+            long meshUploadCpuTimeNs,
+            long lightUploadCpuTimeNs,
             long visibilityCpuTimeNs,
             long batchUploadCpuTimeNs,
             long drawSubmitCpuTimeNs,

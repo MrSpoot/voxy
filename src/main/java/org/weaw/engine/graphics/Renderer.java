@@ -29,15 +29,23 @@ public class Renderer {
     private final World world;
     private final InputManager inputManager;
     private final Collection<BlockDefinition> blockDefinitions;
+    private final boolean transparentChunksEnabled;
     // Multi-pass rendering pipeline
     private RenderPipeline pipeline;
     private RenderContext context;
 
-    public Renderer(Window window, World world, InputManager inputManager, Collection<BlockDefinition> blockDefinitions) {
+    public Renderer(
+            Window window,
+            World world,
+            InputManager inputManager,
+            Collection<BlockDefinition> blockDefinitions,
+            boolean transparentChunksEnabled
+    ) {
         this.window = window;
         this.world = world;
         this.inputManager = inputManager;
         this.blockDefinitions = blockDefinitions;
+        this.transparentChunksEnabled = transparentChunksEnabled;
     }
 
     public void create() {
@@ -56,7 +64,9 @@ public class Renderer {
         pipeline = new RenderPipeline(context);
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
-        pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
+        if (transparentChunksEnabled) {
+            pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
+        }
         pipeline.addPass(new BlockOutlinePass());
         //pipeline.addPass(new FogPass());
         pipeline.addPass(new AntiAliasingPass());

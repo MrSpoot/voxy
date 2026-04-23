@@ -69,13 +69,17 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     @Override
     public final void execute(RenderContext context) {
-        long syncStartNs = System.nanoTime();
         boolean requiresLightData = context.isLightDebugVisualizationEnabled()
                 || context.getLightingSettings().isBlockLightEnabled();
         ChunkLightCache lightCache = context.getChunkLightCache();
+        long lightUploadStartNs = System.nanoTime();
         lightCache.synchronize(requiresLightData);
+        long lightUploadCpuTimeNs = System.nanoTime() - lightUploadStartNs;
+        long meshUploadStartNs = System.nanoTime();
         synchronizeRenderEntries(context, lightCache);
-        long syncCpuTimeNs = System.nanoTime() - syncStartNs;
+        long meshUploadCpuTimeNs = System.nanoTime() - meshUploadStartNs;
+        long syncCpuTimeNs = lightUploadCpuTimeNs + meshUploadCpuTimeNs;
+        long passStartNs = lightUploadStartNs;
 
         RenderTarget sceneTarget = context.getRenderTarget("sceneColor");
         if (sceneTarget != null) {
@@ -147,7 +151,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         shader.unbind();
 
         long accountedCpuTimeNs = syncCpuTimeNs + visibilityCpuTimeNs + batchUploadCpuTimeNs + drawSubmitCpuTimeNs;
-        long totalChunkPassCpuTimeNs = System.nanoTime() - syncStartNs;
+        long totalChunkPassCpuTimeNs = System.nanoTime() - passStartNs;
         long otherCpuTimeNs = Math.max(0L, totalChunkPassCpuTimeNs - accountedCpuTimeNs);
 
         int drawCalls = visibleDraws.isEmpty() ? 0 : (USE_MULTI_DRAW ? 1 : visibleDraws.size());
@@ -170,6 +174,8 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                         multiDrawBatch.getDrawCapacity(),
                         multiDrawBatch.getEstimatedGpuBytes(),
                         syncCpuTimeNs,
+                        meshUploadCpuTimeNs,
+                        lightUploadCpuTimeNs,
                         visibilityCpuTimeNs,
                         batchUploadCpuTimeNs,
                         drawSubmitCpuTimeNs,

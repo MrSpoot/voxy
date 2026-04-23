@@ -286,13 +286,16 @@ public class ChunkManager {
         );
     }
 
-    public synchronized void markChunksLightUpdated(Set<ChunkPosition> positions) {
+    public synchronized int markChunksLightUpdated(Set<ChunkPosition> positions) {
+        int updatedChunkCount = 0;
         for (ChunkPosition position : positions) {
             if (!chunks.containsKey(position)) {
                 continue;
             }
             recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
+            updatedChunkCount++;
         }
+        return updatedChunkCount;
     }
 
     public synchronized Chunk copyChunk(ChunkPosition position) {

@@ -22,10 +22,13 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class WorldStreamer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorldStreamer.class);
     private static final long DEFAULT_UPDATE_BUDGET_NS = 2_000_000L;
+    private static final int DEFAULT_RESERVED_REMESH_TASK_SLOTS = 2;
 
     private final ChunkManager chunkManager;
     private final WorldBlockProvider blockProvider;
@@ -38,6 +41,7 @@ public class WorldStreamer implements AutoCloseable {
     private final int maxSubmissionsPerUpdate;
     private final int maxPublishesPerUpdate;
     private final int maxQueuedChunkCount;
+    private final int reservedRemeshTaskSlots;
     private final long maxUpdateBudgetNs;
     private final Queue<CompletedChunk> completedChunks = new ConcurrentLinkedQueue<>();
     private final Object taskLock = new Object();
@@ -45,6 +49,13 @@ public class WorldStreamer implements AutoCloseable {
     private final Set<ChunkPosition> priorityDirtyChunkPositions = new LinkedHashSet<>();
     private final Set<ChunkPosition> dirtyChunkPositions = new LinkedHashSet<>();
     private final Set<ChunkPosition> desiredChunkPositions = new HashSet<>();
+    private volatile boolean remeshEnabled = !Boolean.getBoolean("voxy.disableRemesh");
+    private volatile boolean unloadsEnabled = !Boolean.getBoolean("voxy.disableUnloads");
+    private final AtomicLong asyncChunkGenerationCpuTimeNs = new AtomicLong();
+    private final AtomicLong asyncChunkMeshCpuTimeNs = new AtomicLong();
+    private final AtomicInteger asyncChunksGenerated = new AtomicInteger();
+    private final AtomicInteger asyncChunksMeshed = new AtomicInteger();
+    private final AtomicInteger asyncChunksRemeshed = new AtomicInteger();
 
     private int activeHorizontalRenderRadius = -1;
     private int activeHorizontalUnloadRadius = -1;
@@ -56,6 +67,7 @@ public class WorldStreamer implements AutoCloseable {
     private int desiredSubmissionCursor;
     private int unloadCursor;
     private long nextBuildToken = 1L;
+    private volatile WorldStreamerProfilingSnapshot lastProfilingSnapshot = WorldStreamerProfilingSnapshot.empty();
 
     public WorldStreamer(ChunkManager chunkManager, WorldBlockProvider blockProvider) {
         this(
@@ -138,11 +150,19 @@ public class WorldStreamer implements AutoCloseable {
         this.maxUpdateBudgetNs = Math.max(250_000L, maxUpdateBudgetNs);
         int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
         this.maxQueuedChunkCount = Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2);
+        this.reservedRemeshTaskSlots = Math.max(
+                1,
+                Math.min(
+                        this.maxQueuedChunkCount - 1,
+                        Integer.getInteger("voxy.reservedRemeshTaskSlots", DEFAULT_RESERVED_REMESH_TASK_SLOTS)
+                )
+        );
         this.executor = Executors.newFixedThreadPool(workerCount);
     }
 
     public void update(Vector3f playerPosition) {
         long deadlineNs = System.nanoTime() + maxUpdateBudgetNs;
+        FrameProfilingAccumulator frameProfiling = new FrameProfilingAccumulator();
         ChunkPosition playerChunk = toChunkPosition(playerPosition);
         int requestedRenderRadius = settings.getRenderDistanceChunks();
         boolean renderRadiusChanged = requestedRenderRadius != activeHorizontalRenderRadius;
@@ -167,10 +187,27 @@ public class WorldStreamer implements AutoCloseable {
             cancelObsoleteLoadTasks();
         }
 
-        processPendingUnloads(deadlineNs);
-        publishCompletedChunks(deadlineNs);
+        publishCompletedChunks(deadlineNs, frameProfiling);
         submitDirtyChunks(deadlineNs);
         submitNeededChunks(deadlineNs);
+        processPendingUnloads(deadlineNs, frameProfiling);
+
+        lastProfilingSnapshot = new WorldStreamerProfilingSnapshot(
+                asyncChunkGenerationCpuTimeNs.getAndSet(0L),
+                asyncChunkMeshCpuTimeNs.getAndSet(0L),
+                frameProfiling.chunkPublishCpuTimeNs,
+                frameProfiling.chunkUnloadCpuTimeNs,
+                chunkManager.getChunkCount(),
+                getPendingTaskCount(),
+                getPendingRemeshCount(),
+                completedChunks.size(),
+                Math.max(0, pendingUnloadPositions.size() - unloadCursor),
+                frameProfiling.chunksPublished,
+                frameProfiling.chunksUnloaded,
+                asyncChunksGenerated.getAndSet(0),
+                asyncChunksMeshed.getAndSet(0),
+                asyncChunksRemeshed.getAndSet(0)
+        );
     }
 
     @Override
@@ -190,7 +227,14 @@ public class WorldStreamer implements AutoCloseable {
         }
     }
 
+    public WorldStreamerProfilingSnapshot getLastProfilingSnapshot() {
+        return lastProfilingSnapshot;
+    }
+
     public void markChunkDirty(ChunkPosition position) {
+        if (!remeshEnabled) {
+            return;
+        }
         synchronized (taskLock) {
             if (priorityDirtyChunkPositions.contains(position)) {
                 return;
@@ -200,14 +244,37 @@ public class WorldStreamer implements AutoCloseable {
     }
 
     public void markChunkDirtyPriority(ChunkPosition position) {
+        if (!remeshEnabled) {
+            return;
+        }
         synchronized (taskLock) {
             dirtyChunkPositions.remove(position);
             priorityDirtyChunkPositions.add(position);
         }
     }
 
-    private void processPendingUnloads(long deadlineNs) {
+    public void setRemeshEnabled(boolean remeshEnabled) {
+        this.remeshEnabled = remeshEnabled;
+        if (!remeshEnabled) {
+            synchronized (taskLock) {
+                priorityDirtyChunkPositions.clear();
+                dirtyChunkPositions.clear();
+            }
+        }
+    }
+
+    public void setUnloadsEnabled(boolean unloadsEnabled) {
+        this.unloadsEnabled = unloadsEnabled;
+    }
+
+    private void processPendingUnloads(long deadlineNs, FrameProfilingAccumulator frameProfiling) {
+        long startNs = System.nanoTime();
+        if (!unloadsEnabled) {
+            frameProfiling.chunkUnloadCpuTimeNs += System.nanoTime() - startNs;
+            return;
+        }
         if (pendingUnloadPositions.isEmpty() || pendingUnloadPlayerChunk == null) {
+            frameProfiling.chunkUnloadCpuTimeNs += System.nanoTime() - startNs;
             return;
         }
 
@@ -228,9 +295,11 @@ public class WorldStreamer implements AutoCloseable {
                 cancelTask(position);
                 removeDirtyChunk(position);
                 chunkManager.unloadChunk(position);
+                frameProfiling.chunksUnloaded++;
             }
 
             if (System.nanoTime() >= deadlineNs) {
+                frameProfiling.chunkUnloadCpuTimeNs += System.nanoTime() - startNs;
                 return;
             }
         }
@@ -240,6 +309,7 @@ public class WorldStreamer implements AutoCloseable {
             pendingUnloadPlayerChunk = null;
             unloadCursor = 0;
         }
+        frameProfiling.chunkUnloadCpuTimeNs += System.nanoTime() - startNs;
     }
 
     private void submitNeededChunks(long deadlineNs) {
@@ -247,7 +317,8 @@ public class WorldStreamer implements AutoCloseable {
             return;
         }
 
-        int availableQueueSlots = maxQueuedChunkCount - getPendingTaskCount();
+        int remeshReservation = getPendingRemeshCount() > 0 ? reservedRemeshTaskSlots : 0;
+        int availableQueueSlots = maxQueuedChunkCount - getPendingTaskCount() - remeshReservation;
         if (availableQueueSlots <= 0) {
             return;
         }
@@ -294,6 +365,9 @@ public class WorldStreamer implements AutoCloseable {
     }
 
     private void submitDirtyChunks(long deadlineNs) {
+        if (!remeshEnabled) {
+            return;
+        }
         if (System.nanoTime() >= deadlineNs) {
             return;
         }
@@ -341,10 +415,19 @@ public class WorldStreamer implements AutoCloseable {
             Chunk chunk = chunkSnapshot;
             if (task.type() == ChunkTaskType.LOAD) {
                 chunk = new Chunk(new Vector3i(task.position().x(), task.position().y(), task.position().z()));
+                long generationStartNs = System.nanoTime();
                 worldGenerator.generateChunkData(chunk);
+                asyncChunkGenerationCpuTimeNs.addAndGet(System.nanoTime() - generationStartNs);
+                asyncChunksGenerated.incrementAndGet();
             }
 
+            long meshStartNs = System.nanoTime();
             ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, blockProvider);
+            asyncChunkMeshCpuTimeNs.addAndGet(System.nanoTime() - meshStartNs);
+            asyncChunksMeshed.incrementAndGet();
+            if (task.type() == ChunkTaskType.REMESH) {
+                asyncChunksRemeshed.incrementAndGet();
+            }
             completedChunks.offer(new CompletedChunk(task.position(), task.token(), task.type(), chunk, meshData));
         } catch (Exception exception) {
             LOGGER.error("Chunk build failed for {} ({})", task.position(), task.type(), exception);
@@ -352,14 +435,17 @@ public class WorldStreamer implements AutoCloseable {
         }
     }
 
-    private void publishCompletedChunks(long deadlineNs) {
+    private void publishCompletedChunks(long deadlineNs, FrameProfilingAccumulator frameProfiling) {
+        long startNs = System.nanoTime();
         for (int published = 0; published < maxPublishesPerUpdate; published++) {
             if (System.nanoTime() >= deadlineNs) {
+                frameProfiling.chunkPublishCpuTimeNs += System.nanoTime() - startNs;
                 return;
             }
 
             CompletedChunk completedChunk = completedChunks.poll();
             if (completedChunk == null) {
+                frameProfiling.chunkPublishCpuTimeNs += System.nanoTime() - startNs;
                 return;
             }
 
@@ -385,7 +471,11 @@ public class WorldStreamer implements AutoCloseable {
             }
 
             completePublishedTask(task.position(), task.token(), publishedChunk);
+            if (publishedChunk) {
+                frameProfiling.chunksPublished++;
+            }
         }
+        frameProfiling.chunkPublishCpuTimeNs += System.nanoTime() - startNs;
     }
 
     private void cancelObsoleteLoadTasks() {
@@ -610,6 +700,19 @@ public class WorldStreamer implements AutoCloseable {
             priorityDirtyChunkPositions.remove(position);
             dirtyChunkPositions.remove(position);
         }
+    }
+
+    private int getPendingRemeshCount() {
+        synchronized (taskLock) {
+            return priorityDirtyChunkPositions.size() + dirtyChunkPositions.size();
+        }
+    }
+
+    private static final class FrameProfilingAccumulator {
+        private long chunkPublishCpuTimeNs;
+        private long chunkUnloadCpuTimeNs;
+        private int chunksPublished;
+        private int chunksUnloaded;
     }
 
     private record ChunkOffset(int x, int y, int z) {

@@ -18,6 +18,16 @@ public class Player {
         this.position.set(position);
     }
 
+    public void setRotation(float yaw, float pitch) {
+        this.yaw = yaw;
+        this.pitch = Math.max(-89.0f, Math.min(89.0f, pitch));
+    }
+
+    public void setPose(Vector3f position, float yaw, float pitch) {
+        setPosition(position);
+        setRotation(yaw, pitch);
+    }
+
     public void move(Vector3f offset) {
         if (offset.lengthSquared() == 0.0f) {
             return;

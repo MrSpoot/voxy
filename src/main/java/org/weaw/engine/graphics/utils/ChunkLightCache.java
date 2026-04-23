@@ -25,6 +25,12 @@ public final class ChunkLightCache {
     private ChunkLightArena lightArena;
     private long synchronizedChunkLightVersion = Long.MIN_VALUE;
     private boolean lightDataResident;
+    private int profilingSynchronizeCalls;
+    private int profilingFullSnapshotCount;
+    private int profilingDeltaCount;
+    private int profilingRefreshedAllocationCount;
+    private int profilingFreedAllocationCount;
+    private int profilingUploadedChunkCount;
 
     public ChunkLightCache(ChunkManager chunkManager) {
         this.chunkManager = chunkManager;
@@ -38,6 +44,7 @@ public final class ChunkLightCache {
     }
 
     public void synchronize(boolean requiresLightData) {
+        profilingSynchronizeCalls++;
         if (!requiresLightData) {
             lightDataResident = false;
             return;
@@ -59,8 +66,10 @@ public final class ChunkLightCache {
 
         ChunkLightSync lightSync = chunkManager.snapshotChunkLightSync(synchronizedChunkLightVersion);
         if (lightSync.requiresFullSnapshot()) {
+            profilingFullSnapshotCount++;
             applyFullSnapshot(lightSync.fullSnapshot());
         } else {
+            profilingDeltaCount += lightSync.deltas().size();
             for (ChunkLightDelta delta : lightSync.deltas()) {
                 if (delta.changeType() == ChunkUploadChangeType.REMOVED) {
                     freeAllocation(delta.position());
@@ -89,10 +98,35 @@ public final class ChunkLightCache {
         return lightArena != null ? lightArena.getEstimatedGpuBytes() : 0L;
     }
 
+    public ChunkLightCacheProfilingSnapshot consumeProfilingSnapshot() {
+        ChunkLightCacheProfilingSnapshot snapshot = new ChunkLightCacheProfilingSnapshot(
+                profilingSynchronizeCalls,
+                profilingFullSnapshotCount,
+                profilingDeltaCount,
+                profilingRefreshedAllocationCount,
+                profilingFreedAllocationCount,
+                profilingUploadedChunkCount,
+                allocations.size()
+        );
+        profilingSynchronizeCalls = 0;
+        profilingFullSnapshotCount = 0;
+        profilingDeltaCount = 0;
+        profilingRefreshedAllocationCount = 0;
+        profilingFreedAllocationCount = 0;
+        profilingUploadedChunkCount = 0;
+        return snapshot;
+    }
+
     public void cleanup() {
         allocations.clear();
         synchronizedChunkLightVersion = Long.MIN_VALUE;
         lightDataResident = false;
+        profilingSynchronizeCalls = 0;
+        profilingFullSnapshotCount = 0;
+        profilingDeltaCount = 0;
+        profilingRefreshedAllocationCount = 0;
+        profilingFreedAllocationCount = 0;
+        profilingUploadedChunkCount = 0;
         if (lightArena != null) {
             lightArena.cleanup();
             lightArena = null;
@@ -127,12 +161,15 @@ public final class ChunkLightCache {
                 allocations.get(position)
         );
         allocations.put(position, allocation);
+        profilingRefreshedAllocationCount++;
+        profilingUploadedChunkCount++;
     }
 
     private void freeAllocation(ChunkPosition position) {
         ChunkLightArena.Allocation allocation = allocations.remove(position);
         if (allocation != null && lightArena != null) {
             lightArena.free(allocation);
+            profilingFreedAllocationCount++;
         }
     }
 

@@ -4,11 +4,16 @@ import org.joml.Vector3f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.engine.graphics.Renderer;
+import org.weaw.engine.graphics.pipeline.RenderStats;
+import org.weaw.engine.graphics.utils.ChunkLightCacheProfilingSnapshot;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
 import org.weaw.game.World;
+import org.weaw.game.ChunkMesher;
+import org.weaw.game.WorldProfilingSnapshot;
+import org.weaw.game.WorldSettings;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.utils.BlockDefinition;
@@ -17,6 +22,12 @@ import org.weaw.game.utils.Blocks;
 import org.weaw.gameplay.GameplaySession;
 import org.weaw.gameplay.GameplaySettings;
 import org.weaw.gameplay.TargetedBlock;
+import org.weaw.runtime.BenchmarkController;
+import org.weaw.runtime.JfrProfileRecorder;
+import org.weaw.runtime.LaunchOptions;
+import org.weaw.runtime.RuntimeFrameProfile;
+import org.weaw.runtime.RuntimeProfilingCsvWriter;
+import org.weaw.runtime.RuntimeProfilingSummaryCollector;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
 import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
@@ -25,6 +36,9 @@ import static org.lwjgl.opengl.GL11.glPolygonMode;
 
 public class Game {
     private static final Logger LOGGER = LoggerFactory.getLogger(Game.class);
+    private static final Vector3f DEFAULT_PLAYER_POSITION = new Vector3f(16.0f, 12.0f, 48.0f);
+
+    private final LaunchOptions launchOptions;
 
     private Window window;
     private InputManager inputManager;
@@ -33,10 +47,23 @@ public class Game {
     private Camera camera;
     private World world;
     private GameplaySession gameplaySession;
+    private BenchmarkController benchmarkController;
+    private JfrProfileRecorder jfrProfileRecorder;
+    private RuntimeProfilingCsvWriter runtimeProfilingCsvWriter;
+    private RuntimeProfilingSummaryCollector runtimeProfilingSummaryCollector;
 
     private double lastTime;
+    private double benchmarkElapsedSeconds;
 
     private boolean wireframe = false;
+
+    public Game() {
+        this(LaunchOptions.from(new String[0]));
+    }
+
+    public Game(LaunchOptions launchOptions) {
+        this.launchOptions = launchOptions;
+    }
 
     public void run() {
         try {
@@ -51,24 +78,38 @@ public class Game {
         LOGGER.info("Initializing");
         BlockRegistry.initialize();
 
-        window = new Window("Voxy", 1920, 1080 );
+        window = new Window(
+                "Voxy",
+                launchOptions.benchmarkEnabled() ? launchOptions.benchmark().windowWidth() : 1920,
+                launchOptions.benchmarkEnabled() ? launchOptions.benchmark().windowHeight() : 1080
+        );
         window.create();
 
         inputManager = new InputManager(window.getId());
         inputManager.create();
 
         world = createTestWorld();
+        applyRuntimeIsolationOptions();
         gameplaySession = new GameplaySession(world, new GameplaySettings());
-        gameplaySession.setPlayerPosition(new Vector3f(16.0f, 12.0f, 48.0f));
+        configureSession();
 
-        renderer = new Renderer(window, world, inputManager, BlockRegistry.getRegisteredBlocks().values());
+        renderer = new Renderer(
+                window,
+                world,
+                inputManager,
+                BlockRegistry.getRegisteredBlocks().values(),
+                launchOptions.transparentChunksEnabled()
+        );
         renderer.create();
+        renderer.getContext().getLightingSettings().setBlockLightEnabled(launchOptions.lightUploadEnabled());
 
         // Connect renderer to window for resize notifications
         window.setRenderer(renderer);
 
         camera = new Camera(90f,window.aspectRatio());
         syncCameraToPlayer();
+        startProfilingIfNeeded();
+        startRuntimeProfilingIfNeeded();
 
         lastTime = System.nanoTime() / 1_000_000_000.0; // secondes
     }
@@ -100,6 +141,7 @@ public class Game {
                     windowCpuTimeNs,
                     System.nanoTime() - frameStartNs
             );
+            writeRuntimeProfilingFrame(deltaTime);
 //            long end = System.nanoTime();
 //            if((end - start) / 1_000_000.0 > 10.0){
 //                LOGGER.warn("Game loop took too long: {} ms",(end - start) / 1_000_000.0);
@@ -109,6 +151,36 @@ public class Game {
     }
 
     private void cleanup() {
+        safeCleanup("JFR profile", () -> {
+            if (jfrProfileRecorder != null) {
+                jfrProfileRecorder.close();
+                LOGGER.info("JFR profile exported to {}", jfrProfileRecorder.getOutputPath());
+                jfrProfileRecorder = null;
+            }
+        });
+        safeCleanup("Runtime profiling CSV", () -> {
+            if (runtimeProfilingCsvWriter != null) {
+                runtimeProfilingCsvWriter.close();
+                LOGGER.info("Runtime profiling CSV exported to {}", runtimeProfilingCsvWriter.getOutputPath());
+                runtimeProfilingCsvWriter = null;
+            }
+        });
+        safeCleanup("Runtime profiling summary", () -> {
+            if (runtimeProfilingSummaryCollector != null && !runtimeProfilingSummaryCollector.isEmpty()) {
+                try {
+                    LOGGER.info(
+                            "Runtime profiling summary exported to {}",
+                            runtimeProfilingSummaryCollector.writeSummary(
+                                    launchOptions.runtimeSummaryOutputPath(),
+                                    launchOptions
+                            )
+                    );
+                } catch (Exception exception) {
+                    throw new IllegalStateException("Unable to export runtime profiling summary", exception);
+                }
+            }
+            runtimeProfilingSummaryCollector = null;
+        });
         safeCleanup("Renderer", () -> {
             if (renderer != null) {
                 renderer.cleanup();
@@ -136,11 +208,17 @@ public class Game {
     }
 
     public static void main(String[] args) {
-        new Game().run();
+        new Game(LaunchOptions.from(args)).run();
     }
 
     private World createTestWorld() {
-        return new World(new NoiseWorldGenerator(GenerationConfig.defaults()));
+        GenerationConfig config = GenerationConfig.defaults();
+        WorldSettings settings = new WorldSettings();
+        if (launchOptions.benchmarkEnabled()) {
+            config = config.withSeed(launchOptions.benchmark().seed());
+            settings = new WorldSettings(launchOptions.benchmark().renderDistanceChunks());
+        }
+        return new World(new NoiseWorldGenerator(config), settings);
     }
 
     private void handleInputModes() {
@@ -152,11 +230,18 @@ public class Game {
 
     private void update(float deltaTime) {
         inputManager.update();
-        handleInputModes();
 
         if (inputManager.isActionDown(InputAction.QUIT)) {
             window.close();
+            return;
         }
+
+        if (launchOptions.benchmarkEnabled()) {
+            updateBenchmark(deltaTime);
+            return;
+        }
+
+        handleInputModes();
 
         if (inputManager.isActionPressed(InputAction.TOGGLE_WIREFRAME)) {
             glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_FILL : GL_LINE);
@@ -168,6 +253,23 @@ public class Game {
         updateRenderInteractionTarget();
         syncCameraToPlayer();
         camera.setAspectRatio(window.aspectRatio());
+    }
+
+    private void updateBenchmark(float deltaTime) {
+        benchmarkElapsedSeconds += deltaTime;
+        BenchmarkController.BenchmarkFrame frame = benchmarkController.sample(benchmarkElapsedSeconds);
+        gameplaySession.updateBenchmarkPose(frame.position(), frame.yaw(), frame.pitch());
+        renderer.getContext().clearBlockOutlineTarget();
+        syncCameraToPlayer();
+        camera.setAspectRatio(window.aspectRatio());
+
+        if (benchmarkElapsedSeconds >= launchOptions.benchmark().durationSeconds()) {
+            LOGGER.info(
+                    "Benchmark completed after {} seconds, closing window",
+                    launchOptions.benchmark().durationSeconds()
+            );
+            window.close();
+        }
     }
 
     private void render() {
@@ -224,5 +326,206 @@ public class Game {
         } catch (Exception exception) {
             LOGGER.error("Cleanup {} failed", label, exception);
         }
+    }
+
+    private void configureSession() {
+        if (!launchOptions.benchmarkEnabled()) {
+            gameplaySession.setPlayerPosition(DEFAULT_PLAYER_POSITION);
+            return;
+        }
+
+        benchmarkController = new BenchmarkController(launchOptions.benchmark());
+        BenchmarkController.BenchmarkFrame initialFrame = benchmarkController.sample(0.0d);
+        gameplaySession.setPlayerPose(initialFrame.position(), initialFrame.yaw(), initialFrame.pitch());
+        benchmarkElapsedSeconds = 0.0d;
+
+        LOGGER.info(
+                "Benchmark mode enabled: duration={}s seed={} renderDistance={} window={}x{}",
+                launchOptions.benchmark().durationSeconds(),
+                launchOptions.benchmark().seed(),
+                launchOptions.benchmark().renderDistanceChunks(),
+                launchOptions.benchmark().windowWidth(),
+                launchOptions.benchmark().windowHeight()
+        );
+    }
+
+    private void applyRuntimeIsolationOptions() {
+        world.setDynamicLightingEnabled(launchOptions.dynamicLightingEnabled());
+        world.setRemeshEnabled(launchOptions.remeshEnabled());
+        world.setUnloadsEnabled(launchOptions.unloadsEnabled());
+        ChunkMesher.setAmbientOcclusionEnabled(launchOptions.ambientOcclusionEnabled());
+        ChunkMesher.setTransparentChunksEnabled(launchOptions.transparentChunksEnabled());
+
+        if (launchOptions.dynamicLightingEnabled()
+                && launchOptions.lightUploadEnabled()
+                && launchOptions.ambientOcclusionEnabled()
+                && launchOptions.remeshEnabled()
+                && launchOptions.unloadsEnabled()
+                && launchOptions.transparentChunksEnabled()) {
+            return;
+        }
+
+        LOGGER.info(
+                "Runtime isolation flags: dynamicLighting={} lightUpload={} ao={} remesh={} unloads={} transparentChunks={}",
+                launchOptions.dynamicLightingEnabled(),
+                launchOptions.lightUploadEnabled(),
+                launchOptions.ambientOcclusionEnabled(),
+                launchOptions.remeshEnabled(),
+                launchOptions.unloadsEnabled(),
+                launchOptions.transparentChunksEnabled()
+        );
+    }
+
+    private void startProfilingIfNeeded() {
+        if (!launchOptions.jfrEnabled()) {
+            return;
+        }
+
+        try {
+            jfrProfileRecorder = JfrProfileRecorder.start(launchOptions.jfrOutputPath());
+            LOGGER.info("JFR recording started: {}", jfrProfileRecorder.getOutputPath());
+        } catch (Exception exception) {
+            LOGGER.error("Unable to start JFR recording", exception);
+        }
+    }
+
+    private void startRuntimeProfilingIfNeeded() {
+        if (!launchOptions.runtimeStatsEnabled()) {
+            return;
+        }
+
+        runtimeProfilingSummaryCollector = new RuntimeProfilingSummaryCollector();
+        try {
+            runtimeProfilingCsvWriter = RuntimeProfilingCsvWriter.create(launchOptions.runtimeStatsOutputPath());
+            LOGGER.info("Runtime profiling CSV started: {}", runtimeProfilingCsvWriter.getOutputPath());
+        } catch (Exception exception) {
+            LOGGER.error("Unable to start runtime profiling CSV", exception);
+        }
+    }
+
+    private void writeRuntimeProfilingFrame(float deltaTime) {
+        if (runtimeProfilingCsvWriter == null && runtimeProfilingSummaryCollector == null) {
+            return;
+        }
+
+        RenderStats renderStats = renderer.getContext().getRenderStats();
+        WorldProfilingSnapshot worldProfilingSnapshot = world.getLastProfilingSnapshot();
+        ChunkLightCacheProfilingSnapshot lightCacheProfilingSnapshot =
+                renderer.getContext().getChunkLightCache().consumeProfilingSnapshot();
+
+        RuntimeFrameProfile frameProfile = new RuntimeFrameProfile(
+                renderStats.getFrameIndex(),
+                deltaTime > 0.0f ? 1.0d / deltaTime : 0.0d,
+                nanosToMillis(renderStats.getFrameCpuTimeNs()),
+                nanosToMillis(renderStats.getUpdateCpuTimeNs()),
+                nanosToMillis(renderStats.getRenderCpuTimeNs()),
+                nanosToMillis(renderStats.getWindowCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.worldUpdateCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.worldStreamerUpdateCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingCollectionCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.chunkGenerationCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.chunkMeshCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.chunkPublishCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.chunkUnloadCpuTimeNs()),
+                nanosToMillis(renderStats.getTotalPassCpuTimeNs()),
+                nanosToMillis(passCpuTimeNs(renderStats, "OpaqueChunkRenderPass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "CutoutChunkRenderPass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "TransparentChunkRenderPass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "BlockOutlinePass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "AntiAliasingPass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "ToneMappingPass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "HudPass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "DebugImGuiPass")),
+                nanosToMillis(totalMeshUploadCpuTimeNs(renderStats)),
+                nanosToMillis(totalLightUploadCpuTimeNs(renderStats)),
+                nanosToMillis(worldProfilingSnapshot.lightingSnapshotLoadedChunksCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingClearCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingSeedCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingPropagateCpuTimeNs()),
+                worldProfilingSnapshot.pendingLightingUpdatesBeforeCollection(),
+                worldProfilingSnapshot.pendingLightingUpdatesAfterCollection(),
+                worldProfilingSnapshot.lightingBatchSize(),
+                worldProfilingSnapshot.lightingAffectedChunkCount(),
+                worldProfilingSnapshot.lightingExpandedChunkCount(),
+                worldProfilingSnapshot.lightingLoadedChunkCount(),
+                worldProfilingSnapshot.lightingLoadedTargetChunkCount(),
+                worldProfilingSnapshot.lightingMarkedChunkCount(),
+                worldProfilingSnapshot.lightingClearedChunkCount(),
+                worldProfilingSnapshot.lightingEmitterCount(),
+                worldProfilingSnapshot.lightingSeedNodeCount(),
+                worldProfilingSnapshot.lightingPropagationNodeCount(),
+                worldProfilingSnapshot.lightingLightWriteCount(),
+                worldProfilingSnapshot.lightingBlockedByOpaqueCount(),
+                worldProfilingSnapshot.lightingMissingChunkNeighborCount(),
+                worldProfilingSnapshot.lightingNoGainCount(),
+                worldProfilingSnapshot.lightUploadFullSnapshotCount(),
+                worldProfilingSnapshot.lightUploadDeltaCount(),
+                lightCacheProfilingSnapshot.synchronizeCalls(),
+                lightCacheProfilingSnapshot.refreshedAllocationCount(),
+                lightCacheProfilingSnapshot.freedAllocationCount(),
+                lightCacheProfilingSnapshot.uploadedChunkCount(),
+                lightCacheProfilingSnapshot.residentAllocationCount(),
+                worldProfilingSnapshot.loadedChunks(),
+                renderer.getContext().getVisibleChunkPositions().size(),
+                worldProfilingSnapshot.queuedTasks(),
+                worldProfilingSnapshot.pendingRemesh(),
+                worldProfilingSnapshot.pendingUploads(),
+                worldProfilingSnapshot.pendingUnloads(),
+                worldProfilingSnapshot.chunksPublished(),
+                worldProfilingSnapshot.chunksUnloaded(),
+                worldProfilingSnapshot.chunksGenerated(),
+                worldProfilingSnapshot.chunksMeshed(),
+                worldProfilingSnapshot.chunksRemeshed()
+        );
+
+        if (runtimeProfilingSummaryCollector != null) {
+            runtimeProfilingSummaryCollector.recordFrame(frameProfile);
+        }
+
+        if (runtimeProfilingCsvWriter == null) {
+            return;
+        }
+
+        try {
+            runtimeProfilingCsvWriter.writeFrame(frameProfile);
+        } catch (Exception exception) {
+            LOGGER.error("Unable to write runtime profiling frame", exception);
+            safeCleanup("Runtime profiling CSV", () -> {
+                if (runtimeProfilingCsvWriter != null) {
+                    runtimeProfilingCsvWriter.close();
+                    runtimeProfilingCsvWriter = null;
+                }
+            });
+        }
+    }
+
+    private static long passCpuTimeNs(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getCpuTimeNs();
+            }
+        }
+        return 0L;
+    }
+
+    private static long totalMeshUploadCpuTimeNs(RenderStats renderStats) {
+        long total = 0L;
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            total += passStats.getMeshUploadCpuTimeNs();
+        }
+        return total;
+    }
+
+    private static long totalLightUploadCpuTimeNs(RenderStats renderStats) {
+        long total = 0L;
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            total += passStats.getLightUploadCpuTimeNs();
+        }
+        return total;
+    }
+
+    private static double nanosToMillis(long nanoseconds) {
+        return nanoseconds / 1_000_000.0d;
     }
 }

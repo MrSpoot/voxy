@@ -18,6 +18,7 @@ import java.util.Arrays;
  */
 public final class BinaryChunkMeshBuilder {
     private static final int SIZE = Chunk.SIZE;
+    private static final ChunkMeshData.LayerMeshData EMPTY_LAYER = new ChunkMeshData.LayerMeshData(new int[0], 0);
 
     private static final int FACE_POS_X = 0;
     private static final int FACE_NEG_X = 1;
@@ -29,28 +30,41 @@ public final class BinaryChunkMeshBuilder {
     private BinaryChunkMeshBuilder() {
     }
 
-    public static ChunkMeshData buildMeshData(Chunk chunk, WorldBlockProvider blockProvider) {
+    public static ChunkMeshData buildMeshData(
+            Chunk chunk,
+            WorldBlockProvider blockProvider,
+            boolean ambientOcclusionEnabled,
+            boolean transparentChunksEnabled
+    ) {
         return new ChunkMeshData(
-                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.OPAQUE),
-                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.CUTOUT),
-                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.TRANSPARENT)
+                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.OPAQUE, ambientOcclusionEnabled),
+                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.CUTOUT, ambientOcclusionEnabled),
+                transparentChunksEnabled
+                        ? buildLayerMeshData(
+                                chunk,
+                                blockProvider,
+                                BlockDefinition.TransparencyType.TRANSPARENT,
+                                ambientOcclusionEnabled
+                        )
+                        : EMPTY_LAYER
         );
     }
 
     private static ChunkMeshData.LayerMeshData buildLayerMeshData(
             Chunk chunk,
             WorldBlockProvider blockProvider,
-            BlockDefinition.TransparencyType transparencyType
+            BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled
     ) {
         FaceBuffer buffer = new FaceBuffer(Math.max(256, SIZE * SIZE));
         int[] mask = new int[SIZE * SIZE];
 
-        meshPositiveX(chunk, blockProvider, transparencyType, mask, buffer);
-        meshNegativeX(chunk, blockProvider, transparencyType, mask, buffer);
-        meshPositiveY(chunk, blockProvider, transparencyType, mask, buffer);
-        meshNegativeY(chunk, blockProvider, transparencyType, mask, buffer);
-        meshPositiveZ(chunk, blockProvider, transparencyType, mask, buffer);
-        meshNegativeZ(chunk, blockProvider, transparencyType, mask, buffer);
+        meshPositiveX(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
+        meshNegativeX(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
+        meshPositiveY(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
+        meshNegativeY(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
+        meshPositiveZ(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
+        meshNegativeZ(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
 
         return new ChunkMeshData.LayerMeshData(buffer.toArray(), buffer.faceCount());
     }
@@ -59,6 +73,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer
     ) {
@@ -70,6 +85,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            ambientOcclusionEnabled,
                             FACE_POS_X,
                             x,
                             y,
@@ -90,6 +106,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer
     ) {
@@ -101,6 +118,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            ambientOcclusionEnabled,
                             FACE_NEG_X,
                             x,
                             y,
@@ -121,6 +139,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer
     ) {
@@ -132,6 +151,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            ambientOcclusionEnabled,
                             FACE_POS_Y,
                             x,
                             y,
@@ -152,6 +172,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer
     ) {
@@ -163,6 +184,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            ambientOcclusionEnabled,
                             FACE_NEG_Y,
                             x,
                             y,
@@ -183,6 +205,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer
     ) {
@@ -194,6 +217,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            ambientOcclusionEnabled,
                             FACE_POS_Z,
                             x,
                             y,
@@ -214,6 +238,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer
     ) {
@@ -225,6 +250,7 @@ public final class BinaryChunkMeshBuilder {
                             chunk,
                             blockProvider,
                             transparencyType,
+                            ambientOcclusionEnabled,
                             FACE_NEG_Z,
                             x,
                             y,
@@ -283,6 +309,7 @@ public final class BinaryChunkMeshBuilder {
             Chunk chunk,
             WorldBlockProvider blockProvider,
             BlockDefinition.TransparencyType transparencyType,
+            boolean ambientOcclusionEnabled,
             int faceDirection,
             int x,
             int y,
@@ -305,7 +332,7 @@ public final class BinaryChunkMeshBuilder {
             return -1;
         }
 
-        if (transparencyType == BlockDefinition.TransparencyType.OPAQUE) {
+        if (transparencyType == BlockDefinition.TransparencyType.OPAQUE && ambientOcclusionEnabled) {
             int aoPacked = VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, faceDirection);
             return VoxelAmbientOcclusion.packOpaqueFaceData(blockDefinition.getTextureIndex(), aoPacked);
         }

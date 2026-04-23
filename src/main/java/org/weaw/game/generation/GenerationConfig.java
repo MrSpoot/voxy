@@ -28,4 +28,20 @@ public record GenerationConfig(
                 2.0f
         );
     }
+
+    public GenerationConfig withSeed(long seed) {
+        return new GenerationConfig(
+                seed,
+                amplitude,
+                baseHeight,
+                waterLevel,
+                terrainFrequency,
+                terrainOctaves,
+                terrainLacunarity,
+                terrainGain,
+                treeSeedOffset,
+                treeRarity,
+                treeSteepness
+        );
+    }
 }

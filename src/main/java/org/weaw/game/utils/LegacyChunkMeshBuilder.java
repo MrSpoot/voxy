@@ -5,6 +5,7 @@ import org.weaw.game.ChunkMeshData;
 import org.weaw.game.WorldBlockProvider;
 
 public final class LegacyChunkMeshBuilder {
+    private static final ChunkMeshData.LayerMeshData EMPTY_LAYER = new ChunkMeshData.LayerMeshData(new int[0], 0);
     private static final int FACE_POS_X = 0;
     private static final int FACE_NEG_X = 1;
     private static final int FACE_POS_Y = 2;
@@ -15,11 +16,16 @@ public final class LegacyChunkMeshBuilder {
     private LegacyChunkMeshBuilder() {
     }
 
-    public static ChunkMeshData buildMeshData(Chunk chunk, WorldBlockProvider blockProvider) {
+    public static ChunkMeshData buildMeshData(
+            Chunk chunk,
+            WorldBlockProvider blockProvider,
+            boolean ambientOcclusionEnabled,
+            boolean transparentChunksEnabled
+    ) {
         int initialCapacity = Math.max(estimateVisibleFaces(chunk), 1);
         int[] opaqueFaces = new int[initialCapacity * 2];
         int[] cutoutFaces = new int[initialCapacity * 2];
-        int[] transparentFaces = new int[initialCapacity * 2];
+        int[] transparentFaces = transparentChunksEnabled ? new int[initialCapacity * 2] : new int[0];
         int opaqueCount = 0;
         int cutoutCount = 0;
         int transparentCount = 0;
@@ -36,6 +42,9 @@ public final class LegacyChunkMeshBuilder {
                     if (blockDefinition == null) {
                         continue;
                     }
+                    if (!transparentChunksEnabled && blockDefinition.isTransparent()) {
+                        continue;
+                    }
 
                     int textureIndex = blockDefinition.getTextureIndex();
                     MeshLayer layer = blockDefinition.isTransparent()
@@ -44,9 +53,15 @@ public final class LegacyChunkMeshBuilder {
 
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x + 1, y, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
-                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                ? packOpaqueFacePayload(
+                                        chunk,
+                                        blockProvider,
                                         textureIndex,
-                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_POS_X)
+                                        ambientOcclusionEnabled,
+                                        x,
+                                        y,
+                                        z,
+                                        FACE_POS_X
                                 )
                                 : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
@@ -62,9 +77,15 @@ public final class LegacyChunkMeshBuilder {
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x - 1, y, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
-                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                ? packOpaqueFacePayload(
+                                        chunk,
+                                        blockProvider,
                                         textureIndex,
-                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_NEG_X)
+                                        ambientOcclusionEnabled,
+                                        x,
+                                        y,
+                                        z,
+                                        FACE_NEG_X
                                 )
                                 : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
@@ -80,9 +101,15 @@ public final class LegacyChunkMeshBuilder {
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y + 1, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
-                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                ? packOpaqueFacePayload(
+                                        chunk,
+                                        blockProvider,
                                         textureIndex,
-                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_POS_Y)
+                                        ambientOcclusionEnabled,
+                                        x,
+                                        y,
+                                        z,
+                                        FACE_POS_Y
                                 )
                                 : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
@@ -98,9 +125,15 @@ public final class LegacyChunkMeshBuilder {
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y - 1, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
-                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                ? packOpaqueFacePayload(
+                                        chunk,
+                                        blockProvider,
                                         textureIndex,
-                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_NEG_Y)
+                                        ambientOcclusionEnabled,
+                                        x,
+                                        y,
+                                        z,
+                                        FACE_NEG_Y
                                 )
                                 : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
@@ -116,9 +149,15 @@ public final class LegacyChunkMeshBuilder {
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z + 1)) {
                         int facePayload = layer == MeshLayer.OPAQUE
-                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                ? packOpaqueFacePayload(
+                                        chunk,
+                                        blockProvider,
                                         textureIndex,
-                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_POS_Z)
+                                        ambientOcclusionEnabled,
+                                        x,
+                                        y,
+                                        z,
+                                        FACE_POS_Z
                                 )
                                 : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
@@ -134,9 +173,15 @@ public final class LegacyChunkMeshBuilder {
                     }
                     if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z - 1)) {
                         int facePayload = layer == MeshLayer.OPAQUE
-                                ? VoxelAmbientOcclusion.packOpaqueFaceData(
+                                ? packOpaqueFacePayload(
+                                        chunk,
+                                        blockProvider,
                                         textureIndex,
-                                        VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, FACE_NEG_Z)
+                                        ambientOcclusionEnabled,
+                                        x,
+                                        y,
+                                        z,
+                                        FACE_NEG_Z
                                 )
                                 : textureIndex;
                         if (layer == MeshLayer.OPAQUE) {
@@ -157,7 +202,29 @@ public final class LegacyChunkMeshBuilder {
         return new ChunkMeshData(
                 new ChunkMeshData.LayerMeshData(trimFaces(opaqueFaces, opaqueCount), opaqueCount),
                 new ChunkMeshData.LayerMeshData(trimFaces(cutoutFaces, cutoutCount), cutoutCount),
-                new ChunkMeshData.LayerMeshData(trimFaces(transparentFaces, transparentCount), transparentCount)
+                transparentChunksEnabled
+                        ? new ChunkMeshData.LayerMeshData(trimFaces(transparentFaces, transparentCount), transparentCount)
+                        : EMPTY_LAYER
+        );
+    }
+
+    private static int packOpaqueFacePayload(
+            Chunk chunk,
+            WorldBlockProvider blockProvider,
+            int textureIndex,
+            boolean ambientOcclusionEnabled,
+            int x,
+            int y,
+            int z,
+            int faceDirection
+    ) {
+        if (!ambientOcclusionEnabled) {
+            return textureIndex;
+        }
+
+        return VoxelAmbientOcclusion.packOpaqueFaceData(
+                textureIndex,
+                VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, faceDirection)
         );
     }
 
