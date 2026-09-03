@@ -1,6 +1,8 @@
 package org.weaw.runtime;
 
 import org.joml.Vector3f;
+import org.weaw.game.WorldHeightRange;
+import org.weaw.game.WorldMemoryBudget;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -19,8 +21,12 @@ public record LaunchOptions(
         boolean ambientOcclusionEnabled,
         boolean remeshEnabled,
         boolean unloadsEnabled,
-        boolean transparentChunksEnabled
+        boolean transparentChunksEnabled,
+        WorldHeightRange worldHeightRange,
+        WorldMemoryBudget worldMemoryBudget
 ) {
+    private static final long MIB = 1024L * 1024L;
+
     public static LaunchOptions from(String[] args) {
         Map<String, String> cliOptions = parseCliOptions(args);
         boolean benchmarkEnabled = hasFlag(cliOptions, "benchmark")
@@ -40,6 +46,39 @@ public record LaunchOptions(
         boolean jfrEnabled = benchmarkEnabled
                 || hasFlag(cliOptions, "profile-jfr")
                 || Boolean.getBoolean("voxy.profile.jfr");
+        WorldHeightRange defaultHeightRange = WorldHeightRange.configuredDefault();
+        int minChunkY = parseInt(cliOptions, "world-min-chunk-y", "voxy.world.minChunkY", defaultHeightRange.minChunkY());
+        int maxChunkY = parseInt(cliOptions, "world-max-chunk-y", "voxy.world.maxChunkY", defaultHeightRange.maxChunkY());
+        WorldHeightRange heightRange = minChunkY <= maxChunkY
+                ? new WorldHeightRange(minChunkY, maxChunkY)
+                : defaultHeightRange;
+
+        WorldMemoryBudget defaultMemoryBudget = WorldMemoryBudget.balanced();
+        long cpuBytes = parseMib(cliOptions, "memory-cpu-mib", "voxy.memory.cpuMiB", defaultMemoryBudget.maxCpuResidentBytes());
+        long inFlightBytes = parseMib(cliOptions, "memory-inflight-mib", "voxy.memory.inFlightMiB", defaultMemoryBudget.maxInFlightBytes());
+        long gpuBytes = parseMib(cliOptions, "memory-gpu-mib", "voxy.memory.gpuMiB", defaultMemoryBudget.maxGpuResidentBytes());
+        long gpuTransientBytes = parseMib(
+                cliOptions,
+                "memory-gpu-transient-mib",
+                "voxy.memory.gpuTransientMiB",
+                Math.max(defaultMemoryBudget.maxGpuTransientBytes(), gpuBytes)
+        );
+        WorldMemoryBudget memoryBudget = new WorldMemoryBudget(
+                cpuBytes,
+                inFlightBytes,
+                parsePositiveInt(
+                        cliOptions,
+                        "memory-max-loaded-chunks",
+                        "voxy.memory.maxLoadedChunks",
+                        defaultMemoryBudget.maxLoadedChunks()
+                ),
+                defaultMemoryBudget.cpuStopRatio(),
+                defaultMemoryBudget.cpuResumeRatio(),
+                defaultMemoryBudget.heapStopRatio(),
+                defaultMemoryBudget.heapResumeRatio(),
+                gpuBytes,
+                Math.max(gpuBytes, gpuTransientBytes)
+        );
 
         return new LaunchOptions(
                 benchmark,
@@ -71,7 +110,9 @@ public record LaunchOptions(
                 !hasFlag(cliOptions, "disable-unloads")
                         && !Boolean.getBoolean("voxy.disableUnloads"),
                 !hasFlag(cliOptions, "disable-transparent-chunks")
-                        && !Boolean.getBoolean("voxy.disableTransparentChunks")
+                        && !Boolean.getBoolean("voxy.disableTransparentChunks"),
+                heightRange,
+                memoryBudget
         );
     }
 
@@ -125,6 +166,30 @@ public record LaunchOptions(
         } catch (NumberFormatException ignored) {
             return defaultValue;
         }
+    }
+
+    private static long parseMib(
+            Map<String, String> cliOptions,
+            String cliKey,
+            String propertyKey,
+            long defaultBytes
+    ) {
+        long defaultMib = Math.max(1L, defaultBytes / MIB);
+        long valueMib = parseLong(cliOptions, cliKey, propertyKey, defaultMib);
+        if (valueMib <= 0L || valueMib > Long.MAX_VALUE / MIB) {
+            return defaultBytes;
+        }
+        return valueMib * MIB;
+    }
+
+    private static int parsePositiveInt(
+            Map<String, String> cliOptions,
+            String cliKey,
+            String propertyKey,
+            int defaultValue
+    ) {
+        int value = parseInt(cliOptions, cliKey, propertyKey, defaultValue);
+        return value > 0 ? value : defaultValue;
     }
 
     private static Vector3f parseVector3(

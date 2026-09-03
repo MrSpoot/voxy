@@ -13,6 +13,7 @@ import org.weaw.engine.window.Window;
 import org.weaw.game.World;
 import org.weaw.game.ChunkMesher;
 import org.weaw.game.WorldProfilingSnapshot;
+import org.weaw.game.WorldMemorySnapshot;
 import org.weaw.game.WorldSettings;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
@@ -235,11 +236,16 @@ public class Game {
 
     private World createTestWorld() {
         GenerationConfig config = GenerationConfig.defaults();
-        WorldSettings settings = new WorldSettings();
+        int renderDistance = WorldSettings.DEFAULT_RENDER_DISTANCE_CHUNKS;
         if (launchOptions.benchmarkEnabled()) {
             config = config.withSeed(launchOptions.benchmark().seed());
-            settings = new WorldSettings(launchOptions.benchmark().renderDistanceChunks());
+            renderDistance = launchOptions.benchmark().renderDistanceChunks();
         }
+        WorldSettings settings = new WorldSettings(
+                renderDistance,
+                launchOptions.worldHeightRange(),
+                launchOptions.worldMemoryBudget()
+        );
         return new World(new NoiseWorldGenerator(config), settings);
     }
 
@@ -491,6 +497,7 @@ public class Game {
 
         RenderStats renderStats = renderer.getContext().getRenderStats();
         WorldProfilingSnapshot worldProfilingSnapshot = world.getLastProfilingSnapshot();
+        WorldMemorySnapshot worldMemorySnapshot = world.getMemorySnapshot();
         ChunkLightCacheProfilingSnapshot lightCacheProfilingSnapshot =
                 renderer.getContext().getChunkLightCache().consumeProfilingSnapshot();
 
@@ -575,7 +582,17 @@ public class Game {
                 worldProfilingSnapshot.chunksUnloaded(),
                 worldProfilingSnapshot.chunksGenerated(),
                 worldProfilingSnapshot.chunksMeshed(),
-                worldProfilingSnapshot.chunksRemeshed()
+                worldProfilingSnapshot.chunksRemeshed(),
+                worldMemorySnapshot.estimatedCpuResidentBytes(),
+                worldMemorySnapshot.maxCpuResidentBytes(),
+                worldMemorySnapshot.reservedInFlightBytes(),
+                renderer.getContext().getChunkGpuMemoryBudget().getResidentBytes(),
+                worldMemorySnapshot.compactLightingChunks(),
+                worldMemorySnapshot.expandedLightingChunks(),
+                worldMemorySnapshot.requestedRenderDistanceChunks(),
+                worldMemorySnapshot.effectiveRenderDistanceChunks(),
+                worldMemorySnapshot.rejectedLoadCount(),
+                worldMemorySnapshot.pressureState().name()
         );
 
         if (runtimeProfilingSummaryCollector != null) {

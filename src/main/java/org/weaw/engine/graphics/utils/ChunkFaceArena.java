@@ -31,6 +31,8 @@ public final class ChunkFaceArena {
     private static final int MIN_CAPACITY_INTS = 1024;
 
     private final int vao;
+    private final int maxCapacityInts;
+    private final ChunkGpuMemoryBudget gpuMemoryBudget;
     private final List<FreeSpan> freeSpans = new ArrayList<>();
 
     private int ssbo;
@@ -38,10 +40,27 @@ public final class ChunkFaceArena {
     private int activeAllocationCount;
     private long reservedInts;
     private long payloadInts;
+    private IntBuffer stagingBuffer;
 
     public ChunkFaceArena(int vao, int initialCapacityInts) {
+        this(vao, initialCapacityInts, standaloneBudget(Long.MAX_VALUE));
+    }
+
+    public ChunkFaceArena(int vao, int initialCapacityInts, long maxGpuBytes) {
+        this(vao, initialCapacityInts, standaloneBudget(maxGpuBytes));
+    }
+
+    public ChunkFaceArena(int vao, int initialCapacityInts, ChunkGpuMemoryBudget gpuMemoryBudget) {
         this.vao = vao;
-        this.capacityInts = Math.max(initialCapacityInts, MIN_CAPACITY_INTS);
+        this.gpuMemoryBudget = gpuMemoryBudget;
+        this.maxCapacityInts = (int) Math.min(
+                Integer.MAX_VALUE,
+                Math.max(MIN_CAPACITY_INTS, gpuMemoryBudget.getMaxResidentBytes() / Integer.BYTES)
+        );
+        this.capacityInts = Math.min(maxCapacityInts, Math.max(initialCapacityInts, MIN_CAPACITY_INTS));
+        if (!gpuMemoryBudget.register((long) capacityInts * Integer.BYTES)) {
+            throw new IllegalStateException("GPU chunk budget is too small for the initial face arena");
+        }
         this.ssbo = glGenBuffers();
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
@@ -63,20 +82,20 @@ public final class ChunkFaceArena {
         if (!reused) {
             free(existing);
             target = allocate(requiredInts);
+            if (target == null) {
+                return null;
+            }
             payloadInts += requiredInts;
         } else if (target.faceCount() != faceCount) {
             payloadInts += (long) (faceCount - target.faceCount()) * INTS_PER_FACE;
         }
 
-        IntBuffer faceBuffer = MemoryUtil.memAllocInt(requiredInts);
-        try {
-            faceBuffer.put(faceData, 0, requiredInts).flip();
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-            glBufferSubData(GL_SHADER_STORAGE_BUFFER, (long) target.offsetInts() * Integer.BYTES, faceBuffer);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        } finally {
-            MemoryUtil.memFree(faceBuffer);
-        }
+        ensureStagingCapacity(requiredInts);
+        stagingBuffer.clear();
+        stagingBuffer.put(faceData, 0, requiredInts).flip();
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, (long) target.offsetInts() * Integer.BYTES, stagingBuffer);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         return new Allocation(target.offsetInts(), target.capacityInts(), faceCount);
     }
@@ -165,11 +184,24 @@ public final class ChunkFaceArena {
             glDeleteBuffers(ssbo);
             ssbo = 0;
         }
+        gpuMemoryBudget.release((long) capacityInts * Integer.BYTES);
         freeSpans.clear();
         capacityInts = 0;
         activeAllocationCount = 0;
         reservedInts = 0L;
         payloadInts = 0L;
+        if (stagingBuffer != null) {
+            MemoryUtil.memFree(stagingBuffer);
+            stagingBuffer = null;
+        }
+    }
+
+    private void ensureStagingCapacity(int requiredInts) {
+        if (stagingBuffer == null) {
+            stagingBuffer = MemoryUtil.memAllocInt(requiredInts);
+        } else if (stagingBuffer.capacity() < requiredInts) {
+            stagingBuffer = MemoryUtil.memRealloc(stagingBuffer, requiredInts);
+        }
     }
 
     private Allocation allocate(int requiredInts) {
@@ -185,7 +217,9 @@ public final class ChunkFaceArena {
         }
 
         if (bestIndex < 0) {
-            grow(requiredInts);
+            if (!grow(requiredInts)) {
+                return null;
+            }
             return allocate(requiredInts);
         }
 
@@ -202,9 +236,19 @@ public final class ChunkFaceArena {
         return allocation;
     }
 
-    private void grow(int requiredInts) {
+    private boolean grow(int requiredInts) {
         int oldCapacityInts = capacityInts;
-        int newCapacityInts = Math.max(capacityInts * 2, capacityInts + requiredInts);
+        long desiredCapacity = Math.max((long) capacityInts * 2L, (long) capacityInts + requiredInts);
+        int newCapacityInts = (int) Math.min(maxCapacityInts, desiredCapacity);
+        if (newCapacityInts <= oldCapacityInts || (long) oldCapacityInts + requiredInts > maxCapacityInts) {
+            return false;
+        }
+        if (!gpuMemoryBudget.tryResize(
+                (long) oldCapacityInts * Integer.BYTES,
+                (long) newCapacityInts * Integer.BYTES
+        )) {
+            return false;
+        }
         int newSsbo = glGenBuffers();
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, newSsbo);
@@ -229,6 +273,12 @@ public final class ChunkFaceArena {
 
         freeSpans.add(new FreeSpan(oldCapacityInts, newCapacityInts - oldCapacityInts));
         mergeFreeSpans();
+        return true;
+    }
+
+    private static ChunkGpuMemoryBudget standaloneBudget(long maxGpuBytes) {
+        long residentLimit = Math.max((long) MIN_CAPACITY_INTS * Integer.BYTES, maxGpuBytes);
+        return new ChunkGpuMemoryBudget(residentLimit, Long.MAX_VALUE);
     }
 
     private void mergeFreeSpans() {

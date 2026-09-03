@@ -58,7 +58,10 @@ public class FogPass implements RenderPass {
         FogSettings settings = context.getFogSettings();
         LightingSettings lighting = context.getLightingSettings();
         WorldSettings worldSettings = context.getWorldSettings();
-        float renderDistance = worldSettings.getRenderDistanceChunks() * Chunk.SIZE;
+        int effectiveRenderDistance = context.getWorld() != null
+                ? context.getWorld().getMemorySnapshot().effectiveRenderDistanceChunks()
+                : worldSettings.getRenderDistanceChunks();
+        float renderDistance = effectiveRenderDistance * Chunk.SIZE;
         float fogStart = renderDistance * settings.getStartRatio();
         float fogEnd = renderDistance * settings.getEndRatio();
 

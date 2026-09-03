@@ -1,7 +1,5 @@
 package org.weaw.engine.graphics.utils;
 
-import org.lwjgl.system.MemoryUtil;
-
 import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -24,6 +22,8 @@ public final class ChunkLightArena {
     private static final int MIN_CAPACITY_INTS = 1024;
 
     private final List<FreeSpan> freeSpans = new ArrayList<>();
+    private final int maxCapacityInts;
+    private final ChunkGpuMemoryBudget gpuMemoryBudget;
 
     private int ssbo;
     private int capacityInts;
@@ -31,7 +31,23 @@ public final class ChunkLightArena {
     private long reservedInts;
 
     public ChunkLightArena(int initialCapacityInts) {
-        this.capacityInts = Math.max(initialCapacityInts, MIN_CAPACITY_INTS);
+        this(initialCapacityInts, standaloneBudget(Long.MAX_VALUE));
+    }
+
+    public ChunkLightArena(int initialCapacityInts, long maxGpuBytes) {
+        this(initialCapacityInts, standaloneBudget(maxGpuBytes));
+    }
+
+    public ChunkLightArena(int initialCapacityInts, ChunkGpuMemoryBudget gpuMemoryBudget) {
+        this.gpuMemoryBudget = gpuMemoryBudget;
+        this.maxCapacityInts = (int) Math.min(
+                Integer.MAX_VALUE,
+                Math.max(MIN_CAPACITY_INTS, gpuMemoryBudget.getMaxResidentBytes() / Integer.BYTES)
+        );
+        this.capacityInts = Math.min(maxCapacityInts, Math.max(initialCapacityInts, MIN_CAPACITY_INTS));
+        if (!gpuMemoryBudget.register((long) capacityInts * Integer.BYTES)) {
+            throw new IllegalStateException("GPU chunk budget is too small for the initial light arena");
+        }
         this.ssbo = glGenBuffers();
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
@@ -41,8 +57,8 @@ public final class ChunkLightArena {
         freeSpans.add(new FreeSpan(0, capacityInts));
     }
 
-    public Allocation upload(int[] packedLightData, Allocation existing) {
-        int requiredInts = packedLightData.length;
+    public Allocation upload(IntBuffer packedLightData, Allocation existing) {
+        int requiredInts = packedLightData.remaining();
         if (requiredInts == 0) {
             free(existing);
             return null;
@@ -53,17 +69,14 @@ public final class ChunkLightArena {
         if (!reused) {
             free(existing);
             target = allocate(requiredInts);
+            if (target == null) {
+                return null;
+            }
         }
 
-        IntBuffer lightBuffer = MemoryUtil.memAllocInt(requiredInts);
-        try {
-            lightBuffer.put(packedLightData, 0, requiredInts).flip();
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-            glBufferSubData(GL_SHADER_STORAGE_BUFFER, (long) target.offsetInts() * Integer.BYTES, lightBuffer);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        } finally {
-            MemoryUtil.memFree(lightBuffer);
-        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, (long) target.offsetInts() * Integer.BYTES, packedLightData);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         return new Allocation(target.offsetInts(), target.capacityInts());
     }
@@ -92,6 +105,7 @@ public final class ChunkLightArena {
             glDeleteBuffers(ssbo);
             ssbo = 0;
         }
+        gpuMemoryBudget.release((long) capacityInts * Integer.BYTES);
         freeSpans.clear();
         capacityInts = 0;
         activeAllocationCount = 0;
@@ -111,7 +125,9 @@ public final class ChunkLightArena {
         }
 
         if (bestIndex < 0) {
-            grow(requiredInts);
+            if (!grow(requiredInts)) {
+                return null;
+            }
             return allocate(requiredInts);
         }
 
@@ -128,9 +144,19 @@ public final class ChunkLightArena {
         return allocation;
     }
 
-    private void grow(int requiredInts) {
+    private boolean grow(int requiredInts) {
         int oldCapacityInts = capacityInts;
-        int newCapacityInts = Math.max(capacityInts * 2, capacityInts + requiredInts);
+        long desiredCapacity = Math.max((long) capacityInts * 2L, (long) capacityInts + requiredInts);
+        int newCapacityInts = (int) Math.min(maxCapacityInts, desiredCapacity);
+        if (newCapacityInts <= oldCapacityInts || (long) oldCapacityInts + requiredInts > maxCapacityInts) {
+            return false;
+        }
+        if (!gpuMemoryBudget.tryResize(
+                (long) oldCapacityInts * Integer.BYTES,
+                (long) newCapacityInts * Integer.BYTES
+        )) {
+            return false;
+        }
         int newSsbo = glGenBuffers();
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, newSsbo);
@@ -155,6 +181,12 @@ public final class ChunkLightArena {
 
         freeSpans.add(new FreeSpan(oldCapacityInts, newCapacityInts - oldCapacityInts));
         mergeFreeSpans();
+        return true;
+    }
+
+    private static ChunkGpuMemoryBudget standaloneBudget(long maxGpuBytes) {
+        long residentLimit = Math.max((long) MIN_CAPACITY_INTS * Integer.BYTES, maxGpuBytes);
+        return new ChunkGpuMemoryBudget(residentLimit, Long.MAX_VALUE);
     }
 
     private void mergeFreeSpans() {

@@ -36,6 +36,37 @@ class ChunkMesherTest {
         }
     }
 
+    @Test
+    void proceduralSolidNeighborHidesTheBoundaryFaceWithoutAResidentChunk() {
+        ChunkMesher.MeshingMode previousMode = ChunkMesher.getMeshingMode();
+        boolean previousAmbientOcclusion = ChunkMesher.isAmbientOcclusionEnabled();
+        int previousStoneTextureIndex = Blocks.STONE.getTextureIndex();
+
+        try {
+            ChunkMesher.setMeshingMode(ChunkMesher.MeshingMode.GREEDY);
+            ChunkMesher.setAmbientOcclusionEnabled(false);
+            Blocks.STONE.setTextureIndex(0);
+            Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
+            chunk.setBlock(0, 1, 1, Blocks.STONE);
+            WorldBlockProvider provider = (worldX, worldY, worldZ) -> {
+                if (worldX >= 0 && worldX < Chunk.SIZE
+                        && worldY >= 0 && worldY < Chunk.SIZE
+                        && worldZ >= 0 && worldZ < Chunk.SIZE) {
+                    return chunk.getBlock(worldX, worldY, worldZ);
+                }
+                return worldX < 0 ? Blocks.STONE.getId() : Blocks.AIR.getId();
+            };
+
+            ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, provider);
+
+            assertEquals(5, meshData.opaque().faceCount());
+        } finally {
+            ChunkMesher.setMeshingMode(previousMode);
+            ChunkMesher.setAmbientOcclusionEnabled(previousAmbientOcclusion);
+            Blocks.STONE.setTextureIndex(previousStoneTextureIndex);
+        }
+    }
+
     private static void assertSingleBlockFaceCount(ChunkMesher.MeshingMode mode) {
         ChunkMesher.setMeshingMode(mode);
         Chunk chunk = new Chunk(new Vector3i(0, 0, 0));

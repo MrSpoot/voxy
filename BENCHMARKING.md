@@ -1,5 +1,11 @@
 # Benchmarking Voxy
 
+Le streaming sparse des chunks est actif par defaut. Utiliser
+`-Dvoxy.sparseChunkStreaming=false` pour comparer avec l'ancien chargement du
+cylindre vertical complet. La fenetre de debug memoire affiche les chunks
+materialises, les chunks virtuels vides/uniformes, la bulle d'interaction et le
+taux de succes du cache de classification.
+
 ## Prerequis
 
 - JDK 25 doit etre utilise pour compiler et lancer le projet.
@@ -62,6 +68,14 @@ Options utiles :
 java -jar target/voxy-0.0.1.jar --benchmark --benchmark-duration=45 --benchmark-seed=12345 --benchmark-render-distance=20 --benchmark-window=1920x1080 --benchmark-spawn=32,64,32
 ```
 
+Budgets memoire et hauteur mondiale :
+
+```powershell
+java -jar target/voxy-0.0.1.jar --benchmark --memory-cpu-mib=1024 --memory-inflight-mib=128 --memory-gpu-mib=512 --memory-gpu-transient-mib=640 --memory-max-loaded-chunks=32768 --world-min-chunk-y=-4 --world-max-chunk-y=3
+```
+
+Sans option, le budget CPU des chunks vaut 35 % du heap JVM, borne entre 384 Mio et 1,5 Gio. Le budget GPU des chunks vaut 512 Mio et le monde couvre les chunks verticaux `-4..3`.
+
 Equivalents via proprietes JVM :
 
 ```powershell
@@ -104,6 +118,7 @@ java -jar target/voxy-0.0.1.jar --profile-jfr
 - Le fichier contient une ligne par frame avec les timings CPU, les compteurs de streaming et les temps de render pass.
 - Le CSV inclut aussi des stats par pass pour `opaque`, `cutout` et `transparent` :
   `resident_meshes`, `visible_meshes`, `draw_calls`, `drawn_faces`, `mesh_upload_ms`, `light_upload_ms`.
+- Le CSV expose aussi le budget CPU du monde, la memoire reservee aux taches, la memoire GPU des chunks, le nombre de chunks a eclairage compact et la distance demandee/effective.
 - Les timings `chunk_gen_ms` et `chunk_mesh_ms` agregent du travail fait en threads de fond. Ils peuvent donc depasser le frame time d'une frame isolee.
 
 Exemple :

@@ -7,6 +7,7 @@ import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.graphics.utils.ChunkFaceArena;
 import org.weaw.engine.graphics.utils.ChunkLightCache;
+import org.weaw.engine.graphics.utils.ChunkGpuMemoryBudget;
 import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.World;
@@ -55,6 +56,7 @@ public class RenderContext {
     private ChunkFaceArena cutoutChunkFaceArena;
     private ChunkFaceArena transparentChunkFaceArena;
     private ChunkLightCache chunkLightCache;
+    private ChunkGpuMemoryBudget chunkGpuMemoryBudget;
     private long chunkVisibilityFrameIndex = Long.MIN_VALUE;
     private long chunkVisibilityUploadsVersion = Long.MIN_VALUE;
     private long chunkVisibilityCameraVersion = Long.MIN_VALUE;
@@ -127,9 +129,13 @@ public class RenderContext {
         }
 
         sharedChunkVao = glGenVertexArrays();
-        opaqueChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 4096);
-        cutoutChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
-        transparentChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048);
+        chunkGpuMemoryBudget = new ChunkGpuMemoryBudget(
+                worldSettings.getMemoryBudget().maxGpuResidentBytes(),
+                worldSettings.getMemoryBudget().maxGpuTransientBytes()
+        );
+        opaqueChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 4096, chunkGpuMemoryBudget);
+        cutoutChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048, chunkGpuMemoryBudget);
+        transparentChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048, chunkGpuMemoryBudget);
     }
 
     public void initializeSharedChunkResources(ChunkManager chunkManager) {
@@ -138,7 +144,7 @@ public class RenderContext {
             return;
         }
 
-        chunkLightCache = new ChunkLightCache(chunkManager);
+        chunkLightCache = new ChunkLightCache(chunkManager, chunkGpuMemoryBudget);
         chunkLightCache.create();
     }
 
@@ -188,6 +194,7 @@ public class RenderContext {
             glDeleteVertexArrays(sharedChunkVao);
             sharedChunkVao = 0;
         }
+        chunkGpuMemoryBudget = null;
         chunkVisibilityFrameIndex = Long.MIN_VALUE;
         chunkVisibilityUploadsVersion = Long.MIN_VALUE;
         chunkVisibilityCameraVersion = Long.MIN_VALUE;

@@ -75,6 +75,18 @@ class ChunkTest {
     }
 
     @Test
+    void meshingCopyDoesNotCopyLightingStorage() {
+        Chunk source = new Chunk(new Vector3i(0, 0, 0));
+        source.setBlock(2, 3, 4, Blocks.STONE);
+        source.setLight(2, 3, 4, 15, 0, 0, 0);
+
+        Chunk copy = source.copyForMeshing();
+
+        assertEquals(Blocks.STONE.getId(), copy.getBlock(2, 3, 4));
+        assertTrue(copy.getLighting().isAllDark());
+    }
+
+    @Test
     void outOfBoundsCoordinatesThrow() {
         Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
 

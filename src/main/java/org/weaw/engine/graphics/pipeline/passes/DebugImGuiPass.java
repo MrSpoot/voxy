@@ -20,6 +20,7 @@ import org.weaw.engine.window.Window;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
 import org.weaw.game.World;
+import org.weaw.game.WorldMemorySnapshot;
 import org.weaw.game.WorldSettings;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockRegistry;
@@ -146,7 +147,7 @@ public class DebugImGuiPass implements RenderPass {
         renderOverviewWindow(context);
         renderParametersWindow(context);
         renderFrameWindow();
-        renderGpuWindow();
+        renderGpuWindow(context);
         renderArenaWindow(context);
         renderChunkProfilingWindow(context);
         renderResourcesWindow();
@@ -154,7 +155,7 @@ public class DebugImGuiPass implements RenderPass {
         renderLightDebugWindow(context);
         renderColorGradingWindow(context);
         renderFogWindow(context);
-        renderJvmWindow();
+        renderJvmWindow(context);
         renderDeviceWindow();
         renderPassBreakdownWindow();
 
@@ -317,8 +318,19 @@ public class DebugImGuiPass implements RenderPass {
                 WorldSettings.MAX_RENDER_DISTANCE_CHUNKS
         );
         int renderDistanceChunks = settings.getRenderDistanceChunks();
-        ImGui.text(String.format("Chunks: %d", renderDistanceChunks));
+        WorldMemorySnapshot memory = context.getWorld().getMemorySnapshot();
+        ImGui.text(String.format(
+                "Requested / effective: %d / %d chunks",
+                renderDistanceChunks,
+                memory.effectiveRenderDistanceChunks()
+        ));
         ImGui.text(String.format("Blocks: %d", renderDistanceChunks * Chunk.SIZE));
+        ImGui.text(String.format(
+                "World Y: %d..%d (%d layers)",
+                settings.getHeightRange().minChunkY() * Chunk.SIZE,
+                ((settings.getHeightRange().maxChunkY() + 1) * Chunk.SIZE) - 1,
+                settings.getHeightRange().chunkCount()
+        ));
         if (ImGui.button("Reset##DebugParameters")) {
             settings.reset();
         }
@@ -326,7 +338,7 @@ public class DebugImGuiPass implements RenderPass {
     }
 
 
-    private void renderGpuWindow() {
+    private void renderGpuWindow(RenderContext context) {
         if (!showGpuWindow) {
             return;
         }
@@ -337,6 +349,15 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.text(displaySnapshot.textureGpuLine);
         ImGui.text(displaySnapshot.renderTargetGpuLine);
         ImGui.text(displaySnapshot.totalGpuLine);
+        long chunkGpuBytes = context.getChunkGpuMemoryBudget() != null
+                ? context.getChunkGpuMemoryBudget().getResidentBytes()
+                : 0L;
+        ImGui.separator();
+        ImGui.text(String.format(
+                "Chunk budget: %s / %s",
+                formatBytes(chunkGpuBytes),
+                formatBytes(context.getWorldSettings().getMemoryBudget().maxGpuResidentBytes())
+        ));
         ImGui.end();
     }
 
@@ -629,7 +650,7 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.end();
     }
 
-    private void renderJvmWindow() {
+    private void renderJvmWindow(RenderContext context) {
         if (!showJvmWindow) {
             return;
         }
@@ -639,6 +660,42 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.text(displaySnapshot.heapUsedLine);
         ImGui.text(displaySnapshot.heapCommittedLine);
         ImGui.text(displaySnapshot.heapMaxLine);
+        WorldMemorySnapshot memory = context.getWorld().getMemorySnapshot();
+        ImGui.separator();
+        ImGui.text(String.format(
+                "World CPU: %s / %s",
+                formatBytes(memory.estimatedCpuResidentBytes()),
+                formatBytes(memory.maxCpuResidentBytes())
+        ));
+        ImGui.text(String.format("In-flight: %s", formatBytes(memory.reservedInFlightBytes())));
+        ImGui.text(String.format(
+                "Lighting compact/full: %d / %d",
+                memory.compactLightingChunks(),
+                memory.expandedLightingChunks()
+        ));
+        ImGui.text("Pressure: " + memory.pressureState());
+        ImGui.text(String.format("Rejected loads: %d", memory.rejectedLoadCount()));
+        ImGui.separator();
+        ImGui.text(String.format(
+                "Sparse chunks: %s | resident target: %d",
+                memory.sparseChunkStreamingEnabled() ? "enabled" : "disabled",
+                memory.desiredMaterializedChunks()
+        ));
+        ImGui.text(String.format(
+                "Virtual empty/uniform: %d / %d",
+                memory.virtualEmptyChunks(),
+                memory.virtualUniformChunks()
+        ));
+        ImGui.text(String.format("Interaction bubble: %d", memory.interactionBubbleChunks()));
+        long cacheQueries = memory.classificationCacheHits() + memory.classificationCacheMisses();
+        double cacheHitRate = cacheQueries == 0L
+                ? 0.0
+                : memory.classificationCacheHits() * 100.0 / cacheQueries;
+        ImGui.text(String.format(
+                "Classification cache: %d columns | %.1f%% hits",
+                memory.classificationCacheColumns(),
+                cacheHitRate
+        ));
         ImGui.end();
     }
 

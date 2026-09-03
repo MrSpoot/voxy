@@ -259,10 +259,32 @@ public class Chunk {
     }
 
     public Chunk copy() {
+        return copy(true);
+    }
+
+    public Chunk copyForMeshing() {
+        return copy(false);
+    }
+
+    public long estimateRetainedBytes() {
+        long bytes = 160L + lighting.estimateRetainedBytes();
+        bytes += arrayBytes(palette == null ? 0 : palette.length, Short.BYTES);
+        bytes += arrayBytes(paletteCounts == null ? 0 : paletteCounts.length, Integer.BYTES);
+        bytes += arrayBytes(data == null ? 0 : data.length, Long.BYTES);
+        bytes += arrayBytes(lightEmitterBlockIndices == null ? 0 : lightEmitterBlockIndices.length, Integer.BYTES);
+        if (paletteIndexMap != null) {
+            bytes += 48L + (long) paletteIndexMap.size() * 48L;
+        }
+        return bytes;
+    }
+
+    private Chunk copy(boolean includeLighting) {
         Chunk copy = new Chunk(position);
         copy.isUniform = isUniform;
         copy.uniformBlockId = uniformBlockId;
-        copy.lighting.copyFrom(lighting);
+        if (includeLighting) {
+            copy.lighting.copyFrom(lighting);
+        }
 
         if (isUniform) {
             return copy;
@@ -279,6 +301,10 @@ public class Chunk {
                 : Arrays.copyOf(lightEmitterBlockIndices, lightEmitterBlockIndices.length);
         copy.lightEmitterCount = lightEmitterCount;
         return copy;
+    }
+
+    private static long arrayBytes(int length, int elementBytes) {
+        return length == 0 ? 0L : 16L + (long) length * elementBytes;
     }
 
     public boolean isOutOfBounds(int x, int y, int z) {

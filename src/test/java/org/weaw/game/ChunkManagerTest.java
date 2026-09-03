@@ -60,6 +60,7 @@ class ChunkManagerTest {
         assertFalse(manager.hasChunk(position));
         assertNull(manager.getChunkUpload(position));
         assertEquals(Blocks.AIR.getId(), manager.getBlockAtWorld(0, 0, 0));
+        assertEquals(0L, manager.getEstimatedResidentBytes());
     }
 
     @Test
@@ -89,6 +90,10 @@ class ChunkManagerTest {
 
         assertTrue(manager.publishRemeshedChunk(position, updatedMesh));
         assertEquals(updatedMesh, manager.getChunkUpload(position).meshData());
+        assertEquals(
+                ChunkManager.estimateResidentBytes(manager.getChunk(0, 0, 0), updatedMesh),
+                manager.getEstimatedResidentBytes()
+        );
     }
 
     private static ChunkMeshData emptyMeshData() {

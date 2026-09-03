@@ -113,6 +113,13 @@ public final class RuntimeProfilingSummaryCollector {
         appendMetricSummary(json, 2, "loaded_chunks", summarize(allFrames, RuntimeFrameProfile::loadedChunks), false);
         json.append(indent(1)).append("},\n");
 
+        json.append(indent(1)).append("\"memory\": {\n");
+        appendMetricSummary(json, 2, "world_cpu_resident_bytes", summarize(allFrames, RuntimeFrameProfile::worldCpuResidentBytes), true);
+        appendMetricSummary(json, 2, "world_in_flight_bytes", summarize(allFrames, RuntimeFrameProfile::worldInFlightBytes), true);
+        appendMetricSummary(json, 2, "chunk_gpu_resident_bytes", summarize(allFrames, RuntimeFrameProfile::chunkGpuResidentBytes), true);
+        appendMetricSummary(json, 2, "effective_render_distance_chunks", summarize(allFrames, RuntimeFrameProfile::effectiveRenderDistanceChunks), false);
+        json.append(indent(1)).append("},\n");
+
         json.append(indent(1)).append("\"slow_frames\": {\n");
         appendNumber(json, 2, "over_16_67_ms", countFramesOver(allFrames, 16.67d), true);
         appendNumber(json, 2, "over_33_33_ms", countFramesOver(allFrames, 33.33d), false);

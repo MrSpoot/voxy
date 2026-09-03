@@ -83,7 +83,17 @@ public record RuntimeFrameProfile(
         int chunksUnloaded,
         int chunksGenerated,
         int chunksMeshed,
-        int chunksRemeshed
+        int chunksRemeshed,
+        long worldCpuResidentBytes,
+        long worldCpuBudgetBytes,
+        long worldInFlightBytes,
+        long chunkGpuResidentBytes,
+        int compactLightingChunks,
+        int expandedLightingChunks,
+        int requestedRenderDistanceChunks,
+        int effectiveRenderDistanceChunks,
+        int rejectedLoads,
+        String memoryPressureState
 ) {
     public static String csvHeader() {
         return String.join(",",
@@ -167,7 +177,17 @@ public record RuntimeFrameProfile(
                 "chunks_unloaded",
                 "chunks_generated",
                 "chunks_meshed",
-                "chunks_remeshed"
+                "chunks_remeshed",
+                "world_cpu_resident_bytes",
+                "world_cpu_budget_bytes",
+                "world_in_flight_bytes",
+                "chunk_gpu_resident_bytes",
+                "compact_lighting_chunks",
+                "expanded_lighting_chunks",
+                "requested_render_distance_chunks",
+                "effective_render_distance_chunks",
+                "rejected_loads",
+                "memory_pressure_state"
         );
     }
 
@@ -253,7 +273,17 @@ public record RuntimeFrameProfile(
                 Integer.toString(chunksUnloaded),
                 Integer.toString(chunksGenerated),
                 Integer.toString(chunksMeshed),
-                Integer.toString(chunksRemeshed)
+                Integer.toString(chunksRemeshed),
+                Long.toString(worldCpuResidentBytes),
+                Long.toString(worldCpuBudgetBytes),
+                Long.toString(worldInFlightBytes),
+                Long.toString(chunkGpuResidentBytes),
+                Integer.toString(compactLightingChunks),
+                Integer.toString(expandedLightingChunks),
+                Integer.toString(requestedRenderDistanceChunks),
+                Integer.toString(effectiveRenderDistanceChunks),
+                Integer.toString(rejectedLoads),
+                memoryPressureState
         );
     }
 

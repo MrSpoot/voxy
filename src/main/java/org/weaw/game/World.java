@@ -127,6 +127,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
         return lastProfilingSnapshot;
     }
 
+    public WorldMemorySnapshot getMemorySnapshot() {
+        return worldStreamer.getLastMemorySnapshot();
+    }
+
     public void setDynamicLightingEnabled(boolean dynamicLightingEnabled) {
         this.dynamicLightingEnabled = dynamicLightingEnabled;
         pendingLightingUpdates.clear();
@@ -165,9 +169,16 @@ public class World implements AutoCloseable, WorldBlockProvider {
     }
 
     public void setBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {
+        Objects.requireNonNull(block, "block");
+        ChunkPosition position = toChunkPosition(worldX, worldY, worldZ);
+        if (!worldStreamer.materializeChunkForEdit(position)) {
+            throw new IllegalArgumentException(
+                    "Unable to materialize chunk at world position: " + worldX + ", " + worldY + ", " + worldZ
+            );
+        }
         chunkManager.setBlockAtWorld(worldX, worldY, worldZ, block);
         if (dynamicLightingEnabled) {
-            pendingLightingUpdates.add(toChunkPosition(worldX, worldY, worldZ));
+            pendingLightingUpdates.add(position);
         }
         markChunksDirtyForBlockChange(worldX, worldY, worldZ);
     }
@@ -185,7 +196,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
     }
 
     public boolean trySetBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {
-        if (!containsChunkAtWorld(worldX, worldY, worldZ)) {
+        if (!worldStreamer.materializeChunkForEdit(toChunkPosition(worldX, worldY, worldZ))) {
             return false;
         }
 

@@ -12,18 +12,30 @@ public final class ChunkLighting {
     private static final int SKY_SHIFT = BLUE_SHIFT + RED_BITS;
     private static final int LIGHTS_PER_PACKED_INT = 2;
 
-    private final short[] data = new short[Chunk.TOTAL_BLOCKS];
+    private short uniformLight;
+    private short[] data;
 
     public short getPackedLight(int x, int y, int z) {
-        return data[getBlockIndex(x, y, z)];
+        int index = getBlockIndex(x, y, z);
+        return data == null ? uniformLight : data[index];
     }
 
     public void setPackedLight(int x, int y, int z, short packedLight) {
-        data[getBlockIndex(x, y, z)] = packedLight;
+        int index = getBlockIndex(x, y, z);
+        if (data == null) {
+            if (packedLight == uniformLight) {
+                return;
+            }
+            data = new short[Chunk.TOTAL_BLOCKS];
+            if (uniformLight != 0) {
+                Arrays.fill(data, uniformLight);
+            }
+        }
+        data[index] = packedLight;
     }
 
     public void setLight(int x, int y, int z, int red, int green, int blue, int sky) {
-        data[getBlockIndex(x, y, z)] = pack(red, green, blue, sky);
+        setPackedLight(x, y, z, pack(red, green, blue, sky));
     }
 
     public int getRed(int x, int y, int z) {
@@ -47,31 +59,59 @@ public final class ChunkLighting {
     }
 
     public void clear() {
-        Arrays.fill(data, (short) 0);
+        data = null;
+        uniformLight = 0;
     }
 
     public void fill(short packedLight) {
-        Arrays.fill(data, packedLight);
+        data = null;
+        uniformLight = packedLight;
     }
 
     public ChunkLighting copy() {
         ChunkLighting copy = new ChunkLighting();
-        System.arraycopy(data, 0, copy.data, 0, data.length);
+        copy.uniformLight = uniformLight;
+        copy.data = data == null ? null : Arrays.copyOf(data, data.length);
         return copy;
     }
 
     public void copyFrom(ChunkLighting other) {
-        System.arraycopy(other.data, 0, data, 0, data.length);
+        uniformLight = other.uniformLight;
+        data = other.data == null ? null : Arrays.copyOf(other.data, other.data.length);
     }
 
     public int[] packToIntArray() {
         int[] packed = new int[packedIntCount()];
+        if (data == null) {
+            int pair = (uniformLight & 0xFFFF) | ((uniformLight & 0xFFFF) << 16);
+            Arrays.fill(packed, pair);
+            return packed;
+        }
         for (int index = 0; index < data.length; index += LIGHTS_PER_PACKED_INT) {
             int low = data[index] & 0xFFFF;
             int high = index + 1 < data.length ? (data[index + 1] & 0xFFFF) << 16 : 0;
             packed[index / LIGHTS_PER_PACKED_INT] = low | high;
         }
         return packed;
+    }
+
+    public boolean isCompact() {
+        return data == null;
+    }
+
+    public boolean isAllDark() {
+        return data == null && uniformLight == 0;
+    }
+
+    public short getUniformLight() {
+        if (data != null) {
+            throw new IllegalStateException("Lighting is not uniform");
+        }
+        return uniformLight;
+    }
+
+    public long estimateRetainedBytes() {
+        return 32L + (data == null ? 0L : 16L + (long) data.length * Short.BYTES);
     }
 
     public static int packedIntCount() {

@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.generation.GenerationConfig;
+import org.weaw.game.generation.ChunkClassificationCacheStats;
+import org.weaw.game.generation.ChunkGenerationHint;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.generation.WorldGenerator;
 
@@ -29,20 +31,23 @@ public class WorldStreamer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorldStreamer.class);
     private static final long DEFAULT_UPDATE_BUDGET_NS = 2_000_000L;
     private static final int DEFAULT_RESERVED_REMESH_TASK_SLOTS = 2;
+    private static final long TASK_MEMORY_RESERVATION_BYTES = 2L * 1024L * 1024L;
+    private static final int INTERACTION_BUBBLE_RADIUS_CHUNKS = 1;
 
     private final ChunkManager chunkManager;
     private final WorldBlockProvider blockProvider;
     private final WorldGenerator worldGenerator;
     private final WorldSettings settings;
+    private final WorldHeightRange heightRange;
+    private final WorldMemoryBudget memoryBudget;
     private final ExecutorService executor;
     private final int horizontalUnloadPadding;
-    private final int verticalRenderHeight;
-    private final int verticalUnloadHeight;
     private final int maxSubmissionsPerUpdate;
     private final int maxPublishesPerUpdate;
     private final int maxQueuedChunkCount;
     private final int reservedRemeshTaskSlots;
     private final long maxUpdateBudgetNs;
+    private final boolean sparseChunkStreamingEnabled;
     private final Queue<CompletedChunk> completedChunks = new ConcurrentLinkedQueue<>();
     private final Object taskLock = new Object();
     private final Map<ChunkPosition, ChunkBuildTask> activeChunkTasks = new LinkedHashMap<>();
@@ -58,6 +63,8 @@ public class WorldStreamer implements AutoCloseable {
     private final AtomicInteger asyncChunksRemeshed = new AtomicInteger();
 
     private int activeHorizontalRenderRadius = -1;
+    private int requestedHorizontalRenderRadius = -1;
+    private int memoryLimitedRenderRadius = WorldSettings.MAX_RENDER_DISTANCE_CHUNKS;
     private int activeHorizontalUnloadRadius = -1;
     private List<ChunkOffset> sortedDesiredOffsets = List.of();
     private ChunkPosition cachedPlayerChunk;
@@ -67,7 +74,15 @@ public class WorldStreamer implements AutoCloseable {
     private int desiredSubmissionCursor;
     private int unloadCursor;
     private long nextBuildToken = 1L;
+    private long reservedInFlightBytes;
+    private int rejectedLoadCount;
+    private int desiredMaterializedChunkCount;
+    private int virtualEmptyChunkCount;
+    private int virtualUniformChunkCount;
+    private int interactionBubbleChunkCount;
+    private WorldMemorySnapshot.PressureState memoryPressureState = WorldMemorySnapshot.PressureState.NORMAL;
     private volatile WorldStreamerProfilingSnapshot lastProfilingSnapshot = WorldStreamerProfilingSnapshot.empty();
+    private volatile WorldMemorySnapshot lastMemorySnapshot;
 
     public WorldStreamer(ChunkManager chunkManager, WorldBlockProvider blockProvider) {
         this(
@@ -200,14 +215,21 @@ public class WorldStreamer implements AutoCloseable {
         this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
         this.settings = Objects.requireNonNull(settings, "settings");
-        this.verticalRenderHeight = verticalRenderHeight;
-        this.verticalUnloadHeight = Math.max(verticalUnloadHeight, verticalRenderHeight + 4);
+        this.heightRange = settings.getHeightRange();
+        this.memoryBudget = settings.getMemoryBudget();
         this.horizontalUnloadPadding = Math.max(2, horizontalUnloadPadding);
         this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
         this.maxPublishesPerUpdate = Math.max(1, maxPublishesPerUpdate);
         this.maxUpdateBudgetNs = Math.max(250_000L, maxUpdateBudgetNs);
+        this.sparseChunkStreamingEnabled = Boolean.parseBoolean(
+                System.getProperty("voxy.sparseChunkStreaming", "true")
+        );
         workerCount = Math.max(1, workerCount);
-        this.maxQueuedChunkCount = Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2);
+        int memoryLimitedQueueCount = Math.max(1, (int) (memoryBudget.maxInFlightBytes() / TASK_MEMORY_RESERVATION_BYTES));
+        this.maxQueuedChunkCount = Math.min(
+                memoryLimitedQueueCount,
+                Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2)
+        );
         this.reservedRemeshTaskSlots = Math.max(
                 1,
                 Math.min(
@@ -216,6 +238,7 @@ public class WorldStreamer implements AutoCloseable {
                 )
         );
         this.executor = Objects.requireNonNull(executor, "executor");
+        this.lastMemorySnapshot = createMemorySnapshot();
     }
 
     public void update(Vector3f playerPosition) {
@@ -223,15 +246,33 @@ public class WorldStreamer implements AutoCloseable {
         FrameProfilingAccumulator frameProfiling = new FrameProfilingAccumulator();
         ChunkPosition playerChunk = toChunkPosition(playerPosition);
         int requestedRenderRadius = settings.getRenderDistanceChunks();
-        boolean renderRadiusChanged = requestedRenderRadius != activeHorizontalRenderRadius;
+        if (requestedRenderRadius != requestedHorizontalRenderRadius) {
+            requestedHorizontalRenderRadius = requestedRenderRadius;
+            memoryLimitedRenderRadius = limitRadiusByChunkCount(requestedRenderRadius, memoryBudget.maxLoadedChunks());
+        }
+
+        updateMemoryPressure();
+        if (memoryPressureState != WorldMemorySnapshot.PressureState.NORMAL) {
+            reduceMemoryLimitedRadius(requestedRenderRadius);
+        }
+
+        int effectiveRenderRadius = Math.min(requestedRenderRadius, memoryLimitedRenderRadius);
+        boolean renderRadiusChanged = effectiveRenderRadius != activeHorizontalRenderRadius;
 
         if (renderRadiusChanged) {
-            activeHorizontalRenderRadius = requestedRenderRadius;
-            activeHorizontalUnloadRadius = requestedRenderRadius + horizontalUnloadPadding;
+            activeHorizontalRenderRadius = effectiveRenderRadius;
+            activeHorizontalUnloadRadius = effectiveRenderRadius + horizontalUnloadPadding;
             sortedDesiredOffsets = createSortedDesiredOffsets(activeHorizontalRenderRadius);
         }
 
         if (renderRadiusChanged || !playerChunk.equals(cachedPlayerChunk)) {
+            if (sparseChunkStreamingEnabled) {
+                worldGenerator.retainChunkClassificationsAround(
+                        playerChunk.x(),
+                        playerChunk.z(),
+                        activeHorizontalUnloadRadius
+                );
+            }
             cachedDesiredPositions = translateDesiredOffsets(playerChunk);
             synchronized (taskLock) {
                 desiredChunkPositions.clear();
@@ -266,6 +307,7 @@ public class WorldStreamer implements AutoCloseable {
                 asyncChunksMeshed.getAndSet(0),
                 asyncChunksRemeshed.getAndSet(0)
         );
+        lastMemorySnapshot = createMemorySnapshot();
     }
 
     @Override
@@ -275,6 +317,7 @@ public class WorldStreamer implements AutoCloseable {
             priorityDirtyChunkPositions.clear();
             dirtyChunkPositions.clear();
             desiredChunkPositions.clear();
+            reservedInFlightBytes = 0L;
         }
         executor.shutdownNow();
     }
@@ -287,6 +330,10 @@ public class WorldStreamer implements AutoCloseable {
 
     public WorldStreamerProfilingSnapshot getLastProfilingSnapshot() {
         return lastProfilingSnapshot;
+    }
+
+    public WorldMemorySnapshot getLastMemorySnapshot() {
+        return lastMemorySnapshot;
     }
 
     public void markChunkDirty(ChunkPosition position) {
@@ -325,6 +372,39 @@ public class WorldStreamer implements AutoCloseable {
         this.unloadsEnabled = unloadsEnabled;
     }
 
+    synchronized boolean materializeChunkForEdit(ChunkPosition position) {
+        if (!heightRange.contains(position.y())) {
+            return false;
+        }
+        if (chunkManager.hasChunk(position)) {
+            return true;
+        }
+
+        cancelTask(position);
+        try {
+            Chunk chunk = new Chunk(new Vector3i(position.x(), position.y(), position.z()));
+            long generationStartNs = System.nanoTime();
+            worldGenerator.generateChunkData(chunk);
+            asyncChunkGenerationCpuTimeNs.addAndGet(System.nanoTime() - generationStartNs);
+            asyncChunksGenerated.incrementAndGet();
+
+            long projectedBytes = chunkManager.getEstimatedResidentBytes()
+                    + ChunkManager.estimateResidentBytes(chunk, null);
+            if (projectedBytes > memoryBudget.maxCpuResidentBytes()
+                    || chunkManager.getChunkCount() >= memoryBudget.maxLoadedChunks()) {
+                rejectedLoadCount++;
+                return false;
+            }
+
+            chunkManager.addChunk(chunk);
+            markChunkDirtyPriority(position);
+            return true;
+        } catch (RuntimeException exception) {
+            LOGGER.error("Unable to materialize chunk {} for an edit", position, exception);
+            return false;
+        }
+    }
+
     private void processPendingUnloads(long deadlineNs, FrameProfilingAccumulator frameProfiling) {
         long startNs = System.nanoTime();
         if (!unloadsEnabled) {
@@ -336,8 +416,8 @@ public class WorldStreamer implements AutoCloseable {
             return;
         }
 
-        int minUnloadY = getMinChunkY(pendingUnloadPlayerChunk.y(), verticalUnloadHeight);
-        int maxUnloadY = getMaxChunkY(pendingUnloadPlayerChunk.y(), verticalUnloadHeight);
+        int minUnloadY = heightRange.minChunkY();
+        int maxUnloadY = heightRange.maxChunkY();
         int unloadRadiusSquared = activeHorizontalUnloadRadius * activeHorizontalUnloadRadius;
 
         while (unloadCursor < pendingUnloadPositions.size()) {
@@ -374,6 +454,10 @@ public class WorldStreamer implements AutoCloseable {
         if (cachedDesiredPositions.isEmpty() || System.nanoTime() >= deadlineNs) {
             return;
         }
+        if (!canSubmitMemoryTask()) {
+            rejectedLoadCount++;
+            return;
+        }
 
         int remeshReservation = getPendingRemeshCount() > 0 ? reservedRemeshTaskSlots : 0;
         int availableQueueSlots = maxQueuedChunkCount - getPendingTaskCount() - remeshReservation;
@@ -386,6 +470,10 @@ public class WorldStreamer implements AutoCloseable {
         int scanned = 0;
 
         while (submitted < submissionBudget && scanned < cachedDesiredPositions.size()) {
+            if (!canSubmitMemoryTask()) {
+                rejectedLoadCount++;
+                return;
+            }
             ChunkPosition position = cachedDesiredPositions.get(desiredSubmissionCursor);
             desiredSubmissionCursor = (desiredSubmissionCursor + 1) % cachedDesiredPositions.size();
             scanned++;
@@ -447,7 +535,11 @@ public class WorldStreamer implements AutoCloseable {
                 continue;
             }
 
-            Chunk chunkSnapshot = chunkManager.copyChunk(position);
+            if (!canReserveTaskMemory()) {
+                return;
+            }
+
+            Chunk chunkSnapshot = chunkManager.copyChunkForMeshing(position);
             if (chunkSnapshot == null) {
                 removeDirtyChunk(position);
                 continue;
@@ -517,6 +609,26 @@ public class WorldStreamer implements AutoCloseable {
                 continue;
             }
 
+            Chunk residentChunk = task.type() == ChunkTaskType.REMESH
+                    ? chunkManager.getChunk(task.position().x(), task.position().y(), task.position().z())
+                    : completedChunk.chunk();
+            if (residentChunk == null) {
+                cancelTask(task.position());
+                continue;
+            }
+            long completedBytes = ChunkManager.estimateResidentBytes(residentChunk, completedChunk.meshData());
+            long replacedBytes = task.type() == ChunkTaskType.REMESH
+                    ? chunkManager.getEstimatedResidentBytes(completedChunk.position())
+                    : 0L;
+            long projectedBytes = chunkManager.getEstimatedResidentBytes() - replacedBytes + completedBytes;
+            int projectedChunkCount = chunkManager.getChunkCount() + (task.type() == ChunkTaskType.LOAD ? 1 : 0);
+            if (projectedBytes > memoryBudget.maxCpuResidentBytes()
+                    || projectedChunkCount > memoryBudget.maxLoadedChunks()) {
+                rejectedLoadCount++;
+                cancelTask(task.position());
+                continue;
+            }
+
             if (!transitionTaskToReady(task.position(), task.token())) {
                 continue;
             }
@@ -553,8 +665,8 @@ public class WorldStreamer implements AutoCloseable {
 
     private List<ChunkOffset> createSortedDesiredOffsets(int horizontalRenderRadius) {
         List<ChunkOffset> offsets = new ArrayList<>();
-        int minRenderY = getMinChunkY(0, verticalRenderHeight);
-        int maxRenderY = getMaxChunkY(0, verticalRenderHeight);
+        int minRenderY = heightRange.minChunkY();
+        int maxRenderY = heightRange.maxChunkY();
         int renderRadiusSquared = horizontalRenderRadius * horizontalRenderRadius;
 
         for (int offsetY = minRenderY; offsetY <= maxRenderY; offsetY++) {
@@ -582,14 +694,60 @@ public class WorldStreamer implements AutoCloseable {
 
     private List<ChunkPosition> translateDesiredOffsets(ChunkPosition playerChunk) {
         List<ChunkPosition> positions = new ArrayList<>(sortedDesiredOffsets.size());
+        int materializedCount = 0;
+        int emptyCount = 0;
+        int uniformCount = 0;
+        int bubbleCount = 0;
+
         for (ChunkOffset offset : sortedDesiredOffsets) {
-            positions.add(new ChunkPosition(
+            ChunkPosition position = new ChunkPosition(
                     playerChunk.x() + offset.x(),
-                    playerChunk.y() + offset.y(),
+                    offset.y(),
                     playerChunk.z() + offset.z()
-            ));
+            );
+            if (!sparseChunkStreamingEnabled) {
+                positions.add(position);
+                materializedCount++;
+                continue;
+            }
+
+            boolean interactionBubble = isInInteractionBubble(position, playerChunk);
+            ChunkGenerationHint hint = worldGenerator.classifyChunk(position);
+            if (interactionBubble || hint.requiresMaterialization()) {
+                positions.add(position);
+                materializedCount++;
+                if (interactionBubble) {
+                    bubbleCount++;
+                }
+            } else if (hint.kind() == ChunkGenerationHint.Kind.EMPTY) {
+                emptyCount++;
+            } else {
+                uniformCount++;
+            }
         }
-        return positions;
+
+        positions.sort(
+                Comparator.comparingInt((ChunkPosition position) -> isInInteractionBubble(position, playerChunk) ? 0 : 1)
+                        .thenComparingInt(position -> horizontalDistanceFromPlayer(position, playerChunk))
+                        .thenComparingInt(position -> Math.abs(position.y() - playerChunk.y()))
+        );
+        desiredMaterializedChunkCount = materializedCount;
+        virtualEmptyChunkCount = emptyCount;
+        virtualUniformChunkCount = uniformCount;
+        interactionBubbleChunkCount = bubbleCount;
+        return List.copyOf(positions);
+    }
+
+    private static boolean isInInteractionBubble(ChunkPosition position, ChunkPosition playerChunk) {
+        return Math.abs(position.x() - playerChunk.x()) <= INTERACTION_BUBBLE_RADIUS_CHUNKS
+                && Math.abs(position.y() - playerChunk.y()) <= INTERACTION_BUBBLE_RADIUS_CHUNKS
+                && Math.abs(position.z() - playerChunk.z()) <= INTERACTION_BUBBLE_RADIUS_CHUNKS;
+    }
+
+    private static int horizontalDistanceFromPlayer(ChunkPosition position, ChunkPosition playerChunk) {
+        int dx = position.x() - playerChunk.x();
+        int dz = position.z() - playerChunk.z();
+        return dx * dx + dz * dz;
     }
 
     private ChunkPosition toChunkPosition(Vector3f worldPosition) {
@@ -598,16 +756,6 @@ public class WorldStreamer implements AutoCloseable {
                 Math.floorDiv((int) Math.floor(worldPosition.y), Chunk.SIZE),
                 Math.floorDiv((int) Math.floor(worldPosition.z), Chunk.SIZE)
         );
-    }
-
-    private int getMinChunkY(int centerChunkY, int totalHeight) {
-        int halfBelow = totalHeight / 2;
-        return centerChunkY - halfBelow;
-    }
-
-    private int getMaxChunkY(int centerChunkY, int totalHeight) {
-        int halfAbove = totalHeight - 1 - (totalHeight / 2);
-        return centerChunkY + halfAbove;
     }
 
     private int distancePriority(ChunkOffset offset) {
@@ -630,14 +778,132 @@ public class WorldStreamer implements AutoCloseable {
         return Long.getLong("voxy.worldUpdateBudgetNs", DEFAULT_UPDATE_BUDGET_NS);
     }
 
+    private void updateMemoryPressure() {
+        Runtime runtime = Runtime.getRuntime();
+        long heapUsed = runtime.totalMemory() - runtime.freeMemory();
+        long heapMax = runtime.maxMemory();
+        long residentBytes = chunkManager.getEstimatedResidentBytes();
+        long accountedBytes = residentBytes + reservedInFlightBytes;
+
+        boolean emergency = residentBytes > memoryBudget.maxCpuResidentBytes()
+                || heapUsed >= (long) (heapMax * memoryBudget.heapStopRatio());
+        if (emergency) {
+            memoryPressureState = WorldMemorySnapshot.PressureState.EMERGENCY;
+            return;
+        }
+
+        boolean stop = accountedBytes >= memoryBudget.cpuStopBytes()
+                || chunkManager.getChunkCount() >= memoryBudget.maxLoadedChunks();
+        if (memoryPressureState == WorldMemorySnapshot.PressureState.NORMAL && stop) {
+            memoryPressureState = WorldMemorySnapshot.PressureState.SUSPENDED;
+            return;
+        }
+
+        boolean canResume = accountedBytes <= memoryBudget.cpuResumeBytes()
+                && heapUsed <= (long) (heapMax * memoryBudget.heapResumeRatio())
+                && chunkManager.getChunkCount() < memoryBudget.maxLoadedChunks();
+        if (memoryPressureState != WorldMemorySnapshot.PressureState.NORMAL && canResume) {
+            memoryPressureState = WorldMemorySnapshot.PressureState.NORMAL;
+        }
+    }
+
+    private void reduceMemoryLimitedRadius(int requestedRadius) {
+        int loadedChunks = chunkManager.getChunkCount();
+        long residentBytes = chunkManager.getEstimatedResidentBytes();
+        if (loadedChunks == 0 || residentBytes == 0) {
+            return;
+        }
+
+        long targetChunkCount = Math.max(
+                heightRange.chunkCount(),
+                (long) loadedChunks * memoryBudget.cpuResumeBytes() / residentBytes
+        );
+        Runtime runtime = Runtime.getRuntime();
+        long heapUsed = runtime.totalMemory() - runtime.freeMemory();
+        long heapResumeBytes = (long) (runtime.maxMemory() * memoryBudget.heapResumeRatio());
+        if (heapUsed > heapResumeBytes) {
+            long heapTargetChunkCount = Math.max(
+                    heightRange.chunkCount(),
+                    (long) loadedChunks * heapResumeBytes / heapUsed
+            );
+            targetChunkCount = Math.min(targetChunkCount, heapTargetChunkCount);
+        }
+        targetChunkCount = Math.min(targetChunkCount, memoryBudget.maxLoadedChunks());
+        int targetRadius = limitRadiusByChunkCount(requestedRadius, (int) Math.min(Integer.MAX_VALUE, targetChunkCount));
+        memoryLimitedRenderRadius = Math.min(memoryLimitedRenderRadius, targetRadius);
+    }
+
+    private int limitRadiusByChunkCount(int requestedRadius, int chunkLimit) {
+        int radius = Math.max(0, requestedRadius);
+        while (radius > 0
+                && desiredChunkCount(radius) > chunkLimit) {
+            radius--;
+        }
+        return radius;
+    }
+
+    private int desiredChunkCount(int radius) {
+        int columns = 0;
+        int radiusSquared = radius * radius;
+        for (int z = -radius; z <= radius; z++) {
+            for (int x = -radius; x <= radius; x++) {
+                if (x * x + z * z <= radiusSquared) {
+                    columns++;
+                }
+            }
+        }
+        return columns * heightRange.chunkCount();
+    }
+
+    private boolean canSubmitMemoryTask() {
+        return memoryPressureState == WorldMemorySnapshot.PressureState.NORMAL && canReserveTaskMemory();
+    }
+
+    private boolean canReserveTaskMemory() {
+        synchronized (taskLock) {
+            return reservedInFlightBytes + TASK_MEMORY_RESERVATION_BYTES <= memoryBudget.maxInFlightBytes()
+                    && chunkManager.getEstimatedResidentBytes() + reservedInFlightBytes < memoryBudget.cpuStopBytes();
+        }
+    }
+
+    private WorldMemorySnapshot createMemorySnapshot() {
+        Runtime runtime = Runtime.getRuntime();
+        long heapUsed = runtime.totalMemory() - runtime.freeMemory();
+        ChunkClassificationCacheStats classificationStats = worldGenerator.getChunkClassificationCacheStats();
+        return new WorldMemorySnapshot(
+                chunkManager.getEstimatedResidentBytes(),
+                reservedInFlightBytes,
+                memoryBudget.maxCpuResidentBytes(),
+                heapUsed,
+                runtime.maxMemory(),
+                chunkManager.getChunkCount(),
+                chunkManager.getCompactLightingChunkCount(),
+                chunkManager.getExpandedLightingChunkCount(),
+                Math.max(0, requestedHorizontalRenderRadius),
+                Math.max(0, activeHorizontalRenderRadius),
+                rejectedLoadCount,
+                sparseChunkStreamingEnabled,
+                desiredMaterializedChunkCount,
+                virtualEmptyChunkCount,
+                virtualUniformChunkCount,
+                interactionBubbleChunkCount,
+                classificationStats.size(),
+                classificationStats.hits(),
+                classificationStats.misses(),
+                memoryPressureState
+        );
+    }
+
     private ChunkBuildTask registerTask(ChunkPosition position, ChunkTaskType type) {
         synchronized (taskLock) {
-            if (activeChunkTasks.containsKey(position)) {
+            if (activeChunkTasks.containsKey(position)
+                    || reservedInFlightBytes + TASK_MEMORY_RESERVATION_BYTES > memoryBudget.maxInFlightBytes()) {
                 return null;
             }
 
             ChunkBuildTask task = new ChunkBuildTask(position, nextBuildToken++, type, ChunkTaskState.QUEUED);
             activeChunkTasks.put(position, task);
+            reservedInFlightBytes += TASK_MEMORY_RESERVATION_BYTES;
             return task;
         }
     }
@@ -662,6 +928,7 @@ public class WorldStreamer implements AutoCloseable {
                 return;
             }
             task.setState(ChunkTaskState.OBSOLETE);
+            releaseTaskReservation();
         }
 
         if (task.type() == ChunkTaskType.LOAD) {
@@ -677,6 +944,7 @@ public class WorldStreamer implements AutoCloseable {
             if (removed) {
                 currentTask.setState(ChunkTaskState.OBSOLETE);
                 activeChunkTasks.remove(task.position());
+                releaseTaskReservation();
             }
         }
 
@@ -727,6 +995,7 @@ public class WorldStreamer implements AutoCloseable {
 
             task.setState(publishedChunk ? ChunkTaskState.PUBLISHED : ChunkTaskState.OBSOLETE);
             activeChunkTasks.remove(position);
+            releaseTaskReservation();
         }
 
         if (!publishedChunk) {
@@ -738,6 +1007,10 @@ public class WorldStreamer implements AutoCloseable {
         synchronized (taskLock) {
             return desiredChunkPositions.contains(position);
         }
+    }
+
+    private void releaseTaskReservation() {
+        reservedInFlightBytes = Math.max(0L, reservedInFlightBytes - TASK_MEMORY_RESERVATION_BYTES);
     }
 
     private List<ChunkPosition> snapshotDirtyChunks() {

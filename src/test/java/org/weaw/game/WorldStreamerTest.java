@@ -3,6 +3,7 @@ package org.weaw.game;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.weaw.game.generation.ChunkGenerationHint;
 import org.weaw.game.generation.WorldGenerator;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
@@ -17,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorldStreamerTest {
+    private static final long MIB = 1024L * 1024L;
     @BeforeAll
     static void initializeBlocks() {
         BlockRegistry.initialize();
@@ -81,6 +83,97 @@ class WorldStreamerTest {
         }
     }
 
+    @Test
+    void hardChunkBudgetLimitsEffectiveRadiusAndUsesAbsoluteWorldHeight() {
+        ChunkManager manager = new ChunkManager();
+        WorldMemoryBudget budget = new WorldMemoryBudget(
+                16L * MIB,
+                4L * MIB,
+                1,
+                0.90,
+                0.80,
+                0.95,
+                0.90,
+                16L * MIB,
+                20L * MIB
+        );
+        WorldSettings settings = new WorldSettings(2, new WorldHeightRange(0, 0), budget);
+        WorldStreamer streamer = new WorldStreamer(
+                manager,
+                new AirBlockProvider(),
+                new FlatGenerator(Blocks.AIR.getId()),
+                settings,
+                1,
+                5,
+                2,
+                1,
+                1,
+                50_000_000L,
+                new DirectExecutorService(),
+                1
+        );
+
+        try {
+            streamer.update(new Vector3f(0.0f, 3200.0f, 0.0f));
+            streamer.update(new Vector3f(0.0f, 3200.0f, 0.0f));
+
+            assertEquals(1, manager.getChunkCount());
+            assertTrue(manager.hasChunk(0, 0, 0));
+            assertEquals(0, streamer.getLastMemorySnapshot().effectiveRenderDistanceChunks());
+            assertTrue(streamer.getLastMemorySnapshot().estimatedCpuResidentBytes() <= budget.maxCpuResidentBytes());
+        } finally {
+            streamer.close();
+        }
+    }
+
+    @Test
+    void sparseStreamingSkipsImplicitChunksButKeepsTheInteractionBubble() {
+        ChunkManager manager = new ChunkManager();
+        SparseFlatGenerator generator = new SparseFlatGenerator();
+        WorldSettings settings = new WorldSettings(
+                2,
+                new WorldHeightRange(-2, 0),
+                WorldMemoryBudget.balanced()
+        );
+        WorldStreamer streamer = new WorldStreamer(
+                manager,
+                generator,
+                generator,
+                settings,
+                1,
+                5,
+                2,
+                20,
+                20,
+                50_000_000L,
+                new DirectExecutorService(),
+                1
+        );
+
+        try {
+            streamer.update(new Vector3f(0.0f, -32.0f, 0.0f));
+            WorldMemorySnapshot sparseSnapshot = streamer.getLastMemorySnapshot();
+
+            assertEquals(27, sparseSnapshot.desiredMaterializedChunks());
+            assertEquals(27, sparseSnapshot.interactionBubbleChunks());
+            assertEquals(3, sparseSnapshot.virtualEmptyChunks());
+            assertEquals(9, sparseSnapshot.virtualUniformChunks());
+
+            for (int update = 0; update < 40 && manager.getChunkCount() < 27; update++) {
+                streamer.update(new Vector3f(0.0f, -32.0f, 0.0f));
+            }
+            assertEquals(27, generator.generatedChunks);
+            assertEquals(27, manager.getChunkCount());
+            assertTrue(manager.hasChunk(0, -2, 0));
+            assertTrue(manager.hasChunk(0, -1, 0));
+            assertTrue(manager.hasChunk(0, 0, 0));
+            assertFalse(manager.hasChunk(-2, -1, 0));
+            assertFalse(manager.hasChunk(2, -1, 0));
+        } finally {
+            streamer.close();
+        }
+    }
+
     private record FlatGenerator(short blockId) implements WorldGenerator {
         @Override
         public void generateChunkData(Chunk chunk) {
@@ -97,6 +190,32 @@ class WorldStreamerTest {
         @Override
         public int getSurfaceHeight(int worldX, int worldZ) {
             return 0;
+        }
+    }
+
+    private static final class SparseFlatGenerator implements WorldGenerator, WorldBlockProvider {
+        private int generatedChunks;
+
+        @Override
+        public void generateChunkData(Chunk chunk) {
+            generatedChunks++;
+        }
+
+        @Override
+        public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
+            return Blocks.AIR.getId();
+        }
+
+        @Override
+        public int getSurfaceHeight(int worldX, int worldZ) {
+            return 0;
+        }
+
+        @Override
+        public ChunkGenerationHint classifyChunk(ChunkManager.ChunkPosition position) {
+            return position.x() < 0
+                    ? ChunkGenerationHint.empty()
+                    : ChunkGenerationHint.uniform(Blocks.STONE.getId());
         }
     }
 

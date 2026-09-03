@@ -2,6 +2,7 @@ package org.weaw.engine.graphics.pipeline.passes;
 
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.weaw.engine.graphics.pipeline.LightingSettings;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
@@ -23,6 +24,7 @@ import org.weaw.game.ChunkMeshData.LayerMeshData;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,6 +40,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     private final String shaderPath;
     private final Map<ChunkPosition, ChunkRenderEntry> renderEntries = new LinkedHashMap<>();
     private final List<ChunkRenderEntry> visibleDraws = new ArrayList<>();
+    private final Set<ChunkPosition> deferredUploads = new LinkedHashSet<>();
     private final Matrix4f projectionMatrix = new Matrix4f();
     private final Matrix4f viewMatrix = new Matrix4f();
     private final Matrix4f viewProjectionMatrix = new Matrix4f();
@@ -49,6 +52,8 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     private ChunkFaceArena currentArena;
     private int residentMeshCountCache;
     private int residentFaceCountCache;
+    private long lastDeferredRetryCameraVersion = Long.MIN_VALUE;
+    private long lastDeferredRetryUploadsVersion = Long.MIN_VALUE;
 
     protected AbstractChunkLayerPass(ChunkManager chunkManager, String name, String shaderPath) {
         this.chunkManager = chunkManager;
@@ -199,6 +204,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
             }
         }
         renderEntries.clear();
+        deferredUploads.clear();
         visibleDraws.clear();
 
         if (multiDrawBatch != null) {
@@ -244,6 +250,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     private void synchronizeRenderEntries(RenderContext context, ChunkLightCache lightCache) {
         long currentVersion = chunkManager.getChunkUploadsVersion();
         if (currentVersion == synchronizedChunkUploadsVersion) {
+            retryDeferredUploadsIfNeeded(context, lightCache);
             return;
         }
 
@@ -252,37 +259,46 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         ChunkUploadSync uploadSync = chunkManager.snapshotChunkUploadSync(synchronizedChunkUploadsVersion);
 
         if (uploadSync.requiresFullSnapshot()) {
-            applyFullUploadSnapshot(uploadSync.fullSnapshot(), arena, lightCache);
+            applyFullUploadSnapshot(uploadSync.fullSnapshot(), arena, lightCache, context);
         } else {
             for (ChunkUploadDelta delta : uploadSync.deltas()) {
-                applyUploadDelta(delta, arena, lightCache);
+                applyUploadDelta(delta, arena, lightCache, context);
             }
         }
 
         recomputeResidentStats();
         synchronizedChunkUploadsVersion = uploadSync.version();
+        retryDeferredUploadsIfNeeded(context, lightCache);
     }
 
     private void applyFullUploadSnapshot(
             Map<ChunkPosition, ChunkUpload> fullSnapshot,
             ChunkFaceArena arena,
-            ChunkLightCache lightCache
+            ChunkLightCache lightCache,
+            RenderContext context
     ) {
         renderEntries.entrySet().removeIf(entry -> {
             if (!fullSnapshot.containsKey(entry.getKey())) {
                 arena.free(entry.getValue().allocation());
+                deferredUploads.remove(entry.getKey());
                 return true;
             }
             return false;
         });
 
         for (Map.Entry<ChunkPosition, ChunkUpload> entry : fullSnapshot.entrySet()) {
-            upsertRenderEntry(entry.getKey(), entry.getValue(), arena, lightCache);
+            upsertRenderEntry(entry.getKey(), entry.getValue(), arena, lightCache, context);
         }
     }
 
-    private void applyUploadDelta(ChunkUploadDelta delta, ChunkFaceArena arena, ChunkLightCache lightCache) {
+    private void applyUploadDelta(
+            ChunkUploadDelta delta,
+            ChunkFaceArena arena,
+            ChunkLightCache lightCache,
+            RenderContext context
+    ) {
         if (delta.changeType() == ChunkUploadChangeType.REMOVED) {
+            deferredUploads.remove(delta.position());
             ChunkRenderEntry removed = renderEntries.remove(delta.position());
             if (removed != null) {
                 arena.free(removed.allocation());
@@ -291,7 +307,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         }
 
         if (delta.upload() != null) {
-            upsertRenderEntry(delta.position(), delta.upload(), arena, lightCache);
+            upsertRenderEntry(delta.position(), delta.upload(), arena, lightCache, context);
         }
     }
 
@@ -299,7 +315,8 @@ abstract class AbstractChunkLayerPass implements RenderPass {
             ChunkPosition position,
             ChunkUpload upload,
             ChunkFaceArena arena,
-            ChunkLightCache lightCache
+            ChunkLightCache lightCache,
+            RenderContext context
     ) {
         ChunkRenderEntry existing = renderEntries.get(position);
         LayerMeshData layerMesh = selectLayerMesh(upload);
@@ -309,6 +326,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                 arena.free(existing.allocation());
                 renderEntries.remove(position);
             }
+            deferredUploads.remove(position);
             return;
         }
 
@@ -317,7 +335,87 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                 layerMesh.faceCount(),
                 existing != null ? existing.allocation() : null
         );
+        if (allocation == null) {
+            renderEntries.remove(position);
+            allocation = evictFartherChunksAndRetry(position, layerMesh, arena, context);
+            if (allocation == null) {
+                deferredUploads.add(position);
+                return;
+            }
+        }
+        deferredUploads.remove(position);
         renderEntries.put(position, ChunkRenderEntry.create(position, upload.chunk(), allocation, lightCache));
+    }
+
+    private ChunkFaceArena.Allocation evictFartherChunksAndRetry(
+            ChunkPosition candidatePosition,
+            LayerMeshData layerMesh,
+            ChunkFaceArena arena,
+            RenderContext context
+    ) {
+        Vector3f cameraPosition = context.getCamera().getPosition();
+        double candidateDistance = distanceSquared(candidatePosition, cameraPosition);
+        while (!renderEntries.isEmpty()) {
+            Map.Entry<ChunkPosition, ChunkRenderEntry> farthest = null;
+            double farthestDistance = candidateDistance;
+            for (Map.Entry<ChunkPosition, ChunkRenderEntry> entry : renderEntries.entrySet()) {
+                double distance = distanceSquared(entry.getKey(), cameraPosition);
+                if (distance > farthestDistance) {
+                    farthestDistance = distance;
+                    farthest = entry;
+                }
+            }
+            if (farthest == null) {
+                return null;
+            }
+
+            ChunkPosition evictedPosition = farthest.getKey();
+            arena.free(farthest.getValue().allocation());
+            renderEntries.remove(evictedPosition);
+            deferredUploads.add(evictedPosition);
+
+            ChunkFaceArena.Allocation allocation = arena.upload(layerMesh.faceData(), layerMesh.faceCount(), null);
+            if (allocation != null) {
+                return allocation;
+            }
+        }
+        return null;
+    }
+
+    private void retryDeferredUploadsIfNeeded(RenderContext context, ChunkLightCache lightCache) {
+        long cameraVersion = context.getCamera().getVisibilityVersion();
+        long uploadsVersion = chunkManager.getChunkUploadsVersion();
+        if (deferredUploads.isEmpty()
+                || (cameraVersion == lastDeferredRetryCameraVersion
+                && uploadsVersion == lastDeferredRetryUploadsVersion)) {
+            return;
+        }
+        lastDeferredRetryCameraVersion = cameraVersion;
+        lastDeferredRetryUploadsVersion = uploadsVersion;
+
+        List<ChunkPosition> retryPositions = new ArrayList<>(deferredUploads);
+        Vector3f cameraPosition = context.getCamera().getPosition();
+        retryPositions.sort(java.util.Comparator.comparingDouble(position -> distanceSquared(position, cameraPosition)));
+        ChunkFaceArena arena = selectArena(context);
+        for (ChunkPosition position : retryPositions) {
+            ChunkUpload upload = chunkManager.getChunkUpload(position);
+            if (upload == null) {
+                deferredUploads.remove(position);
+                continue;
+            }
+            upsertRenderEntry(position, upload, arena, lightCache, context);
+        }
+        recomputeResidentStats();
+    }
+
+    private static double distanceSquared(ChunkPosition position, Vector3f cameraPosition) {
+        double centerX = ((double) position.x() + 0.5) * Chunk.SIZE;
+        double centerY = ((double) position.y() + 0.5) * Chunk.SIZE;
+        double centerZ = ((double) position.z() + 0.5) * Chunk.SIZE;
+        double dx = centerX - cameraPosition.x;
+        double dy = centerY - cameraPosition.y;
+        double dz = centerZ - cameraPosition.z;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private void recomputeResidentStats() {

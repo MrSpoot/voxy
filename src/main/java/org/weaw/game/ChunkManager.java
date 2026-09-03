@@ -20,15 +20,21 @@ public class ChunkManager {
     private final List<ChunkUploadDelta> chunkUploadDeltas = new ArrayList<>();
     private final List<ChunkLightDelta> chunkLightDeltas = new ArrayList<>();
     private final Set<ChunkPosition> queuedChunks = new HashSet<>();
+    private final Map<ChunkPosition, Long> residentBytesByChunk = new LinkedHashMap<>();
+    private final Map<ChunkPosition, Boolean> compactLightingByChunk = new LinkedHashMap<>();
     private volatile Map<ChunkPosition, ChunkUpload> chunkUploadsSnapshot = Map.of();
 
     private long chunkUploadsVersion;
     private long chunkLightVersion;
     private long firstRetainedChunkUploadVersion = 1L;
     private long firstRetainedChunkLightVersion = 1L;
+    private long estimatedResidentBytes;
+    private int compactLightingChunkCount;
 
     public synchronized void addChunk(Chunk chunk) {
-        chunks.put(ChunkPosition.fromChunk(chunk), chunk);
+        ChunkPosition position = ChunkPosition.fromChunk(chunk);
+        chunks.put(position, chunk);
+        refreshResidentEstimate(position);
     }
 
     public synchronized Chunk getChunk(int chunkX, int chunkY, int chunkZ) {
@@ -53,6 +59,22 @@ public class ChunkManager {
 
     public synchronized int getQueuedChunkCount() {
         return queuedChunks.size();
+    }
+
+    public synchronized long getEstimatedResidentBytes() {
+        return estimatedResidentBytes;
+    }
+
+    public synchronized long getEstimatedResidentBytes(ChunkPosition position) {
+        return residentBytesByChunk.getOrDefault(position, 0L);
+    }
+
+    public synchronized int getCompactLightingChunkCount() {
+        return compactLightingChunkCount;
+    }
+
+    public synchronized int getExpandedLightingChunkCount() {
+        return chunks.size() - compactLightingChunkCount;
     }
 
     public synchronized short getBlockAtWorld(int worldX, int worldY, int worldZ) {
@@ -101,6 +123,7 @@ public class ChunkManager {
         int localY = Math.floorMod(worldY, Chunk.SIZE);
         int localZ = Math.floorMod(worldZ, Chunk.SIZE);
         chunk.setBlock(localX, localY, localZ, block);
+        refreshResidentEstimate(new ChunkPosition(chunkX, chunkY, chunkZ));
     }
 
     public synchronized void setPackedLightAtWorld(int worldX, int worldY, int worldZ, short packedLight) {
@@ -117,6 +140,7 @@ public class ChunkManager {
         int localY = Math.floorMod(worldY, Chunk.SIZE);
         int localZ = Math.floorMod(worldZ, Chunk.SIZE);
         chunk.setPackedLight(localX, localY, localZ, packedLight);
+        refreshResidentEstimate(new ChunkPosition(chunkX, chunkY, chunkZ));
     }
 
     public synchronized void setLightAtWorld(int worldX, int worldY, int worldZ, int red, int green, int blue, int sky) {
@@ -133,6 +157,7 @@ public class ChunkManager {
         int localY = Math.floorMod(worldY, Chunk.SIZE);
         int localZ = Math.floorMod(worldZ, Chunk.SIZE);
         chunk.setLight(localX, localY, localZ, red, green, blue, sky);
+        refreshResidentEstimate(new ChunkPosition(chunkX, chunkY, chunkZ));
     }
 
     public synchronized boolean tryMarkChunkQueued(ChunkPosition position) {
@@ -156,6 +181,7 @@ public class ChunkManager {
 
         ChunkUpload upload = new ChunkUpload(position, chunk, meshData);
         ChunkUpload previousUpload = chunkUploads.put(position, upload);
+        refreshResidentEstimate(position);
         recordChunkUploadDelta(
                 previousUpload == null ? ChunkUploadChangeType.ADDED : ChunkUploadChangeType.UPDATED,
                 position,
@@ -174,6 +200,7 @@ public class ChunkManager {
         chunkMeshes.put(position, meshData);
         ChunkUpload upload = new ChunkUpload(position, existingChunk, meshData);
         ChunkUpload previousUpload = chunkUploads.put(position, upload);
+        refreshResidentEstimate(position);
         recordChunkUploadDelta(
                 previousUpload == null ? ChunkUploadChangeType.ADDED : ChunkUploadChangeType.UPDATED,
                 position,
@@ -188,6 +215,7 @@ public class ChunkManager {
         chunks.remove(position);
         chunkMeshes.remove(position);
         queuedChunks.remove(position);
+        removeResidentEstimate(position);
 
         if (chunkUploads.remove(position) != null) {
             recordChunkUploadDelta(ChunkUploadChangeType.REMOVED, position, null);
@@ -292,6 +320,7 @@ public class ChunkManager {
             if (!chunks.containsKey(position)) {
                 continue;
             }
+            refreshResidentEstimate(position);
             recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
             updatedChunkCount++;
         }
@@ -301,6 +330,49 @@ public class ChunkManager {
     public synchronized Chunk copyChunk(ChunkPosition position) {
         Chunk chunk = chunks.get(position);
         return chunk == null ? null : chunk.copy();
+    }
+
+    public synchronized Chunk copyChunkForMeshing(ChunkPosition position) {
+        Chunk chunk = chunks.get(position);
+        return chunk == null ? null : chunk.copyForMeshing();
+    }
+
+    public static long estimateResidentBytes(Chunk chunk, ChunkMeshData meshData) {
+        long meshBytes = meshData == null ? 0L : meshData.estimateRetainedBytes();
+        return 256L + chunk.estimateRetainedBytes() + meshBytes;
+    }
+
+    private void refreshResidentEstimate(ChunkPosition position) {
+        Chunk chunk = chunks.get(position);
+        if (chunk == null) {
+            removeResidentEstimate(position);
+            return;
+        }
+
+        long nextBytes = estimateResidentBytes(chunk, chunkMeshes.get(position));
+        Long previousBytes = residentBytesByChunk.put(position, nextBytes);
+        estimatedResidentBytes += nextBytes - (previousBytes == null ? 0L : previousBytes);
+
+        boolean compact = chunk.getLighting().isCompact();
+        Boolean previousCompact = compactLightingByChunk.put(position, compact);
+        if (previousCompact == null) {
+            if (compact) {
+                compactLightingChunkCount++;
+            }
+        } else if (previousCompact != compact) {
+            compactLightingChunkCount += compact ? 1 : -1;
+        }
+    }
+
+    private void removeResidentEstimate(ChunkPosition position) {
+        Long removedBytes = residentBytesByChunk.remove(position);
+        if (removedBytes != null) {
+            estimatedResidentBytes = Math.max(0L, estimatedResidentBytes - removedBytes);
+        }
+        Boolean wasCompact = compactLightingByChunk.remove(position);
+        if (Boolean.TRUE.equals(wasCompact)) {
+            compactLightingChunkCount = Math.max(0, compactLightingChunkCount - 1);
+        }
     }
 
     private void recordChunkUploadDelta(ChunkUploadChangeType changeType, ChunkPosition position, ChunkUpload upload) {

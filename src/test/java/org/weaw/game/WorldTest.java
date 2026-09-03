@@ -30,9 +30,21 @@ class WorldTest {
     }
 
     @Test
-    void trySetBlockAtWorldReturnsFalseWhenChunkIsNotLoaded() {
+    void trySetBlockAtWorldMaterializesAnUnloadedChunkBeforeEditingIt() {
         try (World world = new World(new FlatGenerator(Blocks.AIR.getId()), new WorldSettings(2))) {
-            assertFalse(world.trySetBlockAtWorld(0, 0, 0, Blocks.STONE));
+            assertTrue(world.trySetBlockAtWorld(3, 4, 5, Blocks.STONE));
+            assertTrue(world.containsChunk(0, 0, 0));
+            assertEquals(Blocks.STONE.getId(), world.getBlockAtWorld(3, 4, 5));
+            assertEquals(1, world.getPendingRemeshCount());
+        }
+    }
+
+    @Test
+    void trySetBlockAtWorldRejectsChunksOutsideTheConfiguredWorldHeight() {
+        try (World world = new World(new FlatGenerator(Blocks.AIR.getId()), new WorldSettings(2))) {
+            int firstWorldYAboveRange = (world.getSettings().getHeightRange().maxChunkY() + 1) * Chunk.SIZE;
+
+            assertFalse(world.trySetBlockAtWorld(0, firstWorldYAboveRange, 0, Blocks.STONE));
             assertEquals(0, world.getPendingRemeshCount());
         }
     }
