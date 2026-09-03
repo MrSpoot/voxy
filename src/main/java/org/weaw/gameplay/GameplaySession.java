@@ -1,7 +1,6 @@
 package org.weaw.gameplay;
 
 import org.joml.Vector3f;
-import org.weaw.engine.input.InputManager;
 import org.weaw.game.World;
 import org.weaw.game.utils.BlockDefinition;
 
@@ -21,12 +20,11 @@ public class GameplaySession {
         this.playerInteractionSystem = new PlayerInteractionSystem(gameplaySettings);
     }
 
-    public void update(float deltaTime, InputManager inputManager, boolean playerControlEnabled) {
-        playerController.update(player, world, deltaTime, inputManager, playerControlEnabled);
-        if (playerControlEnabled) {
-            playerInteractionSystem.update(player, world, inputManager);
+    public void update(float deltaTime, PlayerInput input) {
+        playerController.update(player, world, deltaTime, input);
+        if (input.controlsEnabled()) {
+            playerInteractionSystem.update(player, world, input);
         }
-        world.update(player.getPosition());
     }
 
     public Player getPlayer() {
@@ -51,6 +49,5 @@ public class GameplaySession {
 
     public void updateBenchmarkPose(Vector3f position, float yaw, float pitch) {
         player.setPose(position, yaw, pitch);
-        world.update(player.getPosition());
     }
 }

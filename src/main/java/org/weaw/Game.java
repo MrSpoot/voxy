@@ -21,13 +21,16 @@ import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 import org.weaw.gameplay.GameplaySession;
 import org.weaw.gameplay.GameplaySettings;
+import org.weaw.gameplay.PlayerInput;
 import org.weaw.gameplay.TargetedBlock;
 import org.weaw.runtime.BenchmarkController;
 import org.weaw.runtime.JfrProfileRecorder;
 import org.weaw.runtime.LaunchOptions;
+import org.weaw.runtime.FixedRateUpdateScheduler;
 import org.weaw.runtime.RuntimeFrameProfile;
 import org.weaw.runtime.RuntimeProfilingCsvWriter;
 import org.weaw.runtime.RuntimeProfilingSummaryCollector;
+import org.weaw.server.GameServer;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
 import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
@@ -37,6 +40,10 @@ import static org.lwjgl.opengl.GL11.glPolygonMode;
 public class Game {
     private static final Logger LOGGER = LoggerFactory.getLogger(Game.class);
     private static final Vector3f DEFAULT_PLAYER_POSITION = new Vector3f(16.0f, 12.0f, 48.0f);
+    private static final int WORLD_STREAMING_UPDATES_PER_SECOND =
+            Integer.getInteger("voxy.worldStreamingUpdatesPerSecond", 60);
+    private static final int MAX_WORLD_STREAMING_UPDATES_PER_FRAME =
+            Integer.getInteger("voxy.maxWorldStreamingUpdatesPerFrame", 2);
 
     private final LaunchOptions launchOptions;
 
@@ -47,13 +54,22 @@ public class Game {
     private Camera camera;
     private World world;
     private GameplaySession gameplaySession;
+    private GameServer gameServer;
     private BenchmarkController benchmarkController;
     private JfrProfileRecorder jfrProfileRecorder;
     private RuntimeProfilingCsvWriter runtimeProfilingCsvWriter;
     private RuntimeProfilingSummaryCollector runtimeProfilingSummaryCollector;
+    private FixedRateUpdateScheduler worldStreamingScheduler;
 
     private double lastTime;
     private double benchmarkElapsedSeconds;
+    private float pendingMouseDeltaX;
+    private float pendingMouseDeltaY;
+    private int pendingScrollDelta;
+    private boolean pendingJump;
+    private boolean pendingToggleNoclip;
+    private boolean pendingBreakBlock;
+    private boolean pendingPlaceBlock;
 
     private boolean wireframe = false;
 
@@ -91,6 +107,11 @@ public class Game {
         world = createTestWorld();
         applyRuntimeIsolationOptions();
         gameplaySession = new GameplaySession(world, new GameplaySettings());
+        gameServer = new GameServer(world, gameplaySession);
+        worldStreamingScheduler = new FixedRateUpdateScheduler(
+                WORLD_STREAMING_UPDATES_PER_SECOND,
+                MAX_WORLD_STREAMING_UPDATES_PER_FRAME
+        );
         configureSession();
 
         renderer = new Renderer(
@@ -187,9 +208,10 @@ public class Game {
                 renderer = null;
             }
         });
-        safeCleanup("World", () -> {
-            if (world != null) {
-                world.close();
+        safeCleanup("Game Server", () -> {
+            if (gameServer != null) {
+                gameServer.close();
+                gameServer = null;
                 world = null;
             }
         });
@@ -248,7 +270,12 @@ public class Game {
             wireframe = !wireframe;
         }
 
-        gameplaySession.update(deltaTime, inputManager, window.isCursorLocked());
+        accumulatePlayerInputFrame();
+        int simulationTicks = gameServer.update(deltaTime, samplePlayerInput());
+        if (simulationTicks > 0) {
+            clearConsumedPlayerInput();
+        }
+        updateWorldStreaming(deltaTime);
         syncSelectedBlockHud();
         updateRenderInteractionTarget();
         syncCameraToPlayer();
@@ -258,7 +285,8 @@ public class Game {
     private void updateBenchmark(float deltaTime) {
         benchmarkElapsedSeconds += deltaTime;
         BenchmarkController.BenchmarkFrame frame = benchmarkController.sample(benchmarkElapsedSeconds);
-        gameplaySession.updateBenchmarkPose(frame.position(), frame.yaw(), frame.pitch());
+        gameServer.updateBenchmarkPose(frame.position(), frame.yaw(), frame.pitch());
+        updateWorldStreaming(deltaTime);
         renderer.getContext().clearBlockOutlineTarget();
         syncCameraToPlayer();
         camera.setAspectRatio(window.aspectRatio());
@@ -274,6 +302,59 @@ public class Game {
 
     private void render() {
         renderer.render(camera);
+    }
+
+    private void updateWorldStreaming(float deltaTime) {
+        worldStreamingScheduler.update(
+                deltaTime,
+                () -> world.update(gameplaySession.getPlayer().getPosition())
+        );
+    }
+
+    private void accumulatePlayerInputFrame() {
+        if (!window.isCursorLocked()) {
+            inputManager.getMouseScroll();
+            clearConsumedPlayerInput();
+            return;
+        }
+
+        pendingMouseDeltaX += inputManager.getMousePosition().deltaX();
+        pendingMouseDeltaY += inputManager.getMousePosition().deltaY();
+        pendingScrollDelta += inputManager.getMouseScroll();
+        pendingJump |= inputManager.isActionPressed(InputAction.MOVE_UP);
+        pendingToggleNoclip |= inputManager.isActionPressed(InputAction.TOGGLE_NOCLIP);
+        pendingBreakBlock |= inputManager.isActionPressed(InputAction.BREAK_BLOCK);
+        pendingPlaceBlock |= inputManager.isActionPressed(InputAction.PLACE_BLOCK);
+    }
+
+    private PlayerInput samplePlayerInput() {
+        return new PlayerInput(
+                window.isCursorLocked(),
+                inputManager.isActionDown(InputAction.MOVE_FORWARD),
+                inputManager.isActionDown(InputAction.MOVE_BACKWARD),
+                inputManager.isActionDown(InputAction.MOVE_LEFT),
+                inputManager.isActionDown(InputAction.MOVE_RIGHT),
+                inputManager.isActionDown(InputAction.MOVE_UP),
+                inputManager.isActionDown(InputAction.MOVE_DOWN),
+                pendingJump,
+                inputManager.isActionDown(InputAction.SPRINT),
+                pendingToggleNoclip,
+                pendingBreakBlock,
+                pendingPlaceBlock,
+                pendingMouseDeltaX,
+                pendingMouseDeltaY,
+                pendingScrollDelta
+        );
+    }
+
+    private void clearConsumedPlayerInput() {
+        pendingMouseDeltaX = 0.0f;
+        pendingMouseDeltaY = 0.0f;
+        pendingScrollDelta = 0;
+        pendingJump = false;
+        pendingToggleNoclip = false;
+        pendingBreakBlock = false;
+        pendingPlaceBlock = false;
     }
 
     private void syncCameraToPlayer() {
@@ -437,6 +518,24 @@ public class Game {
                 nanosToMillis(passCpuTimeNs(renderStats, "ToneMappingPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "HudPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "DebugImGuiPass")),
+                passResidentMeshCount(renderStats, "OpaqueChunkRenderPass"),
+                passVisibleMeshCount(renderStats, "OpaqueChunkRenderPass"),
+                passDrawCalls(renderStats, "OpaqueChunkRenderPass"),
+                passDrawnFaceCount(renderStats, "OpaqueChunkRenderPass"),
+                nanosToMillis(passMeshUploadCpuTimeNs(renderStats, "OpaqueChunkRenderPass")),
+                nanosToMillis(passLightUploadCpuTimeNs(renderStats, "OpaqueChunkRenderPass")),
+                passResidentMeshCount(renderStats, "CutoutChunkRenderPass"),
+                passVisibleMeshCount(renderStats, "CutoutChunkRenderPass"),
+                passDrawCalls(renderStats, "CutoutChunkRenderPass"),
+                passDrawnFaceCount(renderStats, "CutoutChunkRenderPass"),
+                nanosToMillis(passMeshUploadCpuTimeNs(renderStats, "CutoutChunkRenderPass")),
+                nanosToMillis(passLightUploadCpuTimeNs(renderStats, "CutoutChunkRenderPass")),
+                passResidentMeshCount(renderStats, "TransparentChunkRenderPass"),
+                passVisibleMeshCount(renderStats, "TransparentChunkRenderPass"),
+                passDrawCalls(renderStats, "TransparentChunkRenderPass"),
+                passDrawnFaceCount(renderStats, "TransparentChunkRenderPass"),
+                nanosToMillis(passMeshUploadCpuTimeNs(renderStats, "TransparentChunkRenderPass")),
+                nanosToMillis(passLightUploadCpuTimeNs(renderStats, "TransparentChunkRenderPass")),
                 nanosToMillis(totalMeshUploadCpuTimeNs(renderStats)),
                 nanosToMillis(totalLightUploadCpuTimeNs(renderStats)),
                 nanosToMillis(worldProfilingSnapshot.lightingSnapshotLoadedChunksCpuTimeNs()),
@@ -504,6 +603,60 @@ public class Game {
         for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
             if (passName.equals(passStats.getName())) {
                 return passStats.getCpuTimeNs();
+            }
+        }
+        return 0L;
+    }
+
+    private static int passResidentMeshCount(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getResidentMeshCount();
+            }
+        }
+        return 0;
+    }
+
+    private static int passVisibleMeshCount(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getVisibleMeshCount();
+            }
+        }
+        return 0;
+    }
+
+    private static int passDrawCalls(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getDrawCalls();
+            }
+        }
+        return 0;
+    }
+
+    private static int passDrawnFaceCount(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getDrawnFaceCount();
+            }
+        }
+        return 0;
+    }
+
+    private static long passMeshUploadCpuTimeNs(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getMeshUploadCpuTimeNs();
+            }
+        }
+        return 0L;
+    }
+
+    private static long passLightUploadCpuTimeNs(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getLightUploadCpuTimeNs();
             }
         }
         return 0L;

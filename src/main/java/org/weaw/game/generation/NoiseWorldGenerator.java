@@ -46,6 +46,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
             }
         }
 
+        populateTrees(chunk, blocks, chunkGlobalX, chunkGlobalY, chunkGlobalZ);
         chunk.setAllBlocks(blocks);
     }
 
@@ -56,14 +57,14 @@ public final class NoiseWorldGenerator implements WorldGenerator {
             return baseBlock;
         }
 
-//        for (int treeX = worldX - 2; treeX <= worldX + 2; treeX++) {
-//            for (int treeZ = worldZ - 2; treeZ <= worldZ + 2; treeZ++) {
-//                short treeBlock = getTreeBlockAt(treeX, treeZ, worldX, worldY, worldZ);
-//                if (treeBlock != Blocks.AIR.getId()) {
-//                    return treeBlock;
-//                }
-//            }
-//        }
+        for (int treeX = worldX - 2; treeX <= worldX + 2; treeX++) {
+            for (int treeZ = worldZ - 2; treeZ <= worldZ + 2; treeZ++) {
+                short treeBlock = getTreeBlockAt(treeX, treeZ, worldX, worldY, worldZ);
+                if (treeBlock != Blocks.AIR.getId()) {
+                    return treeBlock;
+                }
+            }
+        }
 
         return baseBlock;
     }
@@ -131,6 +132,104 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         }
 
         return Blocks.AIR.getId();
+    }
+
+    private void populateTrees(Chunk chunk, short[] blocks, int chunkGlobalX, int chunkGlobalY, int chunkGlobalZ) {
+        int minTreeX = chunkGlobalX - 2;
+        int maxTreeX = chunkGlobalX + Chunk.SIZE + 1;
+        int minTreeZ = chunkGlobalZ - 2;
+        int maxTreeZ = chunkGlobalZ + Chunk.SIZE + 1;
+        int chunkMaxWorldY = chunkGlobalY + Chunk.SIZE - 1;
+
+        for (int treeX = minTreeX; treeX <= maxTreeX; treeX++) {
+            for (int treeZ = minTreeZ; treeZ <= maxTreeZ; treeZ++) {
+                int surfaceY = getSurfaceHeight(treeX, treeZ);
+                if (surfaceY <= config.waterLevel()) {
+                    continue;
+                }
+                if (!shouldPlace(treeNoise.get().GetNoise(treeX, treeZ), treeX, treeZ)) {
+                    continue;
+                }
+
+                int trunkBaseY = surfaceY + 1;
+                int canopyTopY = trunkBaseY + 5;
+                if (trunkBaseY > chunkMaxWorldY || canopyTopY < chunkGlobalY) {
+                    continue;
+                }
+
+                placeTreeIntoChunk(blocks, chunkGlobalX, chunkGlobalY, chunkGlobalZ, treeX, treeZ, trunkBaseY);
+            }
+        }
+    }
+
+    private void placeTreeIntoChunk(
+            short[] blocks,
+            int chunkGlobalX,
+            int chunkGlobalY,
+            int chunkGlobalZ,
+            int treeX,
+            int treeZ,
+            int trunkBaseY
+    ) {
+        for (int offsetY = 0; offsetY < 4; offsetY++) {
+            writeTreeBlockIfInChunk(
+                    blocks,
+                    chunkGlobalX,
+                    chunkGlobalY,
+                    chunkGlobalZ,
+                    treeX,
+                    trunkBaseY + offsetY,
+                    treeZ,
+                    Blocks.WOOD_LOG.getId()
+            );
+        }
+
+        for (int offsetY = 0; offsetY <= 2; offsetY++) {
+            int worldY = trunkBaseY + 3 + offsetY;
+            for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
+                for (int offsetX = -2; offsetX <= 2; offsetX++) {
+                    int distance = (offsetX * offsetX) + (offsetY * offsetY) + (offsetZ * offsetZ);
+                    if (distance > 5) {
+                        continue;
+                    }
+
+                    writeTreeBlockIfInChunk(
+                            blocks,
+                            chunkGlobalX,
+                            chunkGlobalY,
+                            chunkGlobalZ,
+                            treeX + offsetX,
+                            worldY,
+                            treeZ + offsetZ,
+                            Blocks.LEAVES.getId()
+                    );
+                }
+            }
+        }
+    }
+
+    private void writeTreeBlockIfInChunk(
+            short[] blocks,
+            int chunkGlobalX,
+            int chunkGlobalY,
+            int chunkGlobalZ,
+            int worldX,
+            int worldY,
+            int worldZ,
+            short blockId
+    ) {
+        int localX = worldX - chunkGlobalX;
+        int localY = worldY - chunkGlobalY;
+        int localZ = worldZ - chunkGlobalZ;
+        if (localX < 0 || localY < 0 || localZ < 0
+                || localX >= Chunk.SIZE || localY >= Chunk.SIZE || localZ >= Chunk.SIZE) {
+            return;
+        }
+
+        int blockIndex = localX + (localZ * Chunk.SIZE) + (localY * Chunk.SIZE * Chunk.SIZE);
+        if (blocks[blockIndex] == Blocks.AIR.getId()) {
+            blocks[blockIndex] = blockId;
+        }
     }
 
     private boolean shouldPlace(float noiseValue, int globalX, int globalZ) {

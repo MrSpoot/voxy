@@ -102,6 +102,8 @@ java -jar target/voxy-0.0.1.jar --profile-jfr
 - En mode benchmark, `target/profiling/runtime-summary.json` est exporte automatiquement a la fin du run.
 - Pour exporter les stats runtime hors benchmark, utiliser `--profile-runtime`.
 - Le fichier contient une ligne par frame avec les timings CPU, les compteurs de streaming et les temps de render pass.
+- Le CSV inclut aussi des stats par pass pour `opaque`, `cutout` et `transparent` :
+  `resident_meshes`, `visible_meshes`, `draw_calls`, `drawn_faces`, `mesh_upload_ms`, `light_upload_ms`.
 - Les timings `chunk_gen_ms` et `chunk_mesh_ms` agregent du travail fait en threads de fond. Ils peuvent donc depasser le frame time d'une frame isolee.
 
 Exemple :

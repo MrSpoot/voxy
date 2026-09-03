@@ -164,17 +164,27 @@ ivec3 resolveDebugSampleCoords(int face, vec3 localPosition);
 vec4 sampleLightComponents(ivec3 sampleCoords);
 vec4 sampleSmoothedLight(int face, vec3 localPosition);
 
+float attenuateAoNearBlockLight(float ao, vec3 blockLight) {
+    float blockLightStrength = max(max(blockLight.r, blockLight.g), blockLight.b);
+    float aoFade = smoothstep(0.18, 0.85, blockLightStrength);
+    return mix(ao, 0.88, aoFade);
+}
+
 vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
     vec4 smoothedLight = sampleSmoothedLight(face, vChunkLocalPosition);
     vec3 blockLight = smoothedLight.rgb * uBlockLightIntensity;
     vec3 propagatedSkyLight = uSkyColor * smoothedLight.a * uBlockLightIntensity;
+    float shadedAo = ao;
+    if (uBlockLightEnabled != 0) {
+        shadedAo = attenuateAoNearBlockLight(ao, blockLight);
+    }
 
     if (uLightingEnabled == 0) {
         vec3 lighting = vec3(1.0);
         if (uBlockLightEnabled != 0) {
             lighting += blockLight + propagatedSkyLight;
         }
-        return albedo * lighting * ao;
+        return albedo * lighting * shadedAo;
     }
 
     vec3 normal = getFaceNormal(face);
@@ -190,7 +200,7 @@ vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
         lighting += blockLight + propagatedSkyLight;
     }
 
-    return albedo * lighting * ao;
+    return albedo * lighting * shadedAo;
 }
 
 uint getPackedLight(int lightOffset, int x, int y, int z) {

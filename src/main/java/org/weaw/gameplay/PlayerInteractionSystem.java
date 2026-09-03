@@ -1,8 +1,6 @@
 package org.weaw.gameplay;
 
 import org.joml.Vector3f;
-import org.weaw.engine.input.InputAction;
-import org.weaw.engine.input.InputManager;
 import org.weaw.game.World;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.Blocks;
@@ -24,11 +22,11 @@ public class PlayerInteractionSystem {
         this.settings = settings;
     }
 
-    public void update(Player player, World world, InputManager inputManager) {
-        updateSelectedLamp(inputManager);
+    public void update(Player player, World world, PlayerInput input) {
+        updateSelectedLamp(input);
         targetedBlock = raycastBlock(player, world);
-        if (!inputManager.isActionPressed(InputAction.BREAK_BLOCK)
-                && !inputManager.isActionPressed(InputAction.PLACE_BLOCK)) {
+        if (!input.breakBlock()
+                && !input.placeBlock()) {
             return;
         }
 
@@ -36,12 +34,12 @@ public class PlayerInteractionSystem {
             return;
         }
 
-        if (inputManager.isActionPressed(InputAction.BREAK_BLOCK)) {
+        if (input.breakBlock()) {
             world.trySetBlockAtWorld(targetedBlock.blockX(), targetedBlock.blockY(), targetedBlock.blockZ(), Blocks.AIR);
             return;
         }
 
-        if (inputManager.isActionPressed(InputAction.PLACE_BLOCK)
+        if (input.placeBlock()
                 && !wouldOverlapPlayer(player, targetedBlock.placeX(), targetedBlock.placeY(), targetedBlock.placeZ())) {
             world.trySetBlockAtWorld(targetedBlock.placeX(), targetedBlock.placeY(), targetedBlock.placeZ(), selectedBlock);
         }
@@ -62,8 +60,8 @@ public class PlayerInteractionSystem {
         return targetedBlock;
     }
 
-    private void updateSelectedLamp(InputManager inputManager) {
-        int scrollDelta = inputManager.getMouseScroll();
+    private void updateSelectedLamp(PlayerInput input) {
+        int scrollDelta = input.scrollDelta();
         if (scrollDelta == 0) {
             return;
         }

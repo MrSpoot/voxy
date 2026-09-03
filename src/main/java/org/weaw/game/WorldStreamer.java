@@ -138,6 +138,64 @@ public class WorldStreamer implements AutoCloseable {
             int maxPublishesPerUpdate,
             long maxUpdateBudgetNs
     ) {
+        this(
+                chunkManager,
+                blockProvider,
+                worldGenerator,
+                settings,
+                verticalRenderHeight,
+                verticalUnloadHeight,
+                horizontalUnloadPadding,
+                maxSubmissionsPerUpdate,
+                maxPublishesPerUpdate,
+                maxUpdateBudgetNs,
+                Math.max(1, Runtime.getRuntime().availableProcessors() - 1)
+        );
+    }
+
+    private WorldStreamer(
+            ChunkManager chunkManager,
+            WorldBlockProvider blockProvider,
+            WorldGenerator worldGenerator,
+            WorldSettings settings,
+            int verticalRenderHeight,
+            int verticalUnloadHeight,
+            int horizontalUnloadPadding,
+            int maxSubmissionsPerUpdate,
+            int maxPublishesPerUpdate,
+            long maxUpdateBudgetNs,
+            int workerCount
+    ) {
+        this(
+                chunkManager,
+                blockProvider,
+                worldGenerator,
+                settings,
+                verticalRenderHeight,
+                verticalUnloadHeight,
+                horizontalUnloadPadding,
+                maxSubmissionsPerUpdate,
+                maxPublishesPerUpdate,
+                maxUpdateBudgetNs,
+                Executors.newFixedThreadPool(workerCount),
+                workerCount
+        );
+    }
+
+    WorldStreamer(
+            ChunkManager chunkManager,
+            WorldBlockProvider blockProvider,
+            WorldGenerator worldGenerator,
+            WorldSettings settings,
+            int verticalRenderHeight,
+            int verticalUnloadHeight,
+            int horizontalUnloadPadding,
+            int maxSubmissionsPerUpdate,
+            int maxPublishesPerUpdate,
+            long maxUpdateBudgetNs,
+            ExecutorService executor,
+            int workerCount
+    ) {
         this.chunkManager = chunkManager;
         this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
@@ -148,7 +206,7 @@ public class WorldStreamer implements AutoCloseable {
         this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
         this.maxPublishesPerUpdate = Math.max(1, maxPublishesPerUpdate);
         this.maxUpdateBudgetNs = Math.max(250_000L, maxUpdateBudgetNs);
-        int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+        workerCount = Math.max(1, workerCount);
         this.maxQueuedChunkCount = Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2);
         this.reservedRemeshTaskSlots = Math.max(
                 1,
@@ -157,7 +215,7 @@ public class WorldStreamer implements AutoCloseable {
                         Integer.getInteger("voxy.reservedRemeshTaskSlots", DEFAULT_RESERVED_REMESH_TASK_SLOTS)
                 )
         );
-        this.executor = Executors.newFixedThreadPool(workerCount);
+        this.executor = Objects.requireNonNull(executor, "executor");
     }
 
     public void update(Vector3f playerPosition) {
@@ -702,7 +760,7 @@ public class WorldStreamer implements AutoCloseable {
         }
     }
 
-    private int getPendingRemeshCount() {
+    int getPendingRemeshCount() {
         synchronized (taskLock) {
             return priorityDirtyChunkPositions.size() + dirtyChunkPositions.size();
         }

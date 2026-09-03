@@ -203,6 +203,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
         return chunkManager.hasChunk(position.x(), position.y(), position.z());
     }
 
+    int getPendingRemeshCount() {
+        return worldStreamer.getPendingRemeshCount();
+    }
+
     @Override
     public void close() {
         worldStreamer.close();

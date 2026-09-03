@@ -1,8 +1,6 @@
 package org.weaw.gameplay;
 
 import org.joml.Vector3f;
-import org.weaw.engine.input.InputAction;
-import org.weaw.engine.input.InputManager;
 import org.weaw.game.World;
 
 public class PlayerController {
@@ -13,21 +11,21 @@ public class PlayerController {
         this.settings = settings;
     }
 
-    public void update(Player player, World world, float deltaTime, InputManager inputManager, boolean controlsEnabled) {
-        if (controlsEnabled) {
-            if (inputManager.isActionPressed(InputAction.TOGGLE_NOCLIP)) {
+    public void update(Player player, World world, float deltaTime, PlayerInput input) {
+        if (input.controlsEnabled()) {
+            if (input.toggleNoclip()) {
                 player.toggleNoclip();
             }
 
-            updateLook(player, inputManager);
+            updateLook(player, input);
 
             if (player.isNoclip()) {
-                updateNoclipMovement(player, deltaTime, inputManager);
+                updateNoclipMovement(player, deltaTime, input);
                 return;
             }
 
-            updateGroundMovement(player, world, deltaTime, inputManager);
-            updateJump(player, inputManager);
+            updateGroundMovement(player, world, deltaTime, input);
+            updateJump(player, input);
         } else if (player.isNoclip()) {
             return;
         }
@@ -35,32 +33,32 @@ public class PlayerController {
         updateGravity(player, world, deltaTime);
     }
 
-    private void updateLook(Player player, InputManager inputManager) {
+    private void updateLook(Player player, PlayerInput input) {
         float mouseSensitivity = settings.getMouseSensitivity();
-        float yawDelta = inputManager.getMousePosition().deltaX() * mouseSensitivity;
-        float pitchDelta = inputManager.getMousePosition().deltaY() * mouseSensitivity;
+        float yawDelta = input.mouseDeltaX() * mouseSensitivity;
+        float pitchDelta = input.mouseDeltaY() * mouseSensitivity;
         player.rotate(yawDelta, pitchDelta);
     }
 
-    private void updateNoclipMovement(Player player, float deltaTime, InputManager inputManager) {
+    private void updateNoclipMovement(Player player, float deltaTime, PlayerInput input) {
         movement.zero();
-        collectHorizontalInput(inputManager);
+        collectHorizontalInput(input);
 
-        if (inputManager.isActionDown(InputAction.MOVE_UP)) {
+        if (input.moveUp()) {
             movement.y += 1.0f;
         }
-        if (inputManager.isActionDown(InputAction.MOVE_DOWN)) {
+        if (input.moveDown()) {
             movement.y -= 1.0f;
         }
 
         if (movement.lengthSquared() > 0.0f) {
-            player.moveRelative(movement.normalize().mul(resolveMoveDistance(deltaTime, inputManager)));
+            player.moveRelative(movement.normalize().mul(resolveMoveDistance(deltaTime, input)));
         }
     }
 
-    private void updateGroundMovement(Player player, World world, float deltaTime, InputManager inputManager) {
+    private void updateGroundMovement(Player player, World world, float deltaTime, PlayerInput input) {
         movement.zero();
-        collectHorizontalInput(inputManager);
+        collectHorizontalInput(input);
 
         if (movement.lengthSquared() == 0.0f) {
             return;
@@ -72,7 +70,7 @@ public class PlayerController {
         Vector3f worldMovement = new Vector3f(forward).mul(movement.z)
                 .add(right.mul(movement.x))
                 .normalize()
-                .mul(resolveMoveDistance(deltaTime, inputManager));
+                .mul(resolveMoveDistance(deltaTime, input));
 
         moveWithHorizontalCollision(player, worldMovement, world);
     }
@@ -100,8 +98,8 @@ public class PlayerController {
         player.setGrounded(false);
     }
 
-    private void updateJump(Player player, InputManager inputManager) {
-        if (!player.isGrounded() || !inputManager.isActionPressed(InputAction.MOVE_UP)) {
+    private void updateJump(Player player, PlayerInput input) {
+        if (!player.isGrounded() || !input.jump()) {
             return;
         }
 
@@ -109,24 +107,24 @@ public class PlayerController {
         player.setGrounded(false);
     }
 
-    private void collectHorizontalInput(InputManager inputManager) {
-        if (inputManager.isActionDown(InputAction.MOVE_FORWARD)) {
+    private void collectHorizontalInput(PlayerInput input) {
+        if (input.moveForward()) {
             movement.z += 1.0f;
         }
-        if (inputManager.isActionDown(InputAction.MOVE_BACKWARD)) {
+        if (input.moveBackward()) {
             movement.z -= 1.0f;
         }
-        if (inputManager.isActionDown(InputAction.MOVE_LEFT)) {
+        if (input.moveLeft()) {
             movement.x -= 1.0f;
         }
-        if (inputManager.isActionDown(InputAction.MOVE_RIGHT)) {
+        if (input.moveRight()) {
             movement.x += 1.0f;
         }
     }
 
-    private float resolveMoveDistance(float deltaTime, InputManager inputManager) {
+    private float resolveMoveDistance(float deltaTime, PlayerInput input) {
         float speed = settings.getPlayerMoveSpeed() * deltaTime;
-        if (inputManager.isActionDown(InputAction.SPRINT)) {
+        if (input.sprint()) {
             speed *= settings.getPlayerSprintMultiplier();
         }
         return speed;
