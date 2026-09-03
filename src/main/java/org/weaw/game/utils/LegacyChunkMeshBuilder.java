@@ -1,8 +1,11 @@
 package org.weaw.game.utils;
 
-import org.weaw.game.Chunk;
 import org.weaw.game.ChunkMeshData;
-import org.weaw.game.WorldBlockProvider;
+import org.weaw.game.ChunkMeshingMetrics;
+import org.weaw.game.ChunkMeshingSnapshot;
+
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 public final class LegacyChunkMeshBuilder {
     private static final ChunkMeshData.LayerMeshData EMPTY_LAYER = new ChunkMeshData.LayerMeshData(new int[0], 0);
@@ -17,12 +20,13 @@ public final class LegacyChunkMeshBuilder {
     }
 
     public static ChunkMeshData buildMeshData(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             boolean ambientOcclusionEnabled,
-            boolean transparentChunksEnabled
+            boolean transparentChunksEnabled,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
-        int initialCapacity = Math.max(estimateVisibleFaces(chunk), 1);
+        int initialCapacity = Math.max(estimateVisibleFaces(snapshot), 1);
         int[] opaqueFaces = new int[initialCapacity * 2];
         int[] cutoutFaces = new int[initialCapacity * 2];
         int[] transparentFaces = transparentChunksEnabled ? new int[initialCapacity * 2] : new int[0];
@@ -30,15 +34,17 @@ public final class LegacyChunkMeshBuilder {
         int cutoutCount = 0;
         int transparentCount = 0;
 
-        for (int y = 0; y < Chunk.SIZE; y++) {
-            for (int z = 0; z < Chunk.SIZE; z++) {
-                for (int x = 0; x < Chunk.SIZE; x++) {
-                    short blockId = chunk.getBlock(x, y, z);
-                    if (blockId == Blocks.AIR.getId()) {
+        long classificationStartNs = System.nanoTime();
+        for (int y = 0; y < org.weaw.game.Chunk.SIZE; y++) {
+            throwIfCancelled(cancelled);
+            for (int z = 0; z < org.weaw.game.Chunk.SIZE; z++) {
+                for (int x = 0; x < org.weaw.game.Chunk.SIZE; x++) {
+                    short blockId = snapshot.getBlock(x, y, z);
+                    if (blockId == snapshot.blockCatalog().air().getId()) {
                         continue;
                     }
 
-                    BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+                    BlockDefinition blockDefinition = snapshot.blockCatalog().getBlock(blockId);
                     if (blockDefinition == null) {
                         continue;
                     }
@@ -51,13 +57,13 @@ public final class LegacyChunkMeshBuilder {
                             ? MeshLayer.TRANSPARENT
                             : (blockDefinition.isCutout() ? MeshLayer.CUTOUT : MeshLayer.OPAQUE);
 
-                    if (shouldEmitFace(chunk, blockProvider, blockDefinition, x + 1, y, z)) {
+                    if (shouldEmitFace(snapshot, blockDefinition, x + 1, y, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
                                 ? packOpaqueFacePayload(
-                                        chunk,
-                                        blockProvider,
+                                        snapshot,
                                         textureIndex,
                                         ambientOcclusionEnabled,
+                                        metrics,
                                         x,
                                         y,
                                         z,
@@ -75,13 +81,13 @@ public final class LegacyChunkMeshBuilder {
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
                         }
                     }
-                    if (shouldEmitFace(chunk, blockProvider, blockDefinition, x - 1, y, z)) {
+                    if (shouldEmitFace(snapshot, blockDefinition, x - 1, y, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
                                 ? packOpaqueFacePayload(
-                                        chunk,
-                                        blockProvider,
+                                        snapshot,
                                         textureIndex,
                                         ambientOcclusionEnabled,
+                                        metrics,
                                         x,
                                         y,
                                         z,
@@ -99,13 +105,13 @@ public final class LegacyChunkMeshBuilder {
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
                         }
                     }
-                    if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y + 1, z)) {
+                    if (shouldEmitFace(snapshot, blockDefinition, x, y + 1, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
                                 ? packOpaqueFacePayload(
-                                        chunk,
-                                        blockProvider,
+                                        snapshot,
                                         textureIndex,
                                         ambientOcclusionEnabled,
+                                        metrics,
                                         x,
                                         y,
                                         z,
@@ -123,13 +129,13 @@ public final class LegacyChunkMeshBuilder {
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
                         }
                     }
-                    if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y - 1, z)) {
+                    if (shouldEmitFace(snapshot, blockDefinition, x, y - 1, z)) {
                         int facePayload = layer == MeshLayer.OPAQUE
                                 ? packOpaqueFacePayload(
-                                        chunk,
-                                        blockProvider,
+                                        snapshot,
                                         textureIndex,
                                         ambientOcclusionEnabled,
+                                        metrics,
                                         x,
                                         y,
                                         z,
@@ -147,13 +153,13 @@ public final class LegacyChunkMeshBuilder {
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
                         }
                     }
-                    if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z + 1)) {
+                    if (shouldEmitFace(snapshot, blockDefinition, x, y, z + 1)) {
                         int facePayload = layer == MeshLayer.OPAQUE
                                 ? packOpaqueFacePayload(
-                                        chunk,
-                                        blockProvider,
+                                        snapshot,
                                         textureIndex,
                                         ambientOcclusionEnabled,
+                                        metrics,
                                         x,
                                         y,
                                         z,
@@ -171,13 +177,13 @@ public final class LegacyChunkMeshBuilder {
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
                         }
                     }
-                    if (shouldEmitFace(chunk, blockProvider, blockDefinition, x, y, z - 1)) {
+                    if (shouldEmitFace(snapshot, blockDefinition, x, y, z - 1)) {
                         int facePayload = layer == MeshLayer.OPAQUE
                                 ? packOpaqueFacePayload(
-                                        chunk,
-                                        blockProvider,
+                                        snapshot,
                                         textureIndex,
                                         ambientOcclusionEnabled,
+                                        metrics,
                                         x,
                                         y,
                                         z,
@@ -199,20 +205,24 @@ public final class LegacyChunkMeshBuilder {
             }
         }
 
-        return new ChunkMeshData(
+        metrics.recordFaceClassification(System.nanoTime() - classificationStartNs);
+        long outputStartNs = System.nanoTime();
+        ChunkMeshData meshData = new ChunkMeshData(
                 new ChunkMeshData.LayerMeshData(trimFaces(opaqueFaces, opaqueCount), opaqueCount),
                 new ChunkMeshData.LayerMeshData(trimFaces(cutoutFaces, cutoutCount), cutoutCount),
                 transparentChunksEnabled
                         ? new ChunkMeshData.LayerMeshData(trimFaces(transparentFaces, transparentCount), transparentCount)
                         : EMPTY_LAYER
         );
+        metrics.recordOutputBuild(System.nanoTime() - outputStartNs);
+        return meshData;
     }
 
     private static int packOpaqueFacePayload(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             int textureIndex,
             boolean ambientOcclusionEnabled,
+            ChunkMeshingMetrics.Recorder metrics,
             int x,
             int y,
             int z,
@@ -222,26 +232,26 @@ public final class LegacyChunkMeshBuilder {
             return textureIndex;
         }
 
+        metrics.recordAmbientOcclusionFace();
         return VoxelAmbientOcclusion.packOpaqueFaceData(
                 textureIndex,
-                VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, faceDirection)
+                VoxelAmbientOcclusion.computeOpaqueAoPacked(snapshot, x, y, z, faceDirection)
         );
     }
 
     private static boolean shouldEmitFace(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition currentBlock,
             int neighborX,
             int neighborY,
             int neighborZ
     ) {
-        short neighborBlockId = getNeighborBlock(chunk, blockProvider, neighborX, neighborY, neighborZ);
-        if (neighborBlockId == Blocks.AIR.getId()) {
+        short neighborBlockId = snapshot.getBlock(neighborX, neighborY, neighborZ);
+        if (neighborBlockId == snapshot.blockCatalog().air().getId()) {
             return true;
         }
 
-        BlockDefinition neighborBlock = BlockRegistry.getBlock(neighborBlockId);
+        BlockDefinition neighborBlock = snapshot.blockCatalog().getBlock(neighborBlockId);
         if (neighborBlock == null) {
             return true;
         }
@@ -265,12 +275,12 @@ public final class LegacyChunkMeshBuilder {
         return false;
     }
 
-    private static int estimateVisibleFaces(Chunk chunk) {
+    private static int estimateVisibleFaces(ChunkMeshingSnapshot snapshot) {
         int nonAirBlocks = 0;
-        for (int y = 0; y < Chunk.SIZE; y++) {
-            for (int z = 0; z < Chunk.SIZE; z++) {
-                for (int x = 0; x < Chunk.SIZE; x++) {
-                    if (chunk.getBlock(x, y, z) != Blocks.AIR.getId()) {
+        for (int y = 0; y < org.weaw.game.Chunk.SIZE; y++) {
+            for (int z = 0; z < org.weaw.game.Chunk.SIZE; z++) {
+                for (int x = 0; x < org.weaw.game.Chunk.SIZE; x++) {
+                    if (snapshot.getBlock(x, y, z) != snapshot.blockCatalog().air().getId()) {
                         nonAirBlocks++;
                     }
                 }
@@ -289,15 +299,10 @@ public final class LegacyChunkMeshBuilder {
                 | (((height - 1) & 0x1F) << 23);
     }
 
-    private static short getNeighborBlock(Chunk chunk, WorldBlockProvider blockProvider, int neighborX, int neighborY, int neighborZ) {
-        if (chunk.isInBounds(neighborX, neighborY, neighborZ)) {
-            return chunk.getBlock(neighborX, neighborY, neighborZ);
+    private static void throwIfCancelled(BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()) {
+            throw new CancellationException("Chunk meshing cancelled");
         }
-
-        int worldX = chunk.getPosition().x * Chunk.SIZE + neighborX;
-        int worldY = chunk.getPosition().y * Chunk.SIZE + neighborY;
-        int worldZ = chunk.getPosition().z * Chunk.SIZE + neighborZ;
-        return blockProvider.getBlockAtWorld(worldX, worldY, worldZ);
     }
 
     private static int[] ensureCapacity(int[] faceData, int faceCount) {

@@ -65,7 +65,7 @@ public final class BlockDefinition {
 
     public short getId() {
         if (runtimeId < 0) {
-            throw new IllegalStateException("Block runtime id not assigned for " + stableId + ". Initialize BlockRegistry first.");
+            throw new IllegalStateException("Block runtime id not assigned for " + stableId + ". Add it to a BlockCatalog first.");
         }
         return runtimeId;
     }
@@ -83,11 +83,11 @@ public final class BlockDefinition {
     }
 
     public boolean isTransparent() {
-        return transparencyType == TransparencyType.TRANSPARENT && this != Blocks.AIR;
+        return transparencyType == TransparencyType.TRANSPARENT && !isAir();
     }
 
     public boolean isSolid() {
-        return this != Blocks.AIR;
+        return !isAir();
     }
 
     public int getLightEmissionRed() {
@@ -107,7 +107,11 @@ public final class BlockDefinition {
     }
 
     public boolean blocksLight() {
-        return isOpaque() && this != Blocks.AIR;
+        return isOpaque() && !isAir();
+    }
+
+    public boolean isAir() {
+        return "voxy:air".equals(stableId);
     }
 
     @Override

@@ -12,12 +12,74 @@ public final class BenchmarkController {
     private static final float VERTICAL_WAVELENGTH_BLOCKS = 192.0f;
 
     private final BenchmarkOptions options;
+    private BenchmarkPhase phase = BenchmarkPhase.WARMUP;
+    private double phaseElapsedSeconds;
+    private double totalElapsedSeconds;
+    private double loadingDurationSeconds;
+    private boolean loadingConverged;
 
     public BenchmarkController(BenchmarkOptions options) {
         this.options = Objects.requireNonNull(options, "options");
     }
 
-    public BenchmarkFrame sample(double elapsedSeconds) {
+    public BenchmarkFrame update(double deltaSeconds, boolean streamingConverged) {
+        double remainingSeconds = Math.max(0.0d, deltaSeconds);
+        while (remainingSeconds > 0.0d && phase != BenchmarkPhase.COMPLETE) {
+            if (phase == BenchmarkPhase.LOADING && streamingConverged) {
+                loadingConverged = true;
+                loadingDurationSeconds = phaseElapsedSeconds;
+                transitionTo(BenchmarkPhase.TRAVERSAL);
+                continue;
+            }
+
+            double durationSeconds = phaseDurationSeconds(phase);
+            double stepSeconds = Math.min(remainingSeconds, Math.max(0.0d, durationSeconds - phaseElapsedSeconds));
+            phaseElapsedSeconds += stepSeconds;
+            totalElapsedSeconds += stepSeconds;
+            remainingSeconds -= stepSeconds;
+
+            if (phaseElapsedSeconds + 1.0e-9d < durationSeconds) {
+                break;
+            }
+            finishCurrentPhase();
+        }
+        return currentFrame();
+    }
+
+    public BenchmarkFrame currentFrame() {
+        double traversalElapsed = switch (phase) {
+            case TRAVERSAL -> phaseElapsedSeconds;
+            case SETTLE, COMPLETE -> options.durationSeconds();
+            default -> 0.0d;
+        };
+        return sampleTrajectory(traversalElapsed);
+    }
+
+    public BenchmarkPhase phase() {
+        return phase;
+    }
+
+    public double phaseElapsedSeconds() {
+        return phaseElapsedSeconds;
+    }
+
+    public double totalElapsedSeconds() {
+        return totalElapsedSeconds;
+    }
+
+    public boolean loadingConverged() {
+        return loadingConverged;
+    }
+
+    public double loadingDurationSeconds() {
+        return loadingDurationSeconds;
+    }
+
+    public boolean isComplete() {
+        return phase == BenchmarkPhase.COMPLETE;
+    }
+
+    private BenchmarkFrame sampleTrajectory(double elapsedSeconds) {
         double clampedElapsed = Math.max(0.0d, Math.min(elapsedSeconds, options.durationSeconds()));
         float travelledDistance = (float) clampedElapsed * FLY_SPEED_BLOCKS_PER_SECOND;
 
@@ -35,10 +97,56 @@ public final class BenchmarkController {
         float yaw = (float) Math.toDegrees(Math.atan2(dz, dx));
         float pitch = (float) Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
 
-        return new BenchmarkFrame(new Vector3f(x, y, z), yaw, pitch);
+        return new BenchmarkFrame(
+                new Vector3f(x, y, z),
+                yaw,
+                pitch,
+                phase,
+                phaseElapsedSeconds,
+                totalElapsedSeconds,
+                loadingConverged,
+                loadingDurationSeconds
+        );
     }
 
-    public record BenchmarkFrame(Vector3f position, float yaw, float pitch) {
+    private double phaseDurationSeconds(BenchmarkPhase currentPhase) {
+        return switch (currentPhase) {
+            case WARMUP -> options.warmupSeconds();
+            case LOADING -> options.loadingTimeoutSeconds();
+            case TRAVERSAL -> options.durationSeconds();
+            case SETTLE -> options.settleSeconds();
+            case COMPLETE, MANUAL -> 0.0d;
+        };
+    }
+
+    private void finishCurrentPhase() {
+        switch (phase) {
+            case WARMUP -> transitionTo(BenchmarkPhase.LOADING);
+            case LOADING -> {
+                loadingDurationSeconds = phaseElapsedSeconds;
+                transitionTo(BenchmarkPhase.TRAVERSAL);
+            }
+            case TRAVERSAL -> transitionTo(BenchmarkPhase.SETTLE);
+            case SETTLE -> transitionTo(BenchmarkPhase.COMPLETE);
+            case COMPLETE, MANUAL -> { }
+        }
+    }
+
+    private void transitionTo(BenchmarkPhase nextPhase) {
+        phase = nextPhase;
+        phaseElapsedSeconds = 0.0d;
+    }
+
+    public record BenchmarkFrame(
+            Vector3f position,
+            float yaw,
+            float pitch,
+            BenchmarkPhase phase,
+            double phaseElapsedSeconds,
+            double totalElapsedSeconds,
+            boolean loadingConverged,
+            double loadingDurationSeconds
+    ) {
         public BenchmarkFrame {
             position = new Vector3f(position);
         }

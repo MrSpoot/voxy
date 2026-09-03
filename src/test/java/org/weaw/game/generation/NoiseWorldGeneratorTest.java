@@ -20,11 +20,13 @@ class NoiseWorldGeneratorTest {
         NoiseWorldGenerator generator = new NoiseWorldGenerator(GenerationConfig.defaults());
 
         ChunkGenerationHint deep = generator.classifyChunk(new ChunkPosition(0, -2, 0));
+        ChunkGenerationHint topsoilBoundary = generator.classifyChunk(new ChunkPosition(0, -1, 0));
         ChunkGenerationHint surface = generator.classifyChunk(new ChunkPosition(0, 0, 0));
         ChunkGenerationHint high = generator.classifyChunk(new ChunkPosition(0, 1, 0));
 
         assertEquals(ChunkGenerationHint.Kind.UNIFORM, deep.kind());
         assertEquals(Blocks.STONE.getId(), deep.uniformBlockId());
+        assertEquals(ChunkGenerationHint.Kind.MATERIALIZED, topsoilBoundary.kind());
         assertEquals(ChunkGenerationHint.Kind.MATERIALIZED, surface.kind());
         assertEquals(ChunkGenerationHint.Kind.EMPTY, high.kind());
     }

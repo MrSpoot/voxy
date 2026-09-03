@@ -1,7 +1,6 @@
 package org.weaw.game.utils;
 
-import org.weaw.game.Chunk;
-import org.weaw.game.WorldBlockProvider;
+import org.weaw.game.ChunkMeshingSnapshot;
 
 /**
  * Compact voxel AO helpers for opaque faces.
@@ -26,8 +25,7 @@ public final class VoxelAmbientOcclusion {
     }
 
     public static int computeOpaqueAoPacked(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             int x,
             int y,
             int z,
@@ -43,16 +41,15 @@ public final class VoxelAmbientOcclusion {
             default -> throw new IllegalArgumentException("Unknown face direction: " + faceDirection);
         };
 
-        int ao0 = computeVertexAo(chunk, blockProvider, x, y, z, axes, -1, -1);
-        int ao1 = computeVertexAo(chunk, blockProvider, x, y, z, axes, 1, -1);
-        int ao2 = computeVertexAo(chunk, blockProvider, x, y, z, axes, -1, 1);
-        int ao3 = computeVertexAo(chunk, blockProvider, x, y, z, axes, 1, 1);
+        int ao0 = computeVertexAo(snapshot, x, y, z, axes, -1, -1);
+        int ao1 = computeVertexAo(snapshot, x, y, z, axes, 1, -1);
+        int ao2 = computeVertexAo(snapshot, x, y, z, axes, -1, 1);
+        int ao3 = computeVertexAo(snapshot, x, y, z, axes, 1, 1);
         return ao0 | (ao1 << 2) | (ao2 << 4) | (ao3 << 6);
     }
 
     private static int computeVertexAo(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             int x,
             int y,
             int z,
@@ -76,9 +73,9 @@ public final class VoxelAmbientOcclusion {
         int cornerY = side1Y + (axes.vy() * vSign);
         int cornerZ = side1Z + (axes.vz() * vSign);
 
-        boolean side1 = isOpaqueBlock(chunk, blockProvider, side1X, side1Y, side1Z);
-        boolean side2 = isOpaqueBlock(chunk, blockProvider, side2X, side2Y, side2Z);
-        boolean corner = isOpaqueBlock(chunk, blockProvider, cornerX, cornerY, cornerZ);
+        boolean side1 = isOpaqueBlock(snapshot, side1X, side1Y, side1Z);
+        boolean side2 = isOpaqueBlock(snapshot, side2X, side2Y, side2Z);
+        boolean corner = isOpaqueBlock(snapshot, cornerX, cornerY, cornerZ);
 
         if (side1 && side2) {
             return 3;
@@ -87,24 +84,16 @@ public final class VoxelAmbientOcclusion {
     }
 
     private static boolean isOpaqueBlock(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             int localX,
             int localY,
             int localZ
     ) {
-        short blockId;
-        if (chunk.isInBounds(localX, localY, localZ)) {
-            blockId = chunk.getBlock(localX, localY, localZ);
-        } else {
-            int worldX = chunk.getPosition().x * Chunk.SIZE + localX;
-            int worldY = chunk.getPosition().y * Chunk.SIZE + localY;
-            int worldZ = chunk.getPosition().z * Chunk.SIZE + localZ;
-            blockId = blockProvider.getBlockAtWorld(worldX, worldY, worldZ);
-        }
-
-        BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
-        return blockDefinition != null && blockDefinition.isOpaque() && blockDefinition != Blocks.AIR;
+        short blockId = snapshot.getBlock(localX, localY, localZ);
+        BlockDefinition blockDefinition = snapshot.blockCatalog().getBlock(blockId);
+        return blockDefinition != null
+                && blockDefinition.isOpaque()
+                && blockDefinition != snapshot.blockCatalog().air();
     }
 
     private record AxisVectors(int nx, int ny, int nz, int ux, int uy, int uz, int vx, int vy, int vz) {

@@ -10,6 +10,7 @@ import org.weaw.game.generation.ChunkClassificationCacheStats;
 import org.weaw.game.generation.ChunkGenerationHint;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.generation.WorldGenerator;
+import org.weaw.game.utils.BlockCatalog;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,6 +23,7 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,6 +37,7 @@ public class WorldStreamer implements AutoCloseable {
     private static final int INTERACTION_BUBBLE_RADIUS_CHUNKS = 1;
 
     private final ChunkManager chunkManager;
+    private final BlockCatalog blockCatalog;
     private final WorldBlockProvider blockProvider;
     private final WorldGenerator worldGenerator;
     private final WorldSettings settings;
@@ -58,6 +61,13 @@ public class WorldStreamer implements AutoCloseable {
     private volatile boolean unloadsEnabled = !Boolean.getBoolean("voxy.disableUnloads");
     private final AtomicLong asyncChunkGenerationCpuTimeNs = new AtomicLong();
     private final AtomicLong asyncChunkMeshCpuTimeNs = new AtomicLong();
+    private final AtomicLong asyncMeshingSnapshotCpuTimeNs = new AtomicLong();
+    private final AtomicLong asyncMeshingFaceClassificationCpuTimeNs = new AtomicLong();
+    private final AtomicLong asyncMeshingGreedyMergeCpuTimeNs = new AtomicLong();
+    private final AtomicLong asyncMeshingOutputBuildCpuTimeNs = new AtomicLong();
+    private final AtomicInteger asyncMeshingAmbientOcclusionFaces = new AtomicInteger();
+    private final AtomicInteger asyncMeshingSampledBlocks = new AtomicInteger();
+    private final AtomicInteger asyncCancelledBuilds = new AtomicInteger();
     private final AtomicInteger asyncChunksGenerated = new AtomicInteger();
     private final AtomicInteger asyncChunksMeshed = new AtomicInteger();
     private final AtomicInteger asyncChunksRemeshed = new AtomicInteger();
@@ -211,7 +221,8 @@ public class WorldStreamer implements AutoCloseable {
             ExecutorService executor,
             int workerCount
     ) {
-        this.chunkManager = chunkManager;
+        this.chunkManager = Objects.requireNonNull(chunkManager, "chunkManager");
+        this.blockCatalog = chunkManager.getBlockCatalog();
         this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
         this.settings = Objects.requireNonNull(settings, "settings");
@@ -292,6 +303,10 @@ public class WorldStreamer implements AutoCloseable {
         lastProfilingSnapshot = new WorldStreamerProfilingSnapshot(
                 asyncChunkGenerationCpuTimeNs.getAndSet(0L),
                 asyncChunkMeshCpuTimeNs.getAndSet(0L),
+                asyncMeshingSnapshotCpuTimeNs.getAndSet(0L),
+                asyncMeshingFaceClassificationCpuTimeNs.getAndSet(0L),
+                asyncMeshingGreedyMergeCpuTimeNs.getAndSet(0L),
+                asyncMeshingOutputBuildCpuTimeNs.getAndSet(0L),
                 frameProfiling.chunkPublishCpuTimeNs,
                 frameProfiling.chunkUnloadCpuTimeNs,
                 chunkManager.getChunkCount(),
@@ -303,7 +318,10 @@ public class WorldStreamer implements AutoCloseable {
                 frameProfiling.chunksUnloaded,
                 asyncChunksGenerated.getAndSet(0),
                 asyncChunksMeshed.getAndSet(0),
-                asyncChunksRemeshed.getAndSet(0)
+                asyncChunksRemeshed.getAndSet(0),
+                asyncMeshingAmbientOcclusionFaces.getAndSet(0),
+                asyncMeshingSampledBlocks.getAndSet(0),
+                asyncCancelledBuilds.getAndSet(0)
         );
         lastMemorySnapshot = createMemorySnapshot();
     }
@@ -324,6 +342,25 @@ public class WorldStreamer implements AutoCloseable {
         synchronized (taskLock) {
             return activeChunkTasks.size();
         }
+    }
+
+    public boolean isConverged() {
+        List<ChunkPosition> desiredPositions;
+        synchronized (taskLock) {
+            if (!activeChunkTasks.isEmpty() || !completedChunks.isEmpty()) {
+                return false;
+            }
+            desiredPositions = List.copyOf(desiredChunkPositions);
+        }
+        if (desiredPositions.isEmpty()) {
+            return false;
+        }
+        for (ChunkPosition position : desiredPositions) {
+            if (!chunkManager.hasChunk(position)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public WorldStreamerProfilingSnapshot getLastProfilingSnapshot() {
@@ -380,7 +417,7 @@ public class WorldStreamer implements AutoCloseable {
 
         cancelTask(position);
         try {
-            Chunk chunk = new Chunk(new Vector3i(position.x(), position.y(), position.z()));
+            Chunk chunk = new Chunk(new Vector3i(position.x(), position.y(), position.z()), blockCatalog);
             long generationStartNs = System.nanoTime();
             worldGenerator.generateChunkData(chunk);
             asyncChunkGenerationCpuTimeNs.addAndGet(System.nanoTime() - generationStartNs);
@@ -560,23 +597,57 @@ public class WorldStreamer implements AutoCloseable {
         }
 
         try {
+            throwIfTaskCancelled(task);
             Chunk chunk = chunkSnapshot;
             if (task.type() == ChunkTaskType.LOAD) {
-                chunk = new Chunk(new Vector3i(task.position().x(), task.position().y(), task.position().z()));
+                chunk = new Chunk(
+                        new Vector3i(task.position().x(), task.position().y(), task.position().z()),
+                        blockCatalog
+                );
                 long generationStartNs = System.nanoTime();
-                worldGenerator.generateChunkData(chunk);
-                asyncChunkGenerationCpuTimeNs.addAndGet(System.nanoTime() - generationStartNs);
+                try {
+                    worldGenerator.generateChunkData(chunk);
+                } finally {
+                    asyncChunkGenerationCpuTimeNs.addAndGet(System.nanoTime() - generationStartNs);
+                }
                 asyncChunksGenerated.incrementAndGet();
+                throwIfTaskCancelled(task);
             }
 
             long meshStartNs = System.nanoTime();
-            ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, blockProvider);
-            asyncChunkMeshCpuTimeNs.addAndGet(System.nanoTime() - meshStartNs);
+            ChunkMeshingResult meshingResult;
+            try {
+                meshingResult = ChunkMesher.buildMeshDataProfiled(
+                        chunk,
+                        blockProvider,
+                        () -> isTaskCancelled(task)
+                );
+            } finally {
+                asyncChunkMeshCpuTimeNs.addAndGet(System.nanoTime() - meshStartNs);
+            }
+            ChunkMeshingMetrics meshingMetrics = meshingResult.metrics();
+            asyncMeshingSnapshotCpuTimeNs.addAndGet(meshingMetrics.snapshotCpuTimeNs());
+            asyncMeshingFaceClassificationCpuTimeNs.addAndGet(meshingMetrics.faceClassificationCpuTimeNs());
+            asyncMeshingGreedyMergeCpuTimeNs.addAndGet(meshingMetrics.greedyMergeCpuTimeNs());
+            asyncMeshingOutputBuildCpuTimeNs.addAndGet(meshingMetrics.outputBuildCpuTimeNs());
+            asyncMeshingAmbientOcclusionFaces.addAndGet(meshingMetrics.ambientOcclusionFaceCount());
+            asyncMeshingSampledBlocks.addAndGet(meshingMetrics.sampledBlockCount());
             asyncChunksMeshed.incrementAndGet();
             if (task.type() == ChunkTaskType.REMESH) {
                 asyncChunksRemeshed.incrementAndGet();
             }
-            completedChunks.offer(new CompletedChunk(task.position(), task.token(), task.type(), chunk, meshData));
+            throwIfTaskCancelled(task);
+            completedChunks.offer(new CompletedChunk(
+                    task.position(),
+                    task.token(),
+                    task.type(),
+                    chunk,
+                    meshingResult.meshData()
+            ));
+        } catch (CancellationException exception) {
+            if (failTask(task)) {
+                asyncCancelledBuilds.incrementAndGet();
+            }
         } catch (Exception exception) {
             LOGGER.error("Chunk build failed for {} ({})", task.position(), task.type(), exception);
             failTask(task);
@@ -932,9 +1003,10 @@ public class WorldStreamer implements AutoCloseable {
         if (task.type() == ChunkTaskType.LOAD) {
             chunkManager.clearQueuedChunk(position);
         }
+        asyncCancelledBuilds.incrementAndGet();
     }
 
-    private void failTask(ChunkBuildTask task) {
+    private boolean failTask(ChunkBuildTask task) {
         boolean removed;
         synchronized (taskLock) {
             ChunkBuildTask currentTask = activeChunkTasks.get(task.position());
@@ -952,6 +1024,7 @@ public class WorldStreamer implements AutoCloseable {
         if (removed && task.type() == ChunkTaskType.REMESH) {
             markChunkDirty(task.position());
         }
+        return removed;
     }
 
     private boolean transitionTaskState(
@@ -1004,6 +1077,26 @@ public class WorldStreamer implements AutoCloseable {
     private boolean isDesiredChunkPosition(ChunkPosition position) {
         synchronized (taskLock) {
             return desiredChunkPositions.contains(position);
+        }
+    }
+
+    private boolean isTaskCancelled(ChunkBuildTask candidate) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+        synchronized (taskLock) {
+            ChunkBuildTask current = activeChunkTasks.get(candidate.position());
+            return current == null
+                    || current.token() != candidate.token()
+                    || current.state() != ChunkTaskState.BUILDING
+                    || (current.type() == ChunkTaskType.LOAD
+                    && !desiredChunkPositions.contains(current.position()));
+        }
+    }
+
+    private void throwIfTaskCancelled(ChunkBuildTask task) {
+        if (isTaskCancelled(task)) {
+            throw new CancellationException("Chunk build cancelled");
         }
     }
 

@@ -16,18 +16,11 @@ public class OpaqueChunkRenderPass extends AbstractChunkLayerPass {
 
     @Override
     protected void configureState(RenderContext context) {
-        var lighting = context.getLightingSettings();
         GLStateManager.setViewport(context.getViewportWidth(), context.getViewportHeight());
         GLStateManager.setDepthTest(true, true);
         GLStateManager.setBlending(false);
         GLStateManager.setCulling(true);
         GLStateManager.setFrontFace(GL_CCW);
-        GLStateManager.clear(
-                lighting.getSkyRed() * lighting.getSkyIntensity(),
-                lighting.getSkyGreen() * lighting.getSkyIntensity(),
-                lighting.getSkyBlue() * lighting.getSkyIntensity(),
-                1.0f
-        );
     }
 
     @Override

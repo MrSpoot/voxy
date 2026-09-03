@@ -18,13 +18,16 @@ import org.weaw.game.WorldSettings;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.utils.BlockDefinition;
+import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 import org.weaw.gameplay.GameplaySession;
 import org.weaw.gameplay.GameplaySettings;
 import org.weaw.gameplay.PlayerInput;
+import org.weaw.gameplay.PlayerRenderPose;
 import org.weaw.gameplay.TargetedBlock;
 import org.weaw.runtime.BenchmarkController;
+import org.weaw.runtime.BenchmarkPhase;
 import org.weaw.runtime.JfrProfileRecorder;
 import org.weaw.runtime.LaunchOptions;
 import org.weaw.runtime.FixedRateUpdateScheduler;
@@ -53,6 +56,7 @@ public class Game {
     private InputManager inputManager;
 
     private Renderer renderer;
+    private BlockCatalog blockCatalog;
     private Camera camera;
     private World world;
     private GameplaySession gameplaySession;
@@ -65,7 +69,6 @@ public class Game {
     private final FrameEventAccumulator<WorldProfilingSnapshot> worldUpdatesThisFrame = new FrameEventAccumulator<>();
 
     private double lastTime;
-    private double benchmarkElapsedSeconds;
     private float pendingMouseDeltaX;
     private float pendingMouseDeltaY;
     private int pendingScrollDelta;
@@ -96,6 +99,7 @@ public class Game {
     public void init(){
         LOGGER.info("Initializing");
         BlockRegistry.initialize();
+        blockCatalog = BlockRegistry.getDefaultCatalog();
 
         window = new Window(
                 "Voxy",
@@ -121,7 +125,7 @@ public class Game {
                 window,
                 world,
                 inputManager,
-                BlockRegistry.getRegisteredBlocks().values(),
+                blockCatalog.getRegisteredBlocks().values(),
                 launchOptions.transparentChunksEnabled()
         );
         renderer.create();
@@ -131,7 +135,7 @@ public class Game {
         window.setRenderer(renderer);
 
         camera = new Camera(90f,window.aspectRatio());
-        syncCameraToPlayer();
+        syncCameraToPlayer(1.0f);
         startProfilingIfNeeded();
         startRuntimeProfilingIfNeeded();
 
@@ -153,7 +157,7 @@ public class Game {
             long updateCpuTimeNs = System.nanoTime() - updateStartNs;
 
             long renderStartNs = System.nanoTime();
-            render();
+            render(deltaTime);
             long renderCpuTimeNs = System.nanoTime() - renderStartNs;
 
             long windowStartNs = System.nanoTime();
@@ -250,7 +254,7 @@ public class Game {
                 launchOptions.worldMemoryBudget(),
                 launchOptions.sparseChunkStreamingEnabled()
         );
-        return new World(new NoiseWorldGenerator(config), settings);
+        return new World(new NoiseWorldGenerator(config), settings, blockCatalog);
     }
 
     private void handleInputModes() {
@@ -288,29 +292,33 @@ public class Game {
         updateWorldStreaming(deltaTime);
         syncSelectedBlockHud();
         updateRenderInteractionTarget();
-        syncCameraToPlayer();
-        camera.setAspectRatio(window.aspectRatio());
     }
 
     private void updateBenchmark(float deltaTime) {
-        benchmarkElapsedSeconds += deltaTime;
-        BenchmarkController.BenchmarkFrame frame = benchmarkController.sample(benchmarkElapsedSeconds);
+        BenchmarkPhase previousPhase = benchmarkController.phase();
+        BenchmarkController.BenchmarkFrame frame = benchmarkController.update(deltaTime, world.isStreamingConverged());
+        if (frame.phase() != previousPhase) {
+            LOGGER.info("Benchmark phase: {} -> {}", previousPhase, frame.phase());
+        }
         gameServer.updateBenchmarkPose(frame.position(), frame.yaw(), frame.pitch());
         updateWorldStreaming(deltaTime);
         renderer.getContext().clearBlockOutlineTarget();
-        syncCameraToPlayer();
-        camera.setAspectRatio(window.aspectRatio());
 
-        if (benchmarkElapsedSeconds >= launchOptions.benchmark().durationSeconds()) {
+        if (benchmarkController.isComplete()) {
             LOGGER.info(
-                    "Benchmark completed after {} seconds, closing window",
-                    launchOptions.benchmark().durationSeconds()
+                    "Benchmark completed after {} seconds (loadingConverged={}, loadingDuration={}s), closing window",
+                    String.format(java.util.Locale.ROOT, "%.2f", benchmarkController.totalElapsedSeconds()),
+                    benchmarkController.loadingConverged(),
+                    String.format(java.util.Locale.ROOT, "%.2f", benchmarkController.loadingDurationSeconds())
             );
             window.close();
         }
     }
 
-    private void render() {
+    private void render(float deltaTime) {
+        syncCameraToPlayer(gameServer.getInterpolationAlpha());
+        camera.setAspectRatio(window.aspectRatio());
+        renderer.getContext().setFrameDeltaSeconds(Math.max(0.0f, deltaTime));
         renderer.render(camera);
     }
 
@@ -370,11 +378,12 @@ public class Game {
         pendingPlaceBlock = false;
     }
 
-    private void syncCameraToPlayer() {
+    private void syncCameraToPlayer(float interpolationAlpha) {
+        PlayerRenderPose renderPose = gameplaySession.sampleRenderPose(interpolationAlpha);
         camera.setPose(
-                gameplaySession.getPlayer().getPosition(),
-                gameplaySession.getPlayer().getYaw(),
-                gameplaySession.getPlayer().getPitch()
+                renderPose.position(),
+                renderPose.yaw(),
+                renderPose.pitch()
         );
     }
 
@@ -429,13 +438,15 @@ public class Game {
         }
 
         benchmarkController = new BenchmarkController(launchOptions.benchmark());
-        BenchmarkController.BenchmarkFrame initialFrame = benchmarkController.sample(0.0d);
+        BenchmarkController.BenchmarkFrame initialFrame = benchmarkController.currentFrame();
         gameplaySession.setPlayerPose(initialFrame.position(), initialFrame.yaw(), initialFrame.pitch());
-        benchmarkElapsedSeconds = 0.0d;
 
         LOGGER.info(
-                "Benchmark mode enabled: duration={}s seed={} renderDistance={} window={}x{}",
+                "Benchmark mode enabled: warmup={}s loadingTimeout={}s traversal={}s settle={}s seed={} renderDistance={} window={}x{}",
+                launchOptions.benchmark().warmupSeconds(),
+                launchOptions.benchmark().loadingTimeoutSeconds(),
                 launchOptions.benchmark().durationSeconds(),
+                launchOptions.benchmark().settleSeconds(),
                 launchOptions.benchmark().seed(),
                 launchOptions.benchmark().renderDistanceChunks(),
                 launchOptions.benchmark().windowWidth(),
@@ -524,6 +535,12 @@ public class Game {
 
         RuntimeFrameProfile frameProfile = new RuntimeFrameProfile(
                 renderStats.getFrameIndex(),
+                benchmarkController == null ? BenchmarkPhase.MANUAL.name() : benchmarkController.phase().name(),
+                benchmarkController == null ? 0.0d : benchmarkController.phaseElapsedSeconds(),
+                benchmarkController == null ? 0.0d : benchmarkController.totalElapsedSeconds(),
+                world.isStreamingConverged(),
+                benchmarkController != null && benchmarkController.loadingConverged(),
+                benchmarkController == null ? 0.0d : benchmarkController.loadingDurationSeconds(),
                 deltaTime > 0.0f ? 1.0d / deltaTime : 0.0d,
                 nanosToMillis(renderStats.getFrameCpuTimeNs()),
                 nanosToMillis(renderStats.getUpdateCpuTimeNs()),
@@ -535,6 +552,10 @@ public class Game {
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkGenerationCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshingSnapshotCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshingFaceClassificationCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshingGreedyMergeCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshingOutputBuildCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkPublishCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkUnloadCpuTimeNs)),
                 nanosToMillis(renderStats.getTotalPassCpuTimeNs()),
@@ -604,6 +625,9 @@ public class Game {
                 worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksGenerated),
                 worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksMeshed),
                 worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksRemeshed),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunkMeshingAmbientOcclusionFaces),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunkMeshingSampledBlocks),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::cancelledChunkBuilds),
                 worldMemorySnapshot.estimatedCpuResidentBytes(),
                 worldMemorySnapshot.maxCpuResidentBytes(),
                 worldMemorySnapshot.reservedInFlightBytes(),

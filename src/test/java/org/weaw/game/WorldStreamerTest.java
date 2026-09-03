@@ -10,7 +10,11 @@ import org.weaw.game.utils.Blocks;
 
 import java.util.List;
 import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -174,6 +178,60 @@ class WorldStreamerTest {
         }
     }
 
+    @Test
+    void movingCancelsAnInProgressBuildWithoutPublishingOrLeakingItsReservation() throws Exception {
+        ChunkManager manager = new ChunkManager();
+        BlockingFirstGenerator generator = new BlockingFirstGenerator();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        WorldSettings settings = new WorldSettings(
+                2,
+                new WorldHeightRange(0, 0),
+                WorldMemoryBudget.balanced(),
+                false
+        );
+        WorldStreamer streamer = new WorldStreamer(
+                manager,
+                generator,
+                generator,
+                settings,
+                1,
+                5,
+                2,
+                1,
+                1,
+                50_000_000L,
+                executor,
+                1
+        );
+
+        try {
+            streamer.update(new Vector3f(0.0f, 0.0f, 0.0f));
+            assertTrue(generator.firstBuildStarted.await(5, TimeUnit.SECONDS));
+
+            streamer.update(new Vector3f(Chunk.SIZE * 100.0f, 0.0f, 0.0f));
+            int cancellations = streamer.getLastProfilingSnapshot().cancelledChunkBuilds();
+            generator.allowFirstBuildToFinish.countDown();
+            assertTrue(generator.firstBuildFinished.await(5, TimeUnit.SECONDS));
+
+            long deadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (System.nanoTime() < deadlineNs) {
+                streamer.update(new Vector3f(Chunk.SIZE * 100.0f, 0.0f, 0.0f));
+                cancellations += streamer.getLastProfilingSnapshot().cancelledChunkBuilds();
+                if (cancellations > 0 && streamer.getPendingTaskCount() == 0) {
+                    break;
+                }
+                Thread.sleep(1L);
+            }
+
+            assertTrue(cancellations > 0);
+            assertFalse(manager.hasChunk(0, 0, 0));
+            assertEquals(0L, streamer.getLastMemorySnapshot().reservedInFlightBytes());
+        } finally {
+            generator.allowFirstBuildToFinish.countDown();
+            streamer.close();
+        }
+    }
+
     private record FlatGenerator(short blockId) implements WorldGenerator {
         @Override
         public void generateChunkData(Chunk chunk) {
@@ -223,6 +281,38 @@ class WorldStreamerTest {
         @Override
         public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
             return Blocks.AIR.getId();
+        }
+    }
+
+    private static final class BlockingFirstGenerator implements WorldGenerator, WorldBlockProvider {
+        private final CountDownLatch firstBuildStarted = new CountDownLatch(1);
+        private final CountDownLatch allowFirstBuildToFinish = new CountDownLatch(1);
+        private final CountDownLatch firstBuildFinished = new CountDownLatch(1);
+        private final AtomicInteger generationCount = new AtomicInteger();
+
+        @Override
+        public void generateChunkData(Chunk chunk) {
+            if (generationCount.incrementAndGet() != 1) {
+                return;
+            }
+            firstBuildStarted.countDown();
+            try {
+                allowFirstBuildToFinish.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            } finally {
+                firstBuildFinished.countDown();
+            }
+        }
+
+        @Override
+        public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
+            return Blocks.AIR.getId();
+        }
+
+        @Override
+        public int getSurfaceHeight(int worldX, int worldZ) {
+            return 0;
         }
     }
 

@@ -51,7 +51,7 @@ Le benchmark fixe :
 - la trajectoire camera/joueur
 - la distance de rendu
 - la resolution de fenetre
-- la duree du run
+- la duree de chaque phase
 
 Commande par defaut :
 
@@ -61,7 +61,10 @@ java -jar target/voxy-0.0.1.jar --benchmark
 
 Comportement par defaut :
 
-- duree : `30s`
+- warm-up : `5s`
+- chargement stationnaire : jusqu'a convergence, avec timeout a `60s`
+- parcours deterministe : `30s`
+- stabilisation finale : `10s`
 - seed : `1052002`
 - spawn : `16,48,48`
 - render distance : `16`
@@ -73,7 +76,7 @@ Comportement par defaut :
 Options utiles :
 
 ```powershell
-java -jar target/voxy-0.0.1.jar --benchmark --benchmark-duration=45 --benchmark-seed=12345 --benchmark-render-distance=20 --benchmark-window=1920x1080 --benchmark-spawn=32,64,32
+java -jar target/voxy-0.0.1.jar --benchmark --benchmark-warmup=5 --benchmark-loading-timeout=60 --benchmark-duration=45 --benchmark-settle=10 --benchmark-seed=12345 --benchmark-render-distance=20 --benchmark-window=1920x1080 --benchmark-spawn=32,64,32
 ```
 
 Budgets memoire et hauteur mondiale :
@@ -146,6 +149,31 @@ Le fichier `runtime-summary.json` ajoute :
 - timings normalises par mise a jour monde dans `stage_per_world_update_ms`
 - flags d'isolation actifs pendant le run
 - repartition du stage dominant hors warm-up entre generation, meshing et lumiere
+- temps de convergence et statistiques separees pour `WARMUP`, `LOADING`, `TRAVERSAL` et `SETTLE`
+- detail du meshing : snapshot, classification des faces, fusion greedy et construction des buffers
+- nombre de builds annules avant publication
+
+## Matrice de reference
+
+Le script Windows execute les distances `16`, `24` et `32`, avec et sans
+streaming sparse, trois fois chacune. Chaque run conserve son JFR, son CSV et
+son resume JSON dans un dossier distinct :
+
+```powershell
+.\scripts\run-benchmark-matrix.ps1
+```
+
+Pour valider rapidement le runner sans lancer la matrice complete :
+
+```powershell
+.\scripts\run-benchmark-matrix.ps1 -RenderDistances 16 -Repeats 1 -WarmupSeconds 0 -LoadingTimeoutSeconds 10 -TraversalSeconds 2 -SettleSeconds 1
+```
+
+Une optimisation du meshing n'est retenue que si la mediane de
+`chunk_mesh_ms` progresse d'au moins 10 % sur les trois repetitions, sans
+divergence des tests de surface visible LEGACY/GREEDY. Les travaux GPU plus
+avances restent differes tant que la memoire GPU est sous 75 % du budget et
+que le p99 GPU reste sous 8 ms.
 
 ## Comparer deux runs
 

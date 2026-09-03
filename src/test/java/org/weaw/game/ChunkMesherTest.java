@@ -6,7 +6,12 @@ import org.junit.jupiter.api.Test;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.CancellationException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ChunkMesherTest {
     @BeforeAll
@@ -67,6 +72,58 @@ class ChunkMesherTest {
         }
     }
 
+    @Test
+    void legacyAndGreedyProduceTheSameVisibleOpaqueSurface() {
+        ChunkMesher.MeshingMode previousMode = ChunkMesher.getMeshingMode();
+        boolean previousAmbientOcclusion = ChunkMesher.isAmbientOcclusionEnabled();
+        int previousStoneTextureIndex = Blocks.STONE.getTextureIndex();
+        int previousLeavesTextureIndex = Blocks.LEAVES.getTextureIndex();
+        int previousGlassTextureIndex = Blocks.GLASS.getTextureIndex();
+        try {
+            ChunkMesher.setAmbientOcclusionEnabled(false);
+            Blocks.STONE.setTextureIndex(0);
+            Blocks.LEAVES.setTextureIndex(1);
+            Blocks.GLASS.setTextureIndex(2);
+            Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
+            chunk.setBlock(0, 0, 0, Blocks.STONE);
+            chunk.setBlock(1, 0, 0, Blocks.STONE);
+            chunk.setBlock(1, 1, 0, Blocks.STONE);
+            chunk.setBlock(1, 1, 1, Blocks.STONE);
+            chunk.setBlock(5, 5, 5, Blocks.LEAVES);
+            chunk.setBlock(5, 6, 5, Blocks.LEAVES);
+            chunk.setBlock(8, 8, 8, Blocks.GLASS);
+            chunk.setBlock(9, 8, 8, Blocks.GLASS);
+            WorldBlockProvider provider = (worldX, worldY, worldZ) -> worldX < 0
+                    ? Blocks.STONE.getId()
+                    : Blocks.AIR.getId();
+
+            ChunkMesher.setMeshingMode(ChunkMesher.MeshingMode.LEGACY);
+            ChunkMeshData legacy = ChunkMesher.buildMeshData(chunk, provider);
+            ChunkMesher.setMeshingMode(ChunkMesher.MeshingMode.GREEDY);
+            ChunkMeshData greedy = ChunkMesher.buildMeshData(chunk, provider);
+
+            assertEquals(expandSurface(legacy.opaque()), expandSurface(greedy.opaque()));
+            assertEquals(expandSurface(legacy.cutout()), expandSurface(greedy.cutout()));
+            assertEquals(expandSurface(legacy.transparent()), expandSurface(greedy.transparent()));
+        } finally {
+            ChunkMesher.setMeshingMode(previousMode);
+            ChunkMesher.setAmbientOcclusionEnabled(previousAmbientOcclusion);
+            Blocks.STONE.setTextureIndex(previousStoneTextureIndex);
+            Blocks.LEAVES.setTextureIndex(previousLeavesTextureIndex);
+            Blocks.GLASS.setTextureIndex(previousGlassTextureIndex);
+        }
+    }
+
+    @Test
+    void profiledMeshingHonorsCancellation() {
+        Chunk chunk = new Chunk(new Vector3i());
+        assertThrows(CancellationException.class, () -> ChunkMesher.buildMeshDataProfiled(
+                chunk,
+                (x, y, z) -> Blocks.AIR.getId(),
+                () -> true
+        ));
+    }
+
     private static void assertSingleBlockFaceCount(ChunkMesher.MeshingMode mode) {
         ChunkMesher.setMeshingMode(mode);
         Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
@@ -85,5 +142,37 @@ class ChunkMesherTest {
         assertEquals(6, meshData.opaque().faceCount(), mode + " should expose each side of one block");
         assertEquals(0, meshData.cutout().faceCount());
         assertEquals(0, meshData.transparent().faceCount());
+    }
+
+    private static Set<String> expandSurface(ChunkMeshData.LayerMeshData layer) {
+        Set<String> surface = new HashSet<>();
+        for (int faceIndex = 0; faceIndex < layer.faceCount(); faceIndex++) {
+            int encoded = layer.faceData()[faceIndex * 2];
+            int x = encoded & 0x1F;
+            int y = (encoded >>> 5) & 0x1F;
+            int z = (encoded >>> 10) & 0x1F;
+            int direction = (encoded >>> 15) & 0x07;
+            int width = ((encoded >>> 18) & 0x1F) + 1;
+            int height = ((encoded >>> 23) & 0x1F) + 1;
+            for (int v = 0; v < height; v++) {
+                for (int u = 0; u < width; u++) {
+                    int faceX = x;
+                    int faceY = y;
+                    int faceZ = z;
+                    if (direction <= 1) {
+                        faceY += v;
+                        faceZ += u;
+                    } else if (direction <= 3) {
+                        faceX += u;
+                        faceZ += v;
+                    } else {
+                        faceX += u;
+                        faceY += v;
+                    }
+                    surface.add(direction + ":" + faceX + ":" + faceY + ":" + faceZ);
+                }
+            }
+        }
+        return surface;
     }
 }

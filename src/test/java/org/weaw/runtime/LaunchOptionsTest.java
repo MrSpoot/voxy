@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LaunchOptionsTest {
     private static final long MIB = 1024L * 1024L;
@@ -34,5 +35,22 @@ class LaunchOptionsTest {
         LaunchOptions options = LaunchOptions.from(new String[]{"--disable-sparse-streaming"});
 
         assertFalse(options.sparseChunkStreamingEnabled());
+    }
+
+    @Test
+    void parsesBenchmarkPhaseDurations() {
+        LaunchOptions options = LaunchOptions.from(new String[]{
+                "--benchmark",
+                "--benchmark-warmup=3",
+                "--benchmark-loading-timeout=45",
+                "--benchmark-duration=20",
+                "--benchmark-settle=7"
+        });
+
+        assertTrue(options.benchmarkEnabled());
+        assertEquals(3, options.benchmark().warmupSeconds());
+        assertEquals(45, options.benchmark().loadingTimeoutSeconds());
+        assertEquals(20, options.benchmark().durationSeconds());
+        assertEquals(7, options.benchmark().settleSeconds());
     }
 }

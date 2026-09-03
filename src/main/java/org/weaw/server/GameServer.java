@@ -39,6 +39,7 @@ public class GameServer implements AutoCloseable {
         int ticks = 0;
         PlayerInput tickInput = Objects.requireNonNull(input, "input");
         while (accumulatedTimeSeconds >= fixedDeltaTime && ticks < MAX_TICKS_PER_FRAME) {
+            gameplaySession.beginSimulationTick();
             gameplaySession.update(fixedDeltaTime, tickInput);
             accumulatedTimeSeconds -= fixedDeltaTime;
             tickIndex++;
@@ -69,6 +70,10 @@ public class GameServer implements AutoCloseable {
 
     public float getFixedDeltaTime() {
         return fixedDeltaTime;
+    }
+
+    public float getInterpolationAlpha() {
+        return (float) Math.max(0.0d, Math.min(1.0d, accumulatedTimeSeconds / fixedDeltaTime));
     }
 
     public long getTickIndex() {

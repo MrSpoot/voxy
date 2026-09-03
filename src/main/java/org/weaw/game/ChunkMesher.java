@@ -4,6 +4,7 @@ import org.weaw.game.utils.BinaryChunkMeshBuilder;
 import org.weaw.game.utils.LegacyChunkMeshBuilder;
 
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
 
 public final class ChunkMesher {
     public enum MeshingMode {
@@ -19,20 +20,36 @@ public final class ChunkMesher {
     }
 
     public static ChunkMeshData buildMeshData(Chunk chunk, WorldBlockProvider blockProvider) {
-        return switch (meshingMode) {
+        return buildMeshDataProfiled(chunk, blockProvider, () -> false).meshData();
+    }
+
+    public static ChunkMeshingResult buildMeshDataProfiled(
+            Chunk chunk,
+            WorldBlockProvider blockProvider,
+            BooleanSupplier cancelled
+    ) {
+        ChunkMeshingMetrics.Recorder metrics = new ChunkMeshingMetrics.Recorder();
+        long snapshotStartNs = System.nanoTime();
+        ChunkMeshingSnapshot snapshot = ChunkMeshingSnapshot.capture(chunk, blockProvider, cancelled);
+        metrics.recordSnapshot(System.nanoTime() - snapshotStartNs, snapshot.sampledBlockCount());
+
+        ChunkMeshData meshData = switch (meshingMode) {
             case GREEDY -> BinaryChunkMeshBuilder.buildMeshData(
-                    chunk,
-                    blockProvider,
+                    snapshot,
                     ambientOcclusionEnabled,
-                    transparentChunksEnabled
+                    transparentChunksEnabled,
+                    cancelled,
+                    metrics
             );
             case LEGACY -> LegacyChunkMeshBuilder.buildMeshData(
-                    chunk,
-                    blockProvider,
+                    snapshot,
                     ambientOcclusionEnabled,
-                    transparentChunksEnabled
+                    transparentChunksEnabled,
+                    cancelled,
+                    metrics
             );
         };
+        return new ChunkMeshingResult(meshData, metrics.snapshot());
     }
 
     public static MeshingMode getMeshingMode() {

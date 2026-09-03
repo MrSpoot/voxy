@@ -27,6 +27,14 @@ public class GameplaySession {
         }
     }
 
+    public void beginSimulationTick() {
+        player.beginSimulationTick();
+    }
+
+    public PlayerRenderPose sampleRenderPose(float interpolationAlpha) {
+        return player.sampleRenderPose(interpolationAlpha);
+    }
+
     public Player getPlayer() {
         return player;
     }

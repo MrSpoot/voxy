@@ -13,7 +13,6 @@ import org.lwjgl.glfw.GLFW;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.RenderStats;
-import org.weaw.engine.graphics.utils.ChunkFaceArena;
 import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
@@ -23,7 +22,6 @@ import org.weaw.game.World;
 import org.weaw.game.WorldMemorySnapshot;
 import org.weaw.game.WorldSettings;
 import org.weaw.game.utils.BlockDefinition;
-import org.weaw.game.utils.BlockRegistry;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -91,8 +89,8 @@ public class DebugImGuiPass implements RenderPass {
     private WindowRect resourcesRect = WindowRect.of(770.0f, 170.0f, 360.0f, 155.0f);
     private WindowRect lightingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 285.0f);
     private WindowRect lightDebugRect = WindowRect.of(770.0f, 635.0f, 360.0f, 210.0f);
-    private WindowRect colorGradingRect = WindowRect.of(770.0f, 860.0f, 360.0f, 270.0f);
-    private WindowRect fogRect = WindowRect.of(770.0f, 1145.0f, 360.0f, 265.0f);
+    private WindowRect colorGradingRect = WindowRect.of(770.0f, 860.0f, 360.0f, 420.0f);
+    private WindowRect fogRect = WindowRect.of(770.0f, 1295.0f, 360.0f, 265.0f);
     private WindowRect jvmRect = WindowRect.of(10.0f, 335.0f, 360.0f, 110.0f);
     private WindowRect deviceRect = WindowRect.of(390.0f, 555.0f, 360.0f, 150.0f);
     private WindowRect passBreakdownRect = WindowRect.of(770.0f, 530.0f, 460.0f, 230.0f);
@@ -368,11 +366,11 @@ public class DebugImGuiPass implements RenderPass {
 
         applyWindowLayout(arenaRect, 0.88f);
         ImGui.begin("Render Chunk Arenas");
-        renderArenaStats("Opaque", context.getOpaqueChunkFaceArena());
+        ChunkArenaDebugPanel.render("Opaque", context.getOpaqueChunkFaceArena());
         ImGui.separator();
-        renderArenaStats("Cutout", context.getCutoutChunkFaceArena());
+        ChunkArenaDebugPanel.render("Cutout", context.getCutoutChunkFaceArena());
         ImGui.separator();
-        renderArenaStats("Transparent", context.getTransparentChunkFaceArena());
+        ChunkArenaDebugPanel.render("Transparent", context.getTransparentChunkFaceArena());
         ImGui.end();
     }
 
@@ -449,7 +447,7 @@ public class DebugImGuiPass implements RenderPass {
         int blockY = context.getBlockOutlineTargetY();
         int blockZ = context.getBlockOutlineTargetZ();
         short blockId = world.getBlockAtWorld(blockX, blockY, blockZ);
-        BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+        BlockDefinition blockDefinition = world.getBlockCatalog().getBlock(blockId);
         short packedLight = world.getPackedLightAtWorld(blockX, blockY, blockZ);
         int red = ChunkLighting.getRed(packedLight);
         int green = ChunkLighting.getGreen(packedLight);
@@ -511,12 +509,41 @@ public class DebugImGuiPass implements RenderPass {
         if (ImGui.checkbox("Tone Mapping", toneMappingEnabled)) {
             settings.setToneMappingEnabled(toneMappingEnabled.get());
         }
+        ImBoolean autoExposureEnabled = new ImBoolean(settings.isAutoExposureEnabled());
+        if (ImGui.checkbox("Auto Exposure", autoExposureEnabled)) {
+            settings.setAutoExposureEnabled(autoExposureEnabled.get());
+        }
         ImBoolean enabled = new ImBoolean(settings.isEnabled());
         if (ImGui.checkbox("Color Grading", enabled)) {
             settings.setEnabled(enabled.get());
         }
         ImGui.separator();
-        ImGui.sliderFloat("Exposure", settings.exposureRef(), -2.0f, 2.0f);
+        ImGui.sliderFloat(
+                settings.isAutoExposureEnabled() ? "Exposure compensation (EV)" : "Exposure (EV)",
+                settings.exposureRef(),
+                -4.0f,
+                4.0f
+        );
+        if (settings.isAutoExposureEnabled()) {
+            float maximumExposureEv = settings.getMaximumExposureEv();
+            ImGui.sliderFloat(
+                    "Minimum exposure (EV)",
+                    settings.minimumExposureEvRef(),
+                    Math.min(-8.0f, maximumExposureEv),
+                    maximumExposureEv
+            );
+            float minimumExposureEv = settings.getMinimumExposureEv();
+            ImGui.sliderFloat(
+                    "Maximum exposure (EV)",
+                    settings.maximumExposureEvRef(),
+                    minimumExposureEv,
+                    Math.max(8.0f, minimumExposureEv)
+            );
+            ImGui.sliderFloat("Target luminance", settings.targetLuminanceRef(), 0.01f, 1.0f);
+            ImGui.sliderFloat("Darken speed", settings.darkenAdaptationSpeedRef(), 0.1f, 10.0f);
+            ImGui.sliderFloat("Brighten speed", settings.brightenAdaptationSpeedRef(), 0.1f, 10.0f);
+            settings.sanitizeAutoExposure();
+        }
         ImGui.sliderFloat("Contrast", settings.contrastRef(), 0.5f, 2.0f);
         ImGui.sliderFloat("Saturation", settings.saturationRef(), 0.0f, 2.5f);
         ImGui.sliderFloat("Vibrance", settings.vibranceRef(), -1.0f, 1.0f);
@@ -779,7 +806,7 @@ public class DebugImGuiPass implements RenderPass {
             resourcesRect = WindowRect.of(rightX, top + 135.0f, columnWidth, 155.0f);
             lightingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
             lightDebugRect = WindowRect.of(rightX, lightingRect.bottom() + rowGap, columnWidth, 210.0f);
-            colorGradingRect = WindowRect.of(rightX, lightDebugRect.bottom() + rowGap, columnWidth, 270.0f);
+            colorGradingRect = WindowRect.of(rightX, lightDebugRect.bottom() + rowGap, columnWidth, 420.0f);
             fogRect = WindowRect.of(rightX, colorGradingRect.bottom() + rowGap, columnWidth, 265.0f);
             chunkProfilingRect = WindowRect.of(rightX, fogRect.bottom() + rowGap, columnWidth, 200.0f);
             float passHeight = Math.max(160.0f, viewportHeight - (chunkProfilingRect.bottom() + rowGap + margin));
@@ -801,7 +828,7 @@ public class DebugImGuiPass implements RenderPass {
             resourcesRect = WindowRect.of(leftX, jvmRect.bottom() + rowGap, columnWidth, 155.0f);
             lightingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
             lightDebugRect = WindowRect.of(leftX, lightingRect.bottom() + rowGap, columnWidth, 210.0f);
-            colorGradingRect = WindowRect.of(leftX, lightDebugRect.bottom() + rowGap, columnWidth, 270.0f);
+            colorGradingRect = WindowRect.of(leftX, lightDebugRect.bottom() + rowGap, columnWidth, 420.0f);
             deviceRect = WindowRect.of(rightX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
             fogRect = WindowRect.of(rightX, deviceRect.bottom() + rowGap, columnWidth, 265.0f);
             chunkProfilingRect = WindowRect.of(leftX, Math.max(colorGradingRect.bottom(), fogRect.bottom()) + rowGap, contentWidth, 200.0f);
@@ -821,7 +848,7 @@ public class DebugImGuiPass implements RenderPass {
         resourcesRect = WindowRect.of(margin, arenaRect.bottom() + rowGap, fullWidth, 155.0f);
         lightingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 285.0f);
         lightDebugRect = WindowRect.of(margin, lightingRect.bottom() + rowGap, fullWidth, 210.0f);
-        colorGradingRect = WindowRect.of(margin, lightDebugRect.bottom() + rowGap, fullWidth, 270.0f);
+        colorGradingRect = WindowRect.of(margin, lightDebugRect.bottom() + rowGap, fullWidth, 420.0f);
         fogRect = WindowRect.of(margin, colorGradingRect.bottom() + rowGap, fullWidth, 265.0f);
         jvmRect = WindowRect.of(margin, fogRect.bottom() + rowGap, fullWidth, 110.0f);
         deviceRect = WindowRect.of(margin, jvmRect.bottom() + rowGap, fullWidth, 150.0f);
@@ -829,30 +856,6 @@ public class DebugImGuiPass implements RenderPass {
         float passY = chunkProfilingRect.bottom() + rowGap;
         float passHeight = Math.max(180.0f, viewportHeight - (passY + margin));
         passBreakdownRect = WindowRect.of(margin, passY, fullWidth, passHeight);
-    }
-
-    private void renderArenaStats(String label, ChunkFaceArena arena) {
-        ImGui.text(label);
-        if (arena == null) {
-            ImGui.text("Arena not initialized");
-            return;
-        }
-
-        long capacityBytes = (long) arena.getCapacityInts() * Integer.BYTES;
-        long reservedBytes = arena.getReservedInts() * Integer.BYTES;
-        long payloadBytes = arena.getPayloadInts() * Integer.BYTES;
-        long freeBytes = arena.getFreeInts() * Integer.BYTES;
-
-        ImGui.text(String.format("Capacity: %s", formatBytes(capacityBytes)));
-        ImGui.text(String.format("Reserved: %s (%.1f%%)", formatBytes(reservedBytes), arena.getReservationRatio() * 100.0f));
-        ImGui.text(String.format("Payload: %s (%.1f%%)", formatBytes(payloadBytes), arena.getPayloadRatio() * 100.0f));
-        ImGui.text(String.format("Free: %s", formatBytes(freeBytes)));
-        ImGui.text(String.format("Allocations: %d | Free spans: %d",
-                arena.getActiveAllocationCount(),
-                arena.getFreeSpanCount()));
-        ImGui.text(String.format("Largest free span: %s | Fragmentation: %.1f%%",
-                formatBytes((long) arena.getLargestFreeSpanInts() * Integer.BYTES),
-                arena.getFragmentationRatio() * 100.0f));
     }
 
     private void toggleMouseLock() {

@@ -38,6 +38,9 @@ public record LaunchOptions(
                 benchmarkEnabled,
                 parseLong(cliOptions, "benchmark-seed", "voxy.benchmark.seed", defaults.seed()),
                 parseInt(cliOptions, "benchmark-duration", "voxy.benchmark.durationSeconds", defaults.durationSeconds()),
+                parseNonNegativeInt(cliOptions, "benchmark-warmup", "voxy.benchmark.warmupSeconds", defaults.warmupSeconds()),
+                parsePositiveInt(cliOptions, "benchmark-loading-timeout", "voxy.benchmark.loadingTimeoutSeconds", defaults.loadingTimeoutSeconds()),
+                parseNonNegativeInt(cliOptions, "benchmark-settle", "voxy.benchmark.settleSeconds", defaults.settleSeconds()),
                 parseInt(cliOptions, "benchmark-render-distance", "voxy.benchmark.renderDistanceChunks", defaults.renderDistanceChunks()),
                 parseWindowWidth(cliOptions, defaults.windowWidth()),
                 parseWindowHeight(cliOptions, defaults.windowHeight()),
@@ -193,6 +196,16 @@ public record LaunchOptions(
     ) {
         int value = parseInt(cliOptions, cliKey, propertyKey, defaultValue);
         return value > 0 ? value : defaultValue;
+    }
+
+    private static int parseNonNegativeInt(
+            Map<String, String> cliOptions,
+            String cliKey,
+            String propertyKey,
+            int defaultValue
+    ) {
+        int value = parseInt(cliOptions, cliKey, propertyKey, defaultValue);
+        return value >= 0 ? value : defaultValue;
     }
 
     private static Vector3f parseVector3(

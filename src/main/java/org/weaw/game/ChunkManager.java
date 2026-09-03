@@ -1,7 +1,8 @@
 package org.weaw.game;
 
 import org.weaw.game.utils.BlockDefinition;
-import org.weaw.game.utils.Blocks;
+import org.weaw.game.utils.BlockCatalog;
+import org.weaw.game.utils.BlockRegistry;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -13,6 +14,7 @@ import java.util.Set;
 
 public class ChunkManager {
     private static final int MAX_RETAINED_UPLOAD_DELTAS = 4096;
+    private final BlockCatalog blockCatalog;
 
     private final Map<ChunkPosition, Chunk> chunks = new LinkedHashMap<>();
     private final Map<ChunkPosition, ChunkMeshData> chunkMeshes = new LinkedHashMap<>();
@@ -31,7 +33,20 @@ public class ChunkManager {
     private long estimatedResidentBytes;
     private int compactLightingChunkCount;
 
+    public ChunkManager() {
+        this(BlockRegistry.getDefaultCatalog());
+    }
+
+    public ChunkManager(BlockCatalog blockCatalog) {
+        this.blockCatalog = java.util.Objects.requireNonNull(blockCatalog, "blockCatalog");
+    }
+
+    public BlockCatalog getBlockCatalog() {
+        return blockCatalog;
+    }
+
     public synchronized void addChunk(Chunk chunk) {
+        requireCompatibleCatalog(chunk);
         ChunkPosition position = ChunkPosition.fromChunk(chunk);
         chunks.put(position, chunk);
         refreshResidentEstimate(position);
@@ -84,7 +99,7 @@ public class ChunkManager {
 
         Chunk chunk = chunks.get(new ChunkPosition(chunkX, chunkY, chunkZ));
         if (chunk == null) {
-            return Blocks.AIR.getId();
+            return blockCatalog.air().getId();
         }
 
         int localX = Math.floorMod(worldX, Chunk.SIZE);
@@ -174,6 +189,7 @@ public class ChunkManager {
     }
 
     public synchronized void publishBuiltChunk(Chunk chunk, ChunkMeshData meshData) {
+        requireCompatibleCatalog(chunk);
         ChunkPosition position = ChunkPosition.fromChunk(chunk);
         chunks.put(position, chunk);
         chunkMeshes.put(position, meshData);
@@ -465,5 +481,11 @@ public class ChunkManager {
         ADDED,
         UPDATED,
         REMOVED
+    }
+
+    private void requireCompatibleCatalog(Chunk chunk) {
+        if (chunk.getBlockCatalog() != blockCatalog) {
+            throw new IllegalArgumentException("Chunk belongs to a different block catalogue");
+        }
     }
 }

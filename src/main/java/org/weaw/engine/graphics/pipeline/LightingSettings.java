@@ -4,17 +4,19 @@ public class LightingSettings {
     private final boolean[] enabled = {true};
 
     private final float[] ambientColor = {0.60f, 0.66f, 0.76f};
-    private final float[] ambientIntensity = {0.28f};
+    private final float[] ambientIntensity = {0.05f};
 
     private final float[] sunColor = {1.0f, 0.90f, 0.72f};
-    private final float[] sunIntensity = {1.45f};
-
-    private final float[] sunDirection = {-0.35f, 0.86f, -0.28f};
+    private final float[] sunIntensity = {0.85f};
 
     private final float[] skyColor = {0.47f, 0.68f, 0.90f};
-    private final float[] skyIntensity = {0.8f};
+    private final float[] skyIntensity = {0.15f};
+
+    private final float[] blockLightIntensity = {1.0f};
+
+    private final float[] sunDirection = {-0.35f, 0.86f, -0.28f};
     private final boolean[] blockLightEnabled = {true};
-    private final float[] blockLightIntensity = {1.15f};
+
 
     public boolean isEnabled() {
         return enabled[0];
@@ -114,23 +116,28 @@ public class LightingSettings {
 
     public void reset() {
         enabled[0] = true;
-        ambientColor[0] = 0.72f;
-        ambientColor[1] = 0.82f;
-        ambientColor[2] = 1.0f;
-        ambientIntensity[0] = 0.38f;
+
+        ambientColor[0] = 0.60f;
+        ambientColor[1] = 0.66f;
+        ambientColor[2] = 0.76f;
+        ambientIntensity[0] = 0.08f;
+
         sunColor[0] = 1.0f;
-        sunColor[1] = 0.94f;
-        sunColor[2] = 0.82f;
-        sunIntensity[0] = 1.85f;
+        sunColor[1] = 0.90f;
+        sunColor[2] = 0.72f;
+        sunIntensity[0] = 1.0f;
+
         sunDirection[0] = -0.35f;
         sunDirection[1] = 0.86f;
         sunDirection[2] = -0.28f;
-        skyColor[0] = 0.53f;
-        skyColor[1] = 0.78f;
-        skyColor[2] = 0.92f;
-        skyIntensity[0] = 1.25f;
+
+        skyColor[0] = 0.47f;
+        skyColor[1] = 0.68f;
+        skyColor[2] = 0.90f;
+        skyIntensity[0] = 0.25f;
+
         blockLightEnabled[0] = true;
-        blockLightIntensity[0] = 1.15f;
+        blockLightIntensity[0] = 1.0f;
     }
 
     public boolean isBlockLightEnabled() {

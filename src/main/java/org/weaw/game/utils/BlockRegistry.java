@@ -3,111 +3,78 @@ package org.weaw.game.utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collections;
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
+/** Compatibility facade. Runtime code should receive a {@link BlockCatalog}. */
 public final class BlockRegistry {
     private static final Logger LOGGER = LoggerFactory.getLogger(BlockRegistry.class);
-
-    private static final Map<String, BlockDefinition> BLOCKS_BY_STABLE_ID = new LinkedHashMap<>();
-    private static final Map<Short, BlockDefinition> BLOCKS_BY_RUNTIME_ID = new LinkedHashMap<>();
-    private static boolean initialized = false;
-    private static short nextRuntimeId = 0;
+    private static volatile BlockCatalog defaultCatalog;
+    private static final List<BlockDefinition> pendingRegistrations = new ArrayList<>();
 
     private BlockRegistry() {
     }
 
-    public static void initialize() {
-        if (initialized) {
+    public static synchronized void initialize() {
+        if (defaultCatalog != null) {
             return;
         }
-
-        register(Blocks.AIR);
-        register(Blocks.GRASS_BLOCK);
-        register(Blocks.DIRT);
-        register(Blocks.STONE);
-        register(Blocks.SAND);
-        register(Blocks.WOOD_LOG);
-        register(Blocks.TEST);
-        register(Blocks.RED_LAMP);
-        register(Blocks.GREEN_LAMP);
-        register(Blocks.BLUE_LAMP);
-        register(Blocks.WHITE_LAMP);
-        register(Blocks.LEAVES);
-        register(Blocks.GLASS);
-        register(Blocks.WATER);
-
-        initialized = true;
-        LOGGER.info("Block registry initialized with {} blocks", BLOCKS_BY_STABLE_ID.size());
+        defaultCatalog = BlockCatalog.createDefault(pendingRegistrations);
+        pendingRegistrations.clear();
+        defaultCatalog.getRegisteredBlocks().forEach((stableId, block) ->
+                LOGGER.info("Registered block {} with runtimeId {}", stableId, block.getId()));
+        LOGGER.info("Block registry initialized with {} blocks", defaultCatalog.getRegisteredBlocks().size());
     }
 
     public static boolean isInitialized() {
-        return initialized;
+        return defaultCatalog != null;
     }
 
-    public static void register(BlockDefinition blockDefinition) {
-        if (initialized) {
+    /** @deprecated Build a {@link BlockCatalog} before starting the world. */
+    @Deprecated(forRemoval = true)
+    public static synchronized void register(BlockDefinition blockDefinition) {
+        Objects.requireNonNull(blockDefinition, "blockDefinition");
+        if (defaultCatalog != null) {
             throw new IllegalStateException("Cannot register new blocks after registry initialization");
         }
-
         String stableId = blockDefinition.getStableId();
-        validateStableId(stableId);
-
-        if (BLOCKS_BY_STABLE_ID.containsKey(stableId)) {
+        if (stableId == null || stableId.isBlank() || !stableId.contains(":")) {
+            throw new IllegalArgumentException("Block stable id must be non-blank and namespaced: " + stableId);
+        }
+        boolean duplicate = pendingRegistrations.stream()
+                .anyMatch(existing -> existing.getStableId().equals(stableId));
+        if (duplicate) {
             throw new IllegalStateException("Duplicate block stable id: " + stableId);
         }
-
-        blockDefinition.setRuntimeId(nextRuntimeId);
-        BLOCKS_BY_STABLE_ID.put(stableId, blockDefinition);
-        BLOCKS_BY_RUNTIME_ID.put(nextRuntimeId, blockDefinition);
-        LOGGER.info("Registered block {} with runtimeId {}", stableId, nextRuntimeId);
-        nextRuntimeId++;
+        pendingRegistrations.add(blockDefinition);
     }
 
     public static BlockDefinition getBlock(short runtimeId) {
-        ensureInitialized();
-        return BLOCKS_BY_RUNTIME_ID.get(runtimeId);
+        return getDefaultCatalog().getBlock(runtimeId);
     }
 
     public static BlockDefinition getBlock(String stableId) {
-        ensureInitialized();
-        return BLOCKS_BY_STABLE_ID.get(stableId);
+        return getDefaultCatalog().getBlock(stableId);
     }
 
     public static short getRuntimeId(String stableId) {
-        BlockDefinition blockDefinition = getBlock(stableId);
-        if (blockDefinition == null) {
-            throw new IllegalArgumentException("Unknown block stable id: " + stableId);
-        }
-        return blockDefinition.getId();
+        return getDefaultCatalog().getRuntimeId(stableId);
     }
 
     public static String getStableId(short runtimeId) {
-        BlockDefinition blockDefinition = getBlock(runtimeId);
-        if (blockDefinition == null) {
-            throw new IllegalArgumentException("Unknown block runtime id: " + runtimeId);
-        }
-        return blockDefinition.getStableId();
+        return getDefaultCatalog().getStableId(runtimeId);
     }
 
     public static Map<String, BlockDefinition> getRegisteredBlocks() {
-        ensureInitialized();
-        return Collections.unmodifiableMap(BLOCKS_BY_STABLE_ID);
+        return getDefaultCatalog().getRegisteredBlocks();
     }
 
-    private static void ensureInitialized() {
-        if (!initialized) {
+    public static synchronized BlockCatalog getDefaultCatalog() {
+        if (defaultCatalog == null) {
             initialize();
         }
-    }
-
-    private static void validateStableId(String stableId) {
-        if (stableId == null || stableId.isBlank()) {
-            throw new IllegalArgumentException("Block stable id cannot be blank");
-        }
-        if (!stableId.contains(":")) {
-            throw new IllegalArgumentException("Block stable id must be namespaced: " + stableId);
-        }
+        return defaultCatalog;
     }
 }

@@ -6,6 +6,7 @@ import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.generation.WorldGenerator;
 import org.weaw.game.utils.BlockDefinition;
+import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockRegistry;
 
 import java.util.Objects;
@@ -18,6 +19,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
     private static final int MAX_LIGHTING_UPDATES_PER_FRAME = Integer.getInteger("voxy.maxLightingUpdatesPerFrame", 4);
 
     private final ChunkManager chunkManager;
+    private final BlockCatalog blockCatalog;
     private final WorldStreamer worldStreamer;
     private final WorldGenerator worldGenerator;
     private final WorldSettings settings;
@@ -36,11 +38,16 @@ public class World implements AutoCloseable, WorldBlockProvider {
     }
 
     public World(WorldGenerator worldGenerator, WorldSettings settings) {
-        this.chunkManager = new ChunkManager();
+        this(worldGenerator, settings, BlockRegistry.getDefaultCatalog());
+    }
+
+    public World(WorldGenerator worldGenerator, WorldSettings settings, BlockCatalog blockCatalog) {
+        this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
+        this.chunkManager = new ChunkManager(blockCatalog);
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.worldStreamer = new WorldStreamer(chunkManager, this, worldGenerator, settings);
-        this.lightingSystem = new WorldLightingSystem();
+        this.lightingSystem = new WorldLightingSystem(blockCatalog);
     }
 
     public ChunkManager getChunkManager() {
@@ -49,6 +56,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     public WorldSettings getSettings() {
         return settings;
+    }
+
+    public BlockCatalog getBlockCatalog() {
+        return blockCatalog;
     }
 
     public void update(Vector3f playerPosition) {
@@ -86,6 +97,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
                 lightingSnapshot.propagateCpuTimeNs(),
                 streamerSnapshot.chunkGenerationCpuTimeNs(),
                 streamerSnapshot.chunkMeshCpuTimeNs(),
+                streamerSnapshot.chunkMeshingSnapshotCpuTimeNs(),
+                streamerSnapshot.chunkMeshingFaceClassificationCpuTimeNs(),
+                streamerSnapshot.chunkMeshingGreedyMergeCpuTimeNs(),
+                streamerSnapshot.chunkMeshingOutputBuildCpuTimeNs(),
                 streamerSnapshot.chunkPublishCpuTimeNs(),
                 streamerSnapshot.chunkUnloadCpuTimeNs(),
                 lightingCollectionSnapshot.pendingBeforeCollection(),
@@ -119,7 +134,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
                 streamerSnapshot.chunksUnloaded(),
                 streamerSnapshot.chunksGenerated(),
                 streamerSnapshot.chunksMeshed(),
-                streamerSnapshot.chunksRemeshed()
+                streamerSnapshot.chunksRemeshed(),
+                streamerSnapshot.chunkMeshingAmbientOcclusionFaces(),
+                streamerSnapshot.chunkMeshingSampledBlocks(),
+                streamerSnapshot.cancelledChunkBuilds()
         );
     }
 
@@ -153,6 +171,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     public int getQueuedChunkCount() {
         return worldStreamer.getPendingTaskCount();
+    }
+
+    public boolean isStreamingConverged() {
+        return worldStreamer.isConverged();
     }
 
     public boolean containsChunk(int x, int y, int z) {
@@ -205,7 +227,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
     }
 
     public boolean isSolidBlockAtWorld(int worldX, int worldY, int worldZ) {
-        BlockDefinition block = BlockRegistry.getBlock(getBlockAtWorld(worldX, worldY, worldZ));
+        BlockDefinition block = blockCatalog.getBlock(getBlockAtWorld(worldX, worldY, worldZ));
         return block != null && block.isSolid();
     }
 

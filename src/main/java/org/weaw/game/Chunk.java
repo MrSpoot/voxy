@@ -5,9 +5,9 @@ import org.joml.Vector3f;
 import org.joml.Vector3i;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockRegistry;
-import org.weaw.game.utils.Blocks;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -22,6 +22,7 @@ public class Chunk {
 
     @Getter
     private final Vector3i position;
+    private final BlockCatalog blockCatalog;
     private final ChunkLighting lighting;
 
     private boolean isUniform = true;
@@ -38,9 +39,18 @@ public class Chunk {
     private int lightEmitterCount;
 
     public Chunk(Vector3i position) {
+        this(position, BlockRegistry.getDefaultCatalog());
+    }
+
+    public Chunk(Vector3i position, BlockCatalog blockCatalog) {
         this.position = new Vector3i(position);
+        this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
         this.lighting = new ChunkLighting();
-        applyUniformBlock(Blocks.AIR.getId());
+        applyUniformBlock(blockCatalog.air().getId());
+    }
+
+    public BlockCatalog getBlockCatalog() {
+        return blockCatalog;
     }
 
     public short getBlock(int x, int y, int z) {
@@ -124,7 +134,7 @@ public class Chunk {
         }
 
         if (uniform) {
-            BlockDefinition blockDefinition = Objects.requireNonNull(BlockRegistry.getBlock(first), "Unknown block id: " + first);
+            BlockDefinition blockDefinition = Objects.requireNonNull(blockCatalog.getBlock(first), "Unknown block id: " + first);
             LOGGER.debug("Chunk {} loaded as uniform chunk with block {}", position, blockDefinition);
             applyUniformBlock(blockDefinition.getId());
             return;
@@ -195,7 +205,7 @@ public class Chunk {
 
     public boolean hasLightEmitters() {
         if (isUniform) {
-            BlockDefinition blockDefinition = BlockRegistry.getBlock(uniformBlockId);
+            BlockDefinition blockDefinition = blockCatalog.getBlock(uniformBlockId);
             return blockDefinition != null && blockDefinition.isLightEmitter();
         }
         return lightEmitterCount > 0;
@@ -203,7 +213,7 @@ public class Chunk {
 
     public int getLightEmitterCount() {
         if (isUniform) {
-            BlockDefinition blockDefinition = BlockRegistry.getBlock(uniformBlockId);
+            BlockDefinition blockDefinition = blockCatalog.getBlock(uniformBlockId);
             return blockDefinition != null && blockDefinition.isLightEmitter() ? TOTAL_BLOCKS : 0;
         }
         return lightEmitterCount;
@@ -212,7 +222,7 @@ public class Chunk {
     public void forEachLightEmitter(LightEmitterConsumer consumer) {
         Objects.requireNonNull(consumer, "consumer");
         if (isUniform) {
-            BlockDefinition blockDefinition = BlockRegistry.getBlock(uniformBlockId);
+            BlockDefinition blockDefinition = blockCatalog.getBlock(uniformBlockId);
             if (blockDefinition == null || !blockDefinition.isLightEmitter()) {
                 return;
             }
@@ -239,7 +249,7 @@ public class Chunk {
             int x = blockIndex % SIZE;
             int z = (blockIndex / SIZE) % SIZE;
             int y = blockIndex / (SIZE * SIZE);
-            BlockDefinition blockDefinition = BlockRegistry.getBlock(getBlock(x, y, z));
+            BlockDefinition blockDefinition = blockCatalog.getBlock(getBlock(x, y, z));
             if (blockDefinition == null || !blockDefinition.isLightEmitter()) {
                 continue;
             }
@@ -279,7 +289,7 @@ public class Chunk {
     }
 
     private Chunk copy(boolean includeLighting) {
-        Chunk copy = new Chunk(position);
+        Chunk copy = new Chunk(position, blockCatalog);
         copy.isUniform = isUniform;
         copy.uniformBlockId = uniformBlockId;
         if (includeLighting) {
@@ -357,7 +367,7 @@ public class Chunk {
         lightEmitterBlockIndices = null;
         lightEmitterCount = 0;
 
-        BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+        BlockDefinition blockDefinition = blockCatalog.getBlock(blockId);
         LOGGER.debug("Chunk {} filled uniformly with block {}", position, blockDefinition != null ? blockDefinition : blockId);
     }
 
@@ -400,7 +410,7 @@ public class Chunk {
             reallocateData(requiredBits);
         }
 
-        BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+        BlockDefinition blockDefinition = blockCatalog.getBlock(blockId);
         LOGGER.debug("Chunk {} palette expanded to {} entries after adding block {}",
                 position, paletteSize, blockDefinition != null ? blockDefinition : blockId);
 
@@ -428,7 +438,7 @@ public class Chunk {
         }
 
         if (activeEntries == 0) {
-            applyUniformBlock(Blocks.AIR.getId());
+            applyUniformBlock(blockCatalog.air().getId());
             LOGGER.warn("Chunk {} palette became empty, resetting chunk to AIR", position);
             return;
         }
@@ -436,7 +446,7 @@ public class Chunk {
         if (activeEntries == 1) {
             short survivingBlockId = palette[survivingIndex];
             LOGGER.debug("Chunk {} collapsed back to uniform storage with block {}", position,
-                    BlockRegistry.getBlock(survivingBlockId));
+                    blockCatalog.getBlock(survivingBlockId));
             applyUniformBlock(survivingBlockId);
             return;
         }
@@ -510,7 +520,7 @@ public class Chunk {
     private void rebuildLightEmitterIndex(short[] blocks) {
         int emitterBlocks = 0;
         for (short blockId : blocks) {
-            BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+            BlockDefinition blockDefinition = blockCatalog.getBlock(blockId);
             if (blockDefinition != null && blockDefinition.isLightEmitter()) {
                 emitterBlocks++;
             }
@@ -525,7 +535,7 @@ public class Chunk {
         lightEmitterBlockIndices = new int[emitterBlocks];
         lightEmitterCount = 0;
         for (int blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
-            BlockDefinition blockDefinition = BlockRegistry.getBlock(blocks[blockIndex]);
+            BlockDefinition blockDefinition = blockCatalog.getBlock(blocks[blockIndex]);
             if (blockDefinition == null || !blockDefinition.isLightEmitter()) {
                 continue;
             }
@@ -591,8 +601,8 @@ public class Chunk {
         lightEmitterCount = TOTAL_BLOCKS;
     }
 
-    private static boolean isLightEmitter(short blockId) {
-        BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+    private boolean isLightEmitter(short blockId) {
+        BlockDefinition blockDefinition = blockCatalog.getBlock(blockId);
         return blockDefinition != null && blockDefinition.isLightEmitter();
     }
 

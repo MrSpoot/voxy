@@ -1,6 +1,7 @@
 package org.weaw.game;
 
 import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockRegistry;
 
@@ -24,6 +25,16 @@ public final class WorldLightingSystem {
             {0, 0, 1},
             {0, 0, -1}
     };
+
+    private final BlockCatalog blockCatalog;
+
+    public WorldLightingSystem() {
+        this(BlockRegistry.getDefaultCatalog());
+    }
+
+    public WorldLightingSystem(BlockCatalog blockCatalog) {
+        this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
+    }
 
     public WorldLightingProfilingSnapshot rebuildLightingAround(ChunkManager chunkManager, Set<ChunkPosition> affectedPositions) {
         Objects.requireNonNull(chunkManager, "chunkManager");
@@ -202,7 +213,7 @@ public final class WorldLightingSystem {
                 int localY = Math.floorMod(nextWorldY, Chunk.SIZE);
                 int localZ = Math.floorMod(nextWorldZ, Chunk.SIZE);
 
-                BlockDefinition nextBlock = BlockRegistry.getBlock(nextChunk.getBlock(localX, localY, localZ));
+                BlockDefinition nextBlock = blockCatalog.getBlock(nextChunk.getBlock(localX, localY, localZ));
                 if (nextBlock != null && nextBlock.blocksLight() && !nextBlock.isLightEmitter()) {
                     blockedByOpaqueCount++;
                     continue;

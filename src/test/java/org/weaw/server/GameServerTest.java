@@ -28,9 +28,11 @@ class GameServerTest {
         try (GameServer server = createServer(10)) {
             assertEquals(0, server.update(0.05f, PlayerInput.disabled()));
             assertEquals(0, server.getTickIndex());
+            assertEquals(0.5f, server.getInterpolationAlpha(), 0.0001f);
 
             assertEquals(1, server.update(0.05f, PlayerInput.disabled()));
             assertEquals(1, server.getTickIndex());
+            assertEquals(0.0f, server.getInterpolationAlpha(), 0.0001f);
         }
     }
 

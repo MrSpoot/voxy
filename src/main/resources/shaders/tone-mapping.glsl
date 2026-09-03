@@ -16,6 +16,8 @@ void main() {
 #version 460 core
 
 uniform sampler2D uHdrTexture;
+uniform sampler2D uAutoExposureTexture;
+uniform int uAutoExposureEnabled;
 uniform int uColorGradingEnabled;
 uniform int uToneMappingEnabled;
 uniform float uExposure;
@@ -30,12 +32,20 @@ in vec2 vTexCoord;
 out vec4 fragColor;
 
 vec3 acesToneMap(vec3 color) {
+    color *= 0.6;
+
     const float a = 2.51;
     const float b = 0.03;
     const float c = 2.43;
     const float d = 0.59;
     const float e = 0.14;
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), 0.0, 1.0);
+
+    return clamp(
+        (color * (a * color + b)) /
+        (color * (c * color + d) + e),
+        0.0,
+        1.0
+    );
 }
 
 vec3 applyContrast(vec3 color, float contrast) {
@@ -64,7 +74,11 @@ void main() {
     vec4 source = texture(uHdrTexture, vTexCoord);
     vec3 color = max(source.rgb, vec3(0.0));
 
-    color *= exp2(uExposure);
+    float effectiveExposure = uExposure;
+    if (uAutoExposureEnabled != 0) {
+        effectiveExposure = texelFetch(uAutoExposureTexture, ivec2(0), 0).r;
+    }
+    color *= exp2(effectiveExposure);
 
     if (uToneMappingEnabled != 0) {
         color = acesToneMap(color);

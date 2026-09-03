@@ -11,6 +11,10 @@ public record WorldProfilingSnapshot(
         long lightingPropagateCpuTimeNs,
         long chunkGenerationCpuTimeNs,
         long chunkMeshCpuTimeNs,
+        long chunkMeshingSnapshotCpuTimeNs,
+        long chunkMeshingFaceClassificationCpuTimeNs,
+        long chunkMeshingGreedyMergeCpuTimeNs,
+        long chunkMeshingOutputBuildCpuTimeNs,
         long chunkPublishCpuTimeNs,
         long chunkUnloadCpuTimeNs,
         int pendingLightingUpdatesBeforeCollection,
@@ -44,7 +48,10 @@ public record WorldProfilingSnapshot(
         int chunksUnloaded,
         int chunksGenerated,
         int chunksMeshed,
-        int chunksRemeshed
+        int chunksRemeshed,
+        int chunkMeshingAmbientOcclusionFaces,
+        int chunkMeshingSampledBlocks,
+        int cancelledChunkBuilds
 ) {
     public static WorldProfilingSnapshot empty() {
         return new WorldProfilingSnapshot(
@@ -60,6 +67,13 @@ public record WorldProfilingSnapshot(
                 0L,
                 0L,
                 0L,
+                0L,
+                0L,
+                0L,
+                0L,
+                0,
+                0,
+                0,
                 0,
                 0,
                 0,

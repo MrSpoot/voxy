@@ -40,6 +40,7 @@ public class RenderContext {
     private Camera camera;
     private int viewportWidth;
     private int viewportHeight;
+    private float frameDeltaSeconds = 1.0f / 60.0f;
 
     // Shared render targets (managed by RenderPipeline)
     // Key examples: "sceneColor", "sceneDepth", "postProcessOutput"

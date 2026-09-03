@@ -4,8 +4,11 @@ import org.joml.Vector3f;
 
 public class Player {
     private final Vector3f position = new Vector3f();
+    private final Vector3f previousPosition = new Vector3f();
     private float yaw = -90.0f;
     private float pitch = 0.0f;
+    private float previousYaw = yaw;
+    private float previousPitch = pitch;
     private float verticalVelocity = 0.0f;
     private boolean grounded = false;
     private boolean noclip = false;
@@ -16,16 +19,33 @@ public class Player {
 
     public void setPosition(Vector3f position) {
         this.position.set(position);
+        this.previousPosition.set(position);
     }
 
     public void setRotation(float yaw, float pitch) {
         this.yaw = yaw;
         this.pitch = Math.max(-89.0f, Math.min(89.0f, pitch));
+        this.previousYaw = this.yaw;
+        this.previousPitch = this.pitch;
     }
 
     public void setPose(Vector3f position, float yaw, float pitch) {
         setPosition(position);
         setRotation(yaw, pitch);
+    }
+
+    public void beginSimulationTick() {
+        previousPosition.set(position);
+        previousYaw = yaw;
+        previousPitch = pitch;
+    }
+
+    public PlayerRenderPose sampleRenderPose(float interpolationAlpha) {
+        float alpha = Math.max(0.0f, Math.min(1.0f, interpolationAlpha));
+        Vector3f interpolatedPosition = new Vector3f(previousPosition).lerp(position, alpha);
+        float interpolatedYaw = normalizeDegrees(previousYaw + shortestAngleDelta(previousYaw, yaw) * alpha);
+        float interpolatedPitch = previousPitch + (pitch - previousPitch) * alpha;
+        return new PlayerRenderPose(interpolatedPosition, interpolatedYaw, interpolatedPitch);
     }
 
     public void move(Vector3f offset) {
@@ -111,5 +131,19 @@ public class Player {
 
     public void toggleNoclip() {
         setNoclip(!noclip);
+    }
+
+    private static float shortestAngleDelta(float fromDegrees, float toDegrees) {
+        return normalizeDegrees(toDegrees - fromDegrees);
+    }
+
+    private static float normalizeDegrees(float degrees) {
+        float normalized = degrees % 360.0f;
+        if (normalized >= 180.0f) {
+            normalized -= 360.0f;
+        } else if (normalized < -180.0f) {
+            normalized += 360.0f;
+        }
+        return normalized;
     }
 }

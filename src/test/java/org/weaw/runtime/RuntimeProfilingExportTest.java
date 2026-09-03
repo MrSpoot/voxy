@@ -32,8 +32,11 @@ class RuntimeProfilingExportTest {
         RuntimeProfilingSummaryCollector collector = new RuntimeProfilingSummaryCollector();
         collector.recordFrame(profile(Map.ofEntries(
                 Map.entry("worldStreamingUpdates", 1),
+                Map.entry("benchmarkPhase", BenchmarkPhase.WARMUP.name()),
                 Map.entry("chunksGenerated", 3),
                 Map.entry("chunksPublished", 2),
+                Map.entry("chunkMeshingSnapshotMs", 1.25d),
+                Map.entry("cancelledChunkBuilds", 4),
                 Map.entry("sparseStreamingEnabled", true),
                 Map.entry("desiredMaterializedChunks", 100),
                 Map.entry("virtualEmptyChunks", 200),
@@ -49,6 +52,7 @@ class RuntimeProfilingExportTest {
                 Map.entry("pendingUploads", 2)
         )));
         collector.recordFrame(profile(Map.ofEntries(
+                Map.entry("benchmarkPhase", BenchmarkPhase.SETTLE.name()),
                 Map.entry("sparseStreamingEnabled", true),
                 Map.entry("desiredMaterializedChunks", 100),
                 Map.entry("virtualEmptyChunks", 200),
@@ -66,13 +70,17 @@ class RuntimeProfilingExportTest {
         collector.writeSummary(output, LaunchOptions.from(new String[]{"--benchmark"}));
         String json = Files.readString(output);
 
-        assertTrue(json.contains("\"schema_version\": 2"));
+        assertTrue(json.contains("\"schema_version\": 3"));
+        assertTrue(json.contains("\"warmup_frames_excluded\": 1"));
         assertTrue(json.contains("\"world_streaming_update_count\": 1"));
         assertTrue(json.contains("\"chunks_generated\": 3"));
         assertTrue(json.contains("\"chunks_published\": 2"));
+        assertTrue(json.contains("\"chunk_meshing_snapshot_ms\""));
+        assertTrue(json.contains("\"cancelled_chunk_builds\": 4"));
         assertTrue(json.contains("\"sparse_streaming\""));
         assertTrue(json.contains("\"classification_cache_hit_percent\": 80.0000"));
         assertTrue(json.contains("\"converged\": true"));
+        assertTrue(json.contains("\"benchmark_phases\""));
     }
 
     private static RuntimeFrameProfile profile(Map<String, Object> overrides) throws Exception {

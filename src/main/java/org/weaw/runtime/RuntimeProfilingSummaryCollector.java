@@ -35,10 +35,21 @@ public final class RuntimeProfilingSummaryCollector {
         }
 
         List<RuntimeFrameProfile> snapshot = List.copyOf(frames);
-        int warmupFrames = Math.min(DEFAULT_WARMUP_FRAME_COUNT, snapshot.size());
-        List<RuntimeFrameProfile> steadyStateFrames = warmupFrames >= snapshot.size()
-                ? List.of()
-                : snapshot.subList(warmupFrames, snapshot.size());
+        int warmupFrames;
+        List<RuntimeFrameProfile> steadyStateFrames;
+        if (launchOptions.benchmarkEnabled()) {
+            warmupFrames = (int) snapshot.stream()
+                    .filter(frame -> BenchmarkPhase.WARMUP.name().equals(frame.benchmarkPhase()))
+                    .count();
+            steadyStateFrames = snapshot.stream()
+                    .filter(frame -> !BenchmarkPhase.WARMUP.name().equals(frame.benchmarkPhase()))
+                    .toList();
+        } else {
+            warmupFrames = Math.min(DEFAULT_WARMUP_FRAME_COUNT, snapshot.size());
+            steadyStateFrames = warmupFrames >= snapshot.size()
+                    ? List.of()
+                    : snapshot.subList(warmupFrames, snapshot.size());
+        }
 
         MetricSummary allFrameMs = summarize(snapshot, RuntimeFrameProfile::frameMs);
         MetricSummary steadyStateFrameMs = summarize(steadyStateFrames, RuntimeFrameProfile::frameMs);
@@ -68,6 +79,7 @@ public final class RuntimeProfilingSummaryCollector {
         long totalChunksRemeshed = sum(allFrames, RuntimeFrameProfile::chunksRemeshed);
         long totalChunksPublished = sum(allFrames, RuntimeFrameProfile::chunksPublished);
         long totalChunksUnloaded = sum(allFrames, RuntimeFrameProfile::chunksUnloaded);
+        long totalCancelledChunkBuilds = sum(allFrames, RuntimeFrameProfile::cancelledChunkBuilds);
         long totalWorldStreamingUpdates = sum(allFrames, RuntimeFrameProfile::worldStreamingUpdates);
         List<RuntimeFrameProfile> worldUpdateFrames = allFrames.stream()
                 .filter(frame -> frame.worldStreamingUpdates() > 0)
@@ -78,14 +90,20 @@ public final class RuntimeProfilingSummaryCollector {
 
         StringBuilder json = new StringBuilder(2048);
         json.append("{\n");
-        appendNumber(json, 1, "schema_version", 2, true);
+        appendNumber(json, 1, "schema_version", 3, true);
         appendString(json, 1, "generated_at", Instant.now().toString(), true);
         json.append(indent(1)).append("\"run\": {\n");
         appendNumber(json, 2, "sample_count", allFrames.size(), true);
         appendNumber(json, 2, "warmup_frames_excluded", warmupFrames, true);
         appendBoolean(json, 2, "benchmark_enabled", launchOptions.benchmarkEnabled(), true);
         appendNumber(json, 2, "benchmark_duration_seconds", launchOptions.benchmark().durationSeconds(), true);
+        appendNumber(json, 2, "benchmark_warmup_seconds", launchOptions.benchmark().warmupSeconds(), true);
+        appendNumber(json, 2, "benchmark_loading_timeout_seconds", launchOptions.benchmark().loadingTimeoutSeconds(), true);
+        appendNumber(json, 2, "benchmark_settle_seconds", launchOptions.benchmark().settleSeconds(), true);
         appendNumber(json, 2, "benchmark_render_distance_chunks", launchOptions.benchmark().renderDistanceChunks(), true);
+        appendBoolean(json, 2, "loading_converged", finalFrame != null && finalFrame.benchmarkLoadingConverged(), true);
+        appendNumber(json, 2, "loading_duration_seconds", finalFrame == null ? 0.0d : finalFrame.benchmarkLoadingDurationSeconds(), true);
+        appendNumber(json, 2, "benchmark_total_elapsed_seconds", finalFrame == null ? 0.0d : finalFrame.benchmarkTotalElapsedSeconds(), true);
         appendNumber(json, 2, "world_streaming_update_count", totalWorldStreamingUpdates, true);
         appendString(json, 2, "runtime_profile_csv", launchOptions.runtimeStatsOutputPath().toString(), true);
         appendString(json, 2, "runtime_summary_json", launchOptions.runtimeSummaryOutputPath().toString(), true);
@@ -104,10 +122,15 @@ public final class RuntimeProfilingSummaryCollector {
 
         appendMetricSummary(json, 1, "frame_ms", allFrameMs, true);
         appendMetricSummary(json, 1, "steady_state_frame_ms", steadyStateFrameMs, true);
+        appendBenchmarkPhaseSummaries(json, allFrames);
 
         json.append(indent(1)).append("\"stage_averages_ms\": {\n");
         appendMetricSummary(json, 2, "chunk_generation_ms", summarize(allFrames, RuntimeFrameProfile::chunkGenerationMs), true);
         appendMetricSummary(json, 2, "chunk_mesh_ms", summarize(allFrames, RuntimeFrameProfile::chunkMeshMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_snapshot_ms", summarize(allFrames, RuntimeFrameProfile::chunkMeshingSnapshotMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_face_classification_ms", summarize(allFrames, RuntimeFrameProfile::chunkMeshingFaceClassificationMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_greedy_merge_ms", summarize(allFrames, RuntimeFrameProfile::chunkMeshingGreedyMergeMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_output_build_ms", summarize(allFrames, RuntimeFrameProfile::chunkMeshingOutputBuildMs), true);
         appendMetricSummary(json, 2, "chunk_lighting_ms", summarize(allFrames, RuntimeFrameProfile::chunkLightingMs), true);
         appendMetricSummary(json, 2, "render_ms", summarize(allFrames, RuntimeFrameProfile::renderMs), true);
         appendMetricSummary(json, 2, "gpu_mesh_upload_ms", summarize(allFrames, RuntimeFrameProfile::gpuMeshUploadMs), true);
@@ -119,6 +142,10 @@ public final class RuntimeProfilingSummaryCollector {
         appendMetricSummary(json, 2, "world_streamer_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::worldStreamerMs), true);
         appendMetricSummary(json, 2, "chunk_generation_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkGenerationMs), true);
         appendMetricSummary(json, 2, "chunk_mesh_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkMeshMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_snapshot_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkMeshingSnapshotMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_face_classification_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkMeshingFaceClassificationMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_greedy_merge_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkMeshingGreedyMergeMs), true);
+        appendMetricSummary(json, 2, "chunk_meshing_output_build_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkMeshingOutputBuildMs), true);
         appendMetricSummary(json, 2, "chunk_publish_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkPublishMs), true);
         appendMetricSummary(json, 2, "chunk_unload_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkUnloadMs), true);
         appendMetricSummary(json, 2, "chunk_lighting_ms", summarizePerWorldUpdate(worldUpdateFrames, RuntimeFrameProfile::chunkLightingMs), false);
@@ -129,6 +156,7 @@ public final class RuntimeProfilingSummaryCollector {
         appendMetricSummary(json, 2, "queued_tasks", summarize(allFrames, RuntimeFrameProfile::queuedTasks), true);
         appendMetricSummary(json, 2, "pending_remesh", summarize(allFrames, RuntimeFrameProfile::pendingRemesh), true);
         appendMetricSummary(json, 2, "pending_uploads", summarize(allFrames, RuntimeFrameProfile::pendingUploads), true);
+        appendMetricSummary(json, 2, "cancelled_chunk_builds", summarize(allFrames, RuntimeFrameProfile::cancelledChunkBuilds), true);
         appendMetricSummary(json, 2, "loaded_chunks", summarize(allFrames, RuntimeFrameProfile::loadedChunks), false);
         json.append(indent(1)).append("},\n");
 
@@ -172,7 +200,8 @@ public final class RuntimeProfilingSummaryCollector {
         appendNumber(json, 2, "chunks_meshed", totalChunksMeshed, true);
         appendNumber(json, 2, "chunks_remeshed", totalChunksRemeshed, true);
         appendNumber(json, 2, "chunks_published", totalChunksPublished, true);
-        appendNumber(json, 2, "chunks_unloaded", totalChunksUnloaded, false);
+        appendNumber(json, 2, "chunks_unloaded", totalChunksUnloaded, true);
+        appendNumber(json, 2, "cancelled_chunk_builds", totalCancelledChunkBuilds, false);
         json.append(indent(1)).append("},\n");
 
         json.append(indent(1)).append("\"steady_state_dominant_stage_frames\": {\n");
@@ -210,6 +239,37 @@ public final class RuntimeProfilingSummaryCollector {
                 percentile(values, 0.95d),
                 percentile(values, 0.99d)
         );
+    }
+
+    private static void appendBenchmarkPhaseSummaries(StringBuilder json, List<RuntimeFrameProfile> frames) {
+        BenchmarkPhase[] phases = {
+                BenchmarkPhase.WARMUP,
+                BenchmarkPhase.LOADING,
+                BenchmarkPhase.TRAVERSAL,
+                BenchmarkPhase.SETTLE
+        };
+        json.append(indent(1)).append("\"benchmark_phases\": {\n");
+        for (int index = 0; index < phases.length; index++) {
+            BenchmarkPhase phase = phases[index];
+            List<RuntimeFrameProfile> phaseFrames = frames.stream()
+                    .filter(frame -> phase.name().equals(frame.benchmarkPhase()))
+                    .toList();
+            json.append(indent(2)).append("\"").append(phase.name().toLowerCase(Locale.ROOT)).append("\": {\n");
+            appendNumber(json, 3, "sample_count", phaseFrames.size(), true);
+            appendMetricSummary(json, 3, "frame_ms", summarize(phaseFrames, RuntimeFrameProfile::frameMs), true);
+            appendMetricSummary(json, 3, "render_ms", summarize(phaseFrames, RuntimeFrameProfile::renderMs), true);
+            appendMetricSummary(json, 3, "chunk_mesh_ms", summarize(phaseFrames, RuntimeFrameProfile::chunkMeshMs), true);
+            appendMetricSummary(json, 3, "chunk_meshing_snapshot_ms", summarize(phaseFrames, RuntimeFrameProfile::chunkMeshingSnapshotMs), true);
+            appendMetricSummary(json, 3, "chunk_meshing_face_classification_ms", summarize(phaseFrames, RuntimeFrameProfile::chunkMeshingFaceClassificationMs), true);
+            appendMetricSummary(json, 3, "chunk_meshing_greedy_merge_ms", summarize(phaseFrames, RuntimeFrameProfile::chunkMeshingGreedyMergeMs), true);
+            appendMetricSummary(json, 3, "chunk_meshing_output_build_ms", summarize(phaseFrames, RuntimeFrameProfile::chunkMeshingOutputBuildMs), false);
+            json.append(indent(2)).append("}");
+            if (index < phases.length - 1) {
+                json.append(",");
+            }
+            json.append("\n");
+        }
+        json.append(indent(1)).append("},\n");
     }
 
     private static MetricSummary summarizePerWorldUpdate(

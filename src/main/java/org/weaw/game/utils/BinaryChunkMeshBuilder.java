@@ -2,9 +2,12 @@ package org.weaw.game.utils;
 
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkMeshData;
-import org.weaw.game.WorldBlockProvider;
+import org.weaw.game.ChunkMeshingMetrics;
+import org.weaw.game.ChunkMeshingSnapshot;
 
 import java.util.Arrays;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 
 /**
  * Greedy chunk mesher adapted to the current project model.
@@ -31,59 +34,67 @@ public final class BinaryChunkMeshBuilder {
     }
 
     public static ChunkMeshData buildMeshData(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             boolean ambientOcclusionEnabled,
-            boolean transparentChunksEnabled
+            boolean transparentChunksEnabled,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         return new ChunkMeshData(
-                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.OPAQUE, ambientOcclusionEnabled),
-                buildLayerMeshData(chunk, blockProvider, BlockDefinition.TransparencyType.CUTOUT, ambientOcclusionEnabled),
+                buildLayerMeshData(snapshot, BlockDefinition.TransparencyType.OPAQUE, ambientOcclusionEnabled, cancelled, metrics),
+                buildLayerMeshData(snapshot, BlockDefinition.TransparencyType.CUTOUT, ambientOcclusionEnabled, cancelled, metrics),
                 transparentChunksEnabled
                         ? buildLayerMeshData(
-                                chunk,
-                                blockProvider,
+                                snapshot,
                                 BlockDefinition.TransparencyType.TRANSPARENT,
-                                ambientOcclusionEnabled
+                                ambientOcclusionEnabled,
+                                cancelled,
+                                metrics
                         )
                         : EMPTY_LAYER
         );
     }
 
     private static ChunkMeshData.LayerMeshData buildLayerMeshData(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
-            boolean ambientOcclusionEnabled
+            boolean ambientOcclusionEnabled,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         FaceBuffer buffer = new FaceBuffer(Math.max(256, SIZE * SIZE));
         int[] mask = new int[SIZE * SIZE];
 
-        meshPositiveX(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
-        meshNegativeX(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
-        meshPositiveY(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
-        meshNegativeY(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
-        meshPositiveZ(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
-        meshNegativeZ(chunk, blockProvider, transparencyType, ambientOcclusionEnabled, mask, buffer);
+        meshPositiveX(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshNegativeX(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshPositiveY(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshNegativeY(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshPositiveZ(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshNegativeZ(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
 
-        return new ChunkMeshData.LayerMeshData(buffer.toArray(), buffer.faceCount());
+        long outputStartNs = System.nanoTime();
+        ChunkMeshData.LayerMeshData layer = new ChunkMeshData.LayerMeshData(buffer.toArray(), buffer.faceCount());
+        metrics.recordOutputBuild(System.nanoTime() - outputStartNs);
+        return layer;
     }
 
     private static void meshPositiveX(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
             boolean ambientOcclusionEnabled,
             int[] mask,
-            FaceBuffer buffer
+            FaceBuffer buffer,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         for (int x = 0; x < SIZE; x++) {
+            throwIfCancelled(cancelled);
             final int fixedX = x;
+            long classificationStartNs = System.nanoTime();
             for (int y = 0; y < SIZE; y++) {
                 for (int z = 0; z < SIZE; z++) {
                     mask[y * SIZE + z] = createMaskEntry(
-                            chunk,
-                            blockProvider,
+                            snapshot,
                             transparencyType,
                             ambientOcclusionEnabled,
                             FACE_POS_X,
@@ -92,31 +103,37 @@ public final class BinaryChunkMeshBuilder {
                             z,
                             x + 1,
                             y,
-                            z
+                            z,
+                            metrics
                     );
                 }
             }
+            metrics.recordFaceClassification(System.nanoTime() - classificationStartNs);
 
+            long mergeStartNs = System.nanoTime();
             greedyMerge(mask, (startU, startV, width, height, textureIndex) ->
                     buffer.addFace(encodeFace(fixedX, startV, startU, FACE_POS_X, width, height), textureIndex));
+            metrics.recordGreedyMerge(System.nanoTime() - mergeStartNs);
         }
     }
 
     private static void meshNegativeX(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
             boolean ambientOcclusionEnabled,
             int[] mask,
-            FaceBuffer buffer
+            FaceBuffer buffer,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         for (int x = 0; x < SIZE; x++) {
+            throwIfCancelled(cancelled);
             final int fixedX = x;
+            long classificationStartNs = System.nanoTime();
             for (int y = 0; y < SIZE; y++) {
                 for (int z = 0; z < SIZE; z++) {
                     mask[y * SIZE + z] = createMaskEntry(
-                            chunk,
-                            blockProvider,
+                            snapshot,
                             transparencyType,
                             ambientOcclusionEnabled,
                             FACE_NEG_X,
@@ -125,31 +142,37 @@ public final class BinaryChunkMeshBuilder {
                             z,
                             x - 1,
                             y,
-                            z
+                            z,
+                            metrics
                     );
                 }
             }
+            metrics.recordFaceClassification(System.nanoTime() - classificationStartNs);
 
+            long mergeStartNs = System.nanoTime();
             greedyMerge(mask, (startU, startV, width, height, textureIndex) ->
                     buffer.addFace(encodeFace(fixedX, startV, startU, FACE_NEG_X, width, height), textureIndex));
+            metrics.recordGreedyMerge(System.nanoTime() - mergeStartNs);
         }
     }
 
     private static void meshPositiveY(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
             boolean ambientOcclusionEnabled,
             int[] mask,
-            FaceBuffer buffer
+            FaceBuffer buffer,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         for (int y = 0; y < SIZE; y++) {
+            throwIfCancelled(cancelled);
             final int fixedY = y;
+            long classificationStartNs = System.nanoTime();
             for (int z = 0; z < SIZE; z++) {
                 for (int x = 0; x < SIZE; x++) {
                     mask[z * SIZE + x] = createMaskEntry(
-                            chunk,
-                            blockProvider,
+                            snapshot,
                             transparencyType,
                             ambientOcclusionEnabled,
                             FACE_POS_Y,
@@ -158,31 +181,37 @@ public final class BinaryChunkMeshBuilder {
                             z,
                             x,
                             y + 1,
-                            z
+                            z,
+                            metrics
                     );
                 }
             }
+            metrics.recordFaceClassification(System.nanoTime() - classificationStartNs);
 
+            long mergeStartNs = System.nanoTime();
             greedyMerge(mask, (startU, startV, width, height, textureIndex) ->
                     buffer.addFace(encodeFace(startU, fixedY, startV, FACE_POS_Y, width, height), textureIndex));
+            metrics.recordGreedyMerge(System.nanoTime() - mergeStartNs);
         }
     }
 
     private static void meshNegativeY(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
             boolean ambientOcclusionEnabled,
             int[] mask,
-            FaceBuffer buffer
+            FaceBuffer buffer,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         for (int y = 0; y < SIZE; y++) {
+            throwIfCancelled(cancelled);
             final int fixedY = y;
+            long classificationStartNs = System.nanoTime();
             for (int z = 0; z < SIZE; z++) {
                 for (int x = 0; x < SIZE; x++) {
                     mask[z * SIZE + x] = createMaskEntry(
-                            chunk,
-                            blockProvider,
+                            snapshot,
                             transparencyType,
                             ambientOcclusionEnabled,
                             FACE_NEG_Y,
@@ -191,31 +220,37 @@ public final class BinaryChunkMeshBuilder {
                             z,
                             x,
                             y - 1,
-                            z
+                            z,
+                            metrics
                     );
                 }
             }
+            metrics.recordFaceClassification(System.nanoTime() - classificationStartNs);
 
+            long mergeStartNs = System.nanoTime();
             greedyMerge(mask, (startU, startV, width, height, textureIndex) ->
                     buffer.addFace(encodeFace(startU, fixedY, startV, FACE_NEG_Y, width, height), textureIndex));
+            metrics.recordGreedyMerge(System.nanoTime() - mergeStartNs);
         }
     }
 
     private static void meshPositiveZ(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
             boolean ambientOcclusionEnabled,
             int[] mask,
-            FaceBuffer buffer
+            FaceBuffer buffer,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         for (int z = 0; z < SIZE; z++) {
+            throwIfCancelled(cancelled);
             final int fixedZ = z;
+            long classificationStartNs = System.nanoTime();
             for (int y = 0; y < SIZE; y++) {
                 for (int x = 0; x < SIZE; x++) {
                     mask[y * SIZE + x] = createMaskEntry(
-                            chunk,
-                            blockProvider,
+                            snapshot,
                             transparencyType,
                             ambientOcclusionEnabled,
                             FACE_POS_Z,
@@ -224,31 +259,37 @@ public final class BinaryChunkMeshBuilder {
                             z,
                             x,
                             y,
-                            z + 1
+                            z + 1,
+                            metrics
                     );
                 }
             }
+            metrics.recordFaceClassification(System.nanoTime() - classificationStartNs);
 
+            long mergeStartNs = System.nanoTime();
             greedyMerge(mask, (startU, startV, width, height, textureIndex) ->
                     buffer.addFace(encodeFace(startU, startV, fixedZ, FACE_POS_Z, width, height), textureIndex));
+            metrics.recordGreedyMerge(System.nanoTime() - mergeStartNs);
         }
     }
 
     private static void meshNegativeZ(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
             boolean ambientOcclusionEnabled,
             int[] mask,
-            FaceBuffer buffer
+            FaceBuffer buffer,
+            BooleanSupplier cancelled,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
         for (int z = 0; z < SIZE; z++) {
+            throwIfCancelled(cancelled);
             final int fixedZ = z;
+            long classificationStartNs = System.nanoTime();
             for (int y = 0; y < SIZE; y++) {
                 for (int x = 0; x < SIZE; x++) {
                     mask[y * SIZE + x] = createMaskEntry(
-                            chunk,
-                            blockProvider,
+                            snapshot,
                             transparencyType,
                             ambientOcclusionEnabled,
                             FACE_NEG_Z,
@@ -257,13 +298,17 @@ public final class BinaryChunkMeshBuilder {
                             z,
                             x,
                             y,
-                            z - 1
+                            z - 1,
+                            metrics
                     );
                 }
             }
+            metrics.recordFaceClassification(System.nanoTime() - classificationStartNs);
 
+            long mergeStartNs = System.nanoTime();
             greedyMerge(mask, (startU, startV, width, height, textureIndex) ->
                     buffer.addFace(encodeFace(startU, startV, fixedZ, FACE_NEG_Z, width, height), textureIndex));
+            metrics.recordGreedyMerge(System.nanoTime() - mergeStartNs);
         }
     }
 
@@ -306,8 +351,7 @@ public final class BinaryChunkMeshBuilder {
     }
 
     private static int createMaskEntry(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition.TransparencyType transparencyType,
             boolean ambientOcclusionEnabled,
             int faceDirection,
@@ -316,24 +360,26 @@ public final class BinaryChunkMeshBuilder {
             int z,
             int neighborX,
             int neighborY,
-            int neighborZ
+            int neighborZ,
+            ChunkMeshingMetrics.Recorder metrics
     ) {
-        short blockId = chunk.getBlock(x, y, z);
-        if (blockId == Blocks.AIR.getId()) {
+        short blockId = snapshot.getBlock(x, y, z);
+        if (blockId == snapshot.blockCatalog().air().getId()) {
             return -1;
         }
 
-        BlockDefinition blockDefinition = BlockRegistry.getBlock(blockId);
+        BlockDefinition blockDefinition = snapshot.blockCatalog().getBlock(blockId);
         if (blockDefinition == null || blockDefinition.getTransparencyType() != transparencyType) {
             return -1;
         }
 
-        if (!shouldEmitFace(chunk, blockProvider, blockDefinition, neighborX, neighborY, neighborZ)) {
+        if (!shouldEmitFace(snapshot, blockDefinition, neighborX, neighborY, neighborZ)) {
             return -1;
         }
 
         if (transparencyType == BlockDefinition.TransparencyType.OPAQUE && ambientOcclusionEnabled) {
-            int aoPacked = VoxelAmbientOcclusion.computeOpaqueAoPacked(chunk, blockProvider, x, y, z, faceDirection);
+            metrics.recordAmbientOcclusionFace();
+            int aoPacked = VoxelAmbientOcclusion.computeOpaqueAoPacked(snapshot, x, y, z, faceDirection);
             return VoxelAmbientOcclusion.packOpaqueFaceData(blockDefinition.getTextureIndex(), aoPacked);
         }
 
@@ -341,19 +387,18 @@ public final class BinaryChunkMeshBuilder {
     }
 
     private static boolean shouldEmitFace(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
+            ChunkMeshingSnapshot snapshot,
             BlockDefinition currentBlock,
             int neighborX,
             int neighborY,
             int neighborZ
     ) {
-        short neighborBlockId = getNeighborBlock(chunk, blockProvider, neighborX, neighborY, neighborZ);
-        if (neighborBlockId == Blocks.AIR.getId()) {
+        short neighborBlockId = snapshot.getBlock(neighborX, neighborY, neighborZ);
+        if (neighborBlockId == snapshot.blockCatalog().air().getId()) {
             return true;
         }
 
-        BlockDefinition neighborBlock = BlockRegistry.getBlock(neighborBlockId);
+        BlockDefinition neighborBlock = snapshot.blockCatalog().getBlock(neighborBlockId);
         if (neighborBlock == null) {
             return true;
         }
@@ -377,21 +422,10 @@ public final class BinaryChunkMeshBuilder {
         return false;
     }
 
-    private static short getNeighborBlock(
-            Chunk chunk,
-            WorldBlockProvider blockProvider,
-            int neighborX,
-            int neighborY,
-            int neighborZ
-    ) {
-        if (chunk.isInBounds(neighborX, neighborY, neighborZ)) {
-            return chunk.getBlock(neighborX, neighborY, neighborZ);
+    private static void throwIfCancelled(BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()) {
+            throw new CancellationException("Chunk meshing cancelled");
         }
-
-        int worldX = chunk.getPosition().x * SIZE + neighborX;
-        int worldY = chunk.getPosition().y * SIZE + neighborY;
-        int worldZ = chunk.getPosition().z * SIZE + neighborZ;
-        return blockProvider.getBlockAtWorld(worldX, worldY, worldZ);
     }
 
     /**

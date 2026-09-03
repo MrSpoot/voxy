@@ -59,18 +59,40 @@ public class Camera {
     }
 
     public Vector3f getUp(){
-        Vector3f forward = getForward();
-        Vector3f right = getRight();
-        return new Vector3f(right).cross(forward).normalize();
+        return getUp(new Vector3f());
+    }
+
+    public Vector3f getUp(Vector3f destination) {
+        float yawRadians = (float) Math.toRadians(yaw);
+        float pitchRadians = (float) Math.toRadians(pitch);
+        float sinPitch = (float) Math.sin(pitchRadians);
+        float cosPitch = (float) Math.cos(pitchRadians);
+        return destination.set(
+                -(float) Math.cos(yawRadians) * sinPitch,
+                cosPitch,
+                -(float) Math.sin(yawRadians) * sinPitch
+        ).normalize();
     }
 
     public Vector3f getRight() {
-        Vector3f forward = getForward();
-        return new Vector3f(forward).cross(new Vector3f(0, 1, 0)).normalize();
+        return getRight(new Vector3f());
+    }
+
+    public Vector3f getRight(Vector3f destination) {
+        float yawRadians = (float) Math.toRadians(yaw);
+        return destination.set(
+                -(float) Math.sin(yawRadians),
+                0.0f,
+                (float) Math.cos(yawRadians)
+        ).normalize();
     }
 
     public Vector3f getForward() {
-        return new Vector3f(
+        return getForward(new Vector3f());
+    }
+
+    public Vector3f getForward(Vector3f destination) {
+        return destination.set(
                 (float) (Math.cos(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch))),
                 (float) Math.sin(Math.toRadians(pitch)),
                 (float) (Math.sin(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch)))
