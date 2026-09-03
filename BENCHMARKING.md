@@ -6,9 +6,12 @@ cylindre vertical complet. La fenetre de debug memoire affiche les chunks
 materialises, les chunks virtuels vides/uniformes, la bulle d'interaction et le
 taux de succes du cache de classification.
 
+Le mode peut aussi etre coupe avec `--disable-sparse-streaming`.
+
 ## Prerequis
 
 - JDK 25 doit etre utilise pour compiler et lancer le projet.
+- Le Maven Wrapper fournit Maven 3.9.16, version minimale acceptee par le build.
 - Verifier la version active avec `java -version`.
 - Verifier la version vue par Maven avec `mvnw.cmd -version` sur Windows ou `./mvnw -version` sur Linux/macOS.
 
@@ -27,12 +30,17 @@ Linux/macOS :
 ```
 
 Le jar lanceable est genere dans `target/voxy-0.0.1.jar`.
+Le build selectionne automatiquement les natives Windows, Linux, macOS Intel ou macOS Apple Silicon selon la plateforme.
 
 ## Lancer le jeu
 
 ```powershell
 java -jar target/voxy-0.0.1.jar
 ```
+
+Le manifeste du jar active l'acces natif requis par LWJGL sous JDK 25. Pour un
+lancement direct depuis IntelliJ IDEA ou avec un classpath, ajouter l'option VM
+`--enable-native-access=ALL-UNNAMED`.
 
 ## Lancer le benchmark deterministe
 
@@ -116,9 +124,11 @@ java -jar target/voxy-0.0.1.jar --profile-jfr
 - En mode benchmark, `target/profiling/runtime-summary.json` est exporte automatiquement a la fin du run.
 - Pour exporter les stats runtime hors benchmark, utiliser `--profile-runtime`.
 - Le fichier contient une ligne par frame avec les timings CPU, les compteurs de streaming et les temps de render pass.
+- Les timings et compteurs du monde agregent uniquement les ticks reellement executes pendant la frame. Une frame sans tick monde exporte zero pour ces evenements.
 - Le CSV inclut aussi des stats par pass pour `opaque`, `cutout` et `transparent` :
   `resident_meshes`, `visible_meshes`, `draw_calls`, `drawn_faces`, `mesh_upload_ms`, `light_upload_ms`.
 - Le CSV expose aussi le budget CPU du monde, la memoire reservee aux taches, la memoire GPU des chunks, le nombre de chunks a eclairage compact et la distance demandee/effective.
+- Les colonnes sparse ajoutent la cible materialisee, les chunks virtuels, l'equivalent de l'ancien cylindre, le pourcentage evite et les statistiques du cache de classification.
 - Les timings `chunk_gen_ms` et `chunk_mesh_ms` agregent du travail fait en threads de fond. Ils peuvent donc depasser le frame time d'une frame isolee.
 
 Exemple :
@@ -132,6 +142,8 @@ Le fichier `runtime-summary.json` ajoute :
 - moyennes, min, max, p50, p95 et p99
 - compteurs lents `>16.67 ms` et `>33.33 ms`
 - totaux de chunks generes, meshed, remeshed, publies et unload
+- section `sparse_streaming` et etat final de convergence du streamer
+- timings normalises par mise a jour monde dans `stage_per_world_update_ms`
 - flags d'isolation actifs pendant le run
 - repartition du stage dominant hors warm-up entre generation, meshing et lumiere
 

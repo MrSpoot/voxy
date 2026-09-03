@@ -3,6 +3,7 @@ package org.weaw.runtime;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class LaunchOptionsTest {
     private static final long MIB = 1024L * 1024L;
@@ -26,5 +27,12 @@ class LaunchOptionsTest {
         assertEquals(1234, options.worldMemoryBudget().maxLoadedChunks());
         assertEquals(-2, options.worldHeightRange().minChunkY());
         assertEquals(5, options.worldHeightRange().maxChunkY());
+    }
+
+    @Test
+    void disablesSparseStreamingFromTheCommandLine() {
+        LaunchOptions options = LaunchOptions.from(new String[]{"--disable-sparse-streaming"});
+
+        assertFalse(options.sparseChunkStreamingEnabled());
     }
 }

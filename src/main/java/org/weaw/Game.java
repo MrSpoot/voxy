@@ -28,6 +28,7 @@ import org.weaw.runtime.BenchmarkController;
 import org.weaw.runtime.JfrProfileRecorder;
 import org.weaw.runtime.LaunchOptions;
 import org.weaw.runtime.FixedRateUpdateScheduler;
+import org.weaw.runtime.FrameEventAccumulator;
 import org.weaw.runtime.RuntimeFrameProfile;
 import org.weaw.runtime.RuntimeProfilingCsvWriter;
 import org.weaw.runtime.RuntimeProfilingSummaryCollector;
@@ -61,6 +62,7 @@ public class Game {
     private RuntimeProfilingCsvWriter runtimeProfilingCsvWriter;
     private RuntimeProfilingSummaryCollector runtimeProfilingSummaryCollector;
     private FixedRateUpdateScheduler worldStreamingScheduler;
+    private final FrameEventAccumulator<WorldProfilingSnapshot> worldUpdatesThisFrame = new FrameEventAccumulator<>();
 
     private double lastTime;
     private double benchmarkElapsedSeconds;
@@ -140,6 +142,7 @@ public class Game {
         LOGGER.info("Starting game loop");
 
         while (!window.shouldClose()) {
+            worldUpdatesThisFrame.reset();
             long frameStartNs = System.nanoTime();
             double now = System.nanoTime() / 1_000_000_000.0;
             float deltaTime = (float)(now - lastTime);
@@ -244,7 +247,8 @@ public class Game {
         WorldSettings settings = new WorldSettings(
                 renderDistance,
                 launchOptions.worldHeightRange(),
-                launchOptions.worldMemoryBudget()
+                launchOptions.worldMemoryBudget(),
+                launchOptions.sparseChunkStreamingEnabled()
         );
         return new World(new NoiseWorldGenerator(config), settings);
     }
@@ -313,7 +317,10 @@ public class Game {
     private void updateWorldStreaming(float deltaTime) {
         worldStreamingScheduler.update(
                 deltaTime,
-                () -> world.update(gameplaySession.getPlayer().getPosition())
+                () -> {
+                    world.update(gameplaySession.getPlayer().getPosition());
+                    worldUpdatesThisFrame.add(world.getLastProfilingSnapshot());
+                }
         );
     }
 
@@ -448,18 +455,20 @@ public class Game {
                 && launchOptions.ambientOcclusionEnabled()
                 && launchOptions.remeshEnabled()
                 && launchOptions.unloadsEnabled()
-                && launchOptions.transparentChunksEnabled()) {
+                && launchOptions.transparentChunksEnabled()
+                && launchOptions.sparseChunkStreamingEnabled()) {
             return;
         }
 
         LOGGER.info(
-                "Runtime isolation flags: dynamicLighting={} lightUpload={} ao={} remesh={} unloads={} transparentChunks={}",
+                "Runtime isolation flags: dynamicLighting={} lightUpload={} ao={} remesh={} unloads={} transparentChunks={} sparseStreaming={}",
                 launchOptions.dynamicLightingEnabled(),
                 launchOptions.lightUploadEnabled(),
                 launchOptions.ambientOcclusionEnabled(),
                 launchOptions.remeshEnabled(),
                 launchOptions.unloadsEnabled(),
-                launchOptions.transparentChunksEnabled()
+                launchOptions.transparentChunksEnabled(),
+                launchOptions.sparseChunkStreamingEnabled()
         );
     }
 
@@ -496,10 +505,22 @@ public class Game {
         }
 
         RenderStats renderStats = renderer.getContext().getRenderStats();
-        WorldProfilingSnapshot worldProfilingSnapshot = world.getLastProfilingSnapshot();
+        WorldProfilingSnapshot worldProfilingSnapshot = worldUpdatesThisFrame.latestOr(world.getLastProfilingSnapshot());
+        WorldProfilingSnapshot firstWorldProfilingSnapshot = worldUpdatesThisFrame.firstOr(worldProfilingSnapshot);
         WorldMemorySnapshot worldMemorySnapshot = world.getMemorySnapshot();
         ChunkLightCacheProfilingSnapshot lightCacheProfilingSnapshot =
                 renderer.getContext().getChunkLightCache().consumeProfilingSnapshot();
+
+        int avoidedChunkCandidates = worldMemorySnapshot.virtualEmptyChunks()
+                + worldMemorySnapshot.virtualUniformChunks();
+        int legacyCandidateChunks = worldMemorySnapshot.desiredMaterializedChunks() + avoidedChunkCandidates;
+        double chunkAvoidancePercent = percentage(avoidedChunkCandidates, legacyCandidateChunks);
+        long classificationQueries = worldMemorySnapshot.classificationCacheHits()
+                + worldMemorySnapshot.classificationCacheMisses();
+        double classificationCacheHitPercent = percentage(
+                worldMemorySnapshot.classificationCacheHits(),
+                classificationQueries
+        );
 
         RuntimeFrameProfile frameProfile = new RuntimeFrameProfile(
                 renderStats.getFrameIndex(),
@@ -508,14 +529,14 @@ public class Game {
                 nanosToMillis(renderStats.getUpdateCpuTimeNs()),
                 nanosToMillis(renderStats.getRenderCpuTimeNs()),
                 nanosToMillis(renderStats.getWindowCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.worldUpdateCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.worldStreamerUpdateCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.lightingCollectionCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.lightingCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.chunkGenerationCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.chunkMeshCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.chunkPublishCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.chunkUnloadCpuTimeNs()),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::worldUpdateCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::worldStreamerUpdateCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingCollectionCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkGenerationCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkPublishCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkUnloadCpuTimeNs)),
                 nanosToMillis(renderStats.getTotalPassCpuTimeNs()),
                 nanosToMillis(passCpuTimeNs(renderStats, "OpaqueChunkRenderPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "CutoutChunkRenderPass")),
@@ -545,28 +566,28 @@ public class Game {
                 nanosToMillis(passLightUploadCpuTimeNs(renderStats, "TransparentChunkRenderPass")),
                 nanosToMillis(totalMeshUploadCpuTimeNs(renderStats)),
                 nanosToMillis(totalLightUploadCpuTimeNs(renderStats)),
-                nanosToMillis(worldProfilingSnapshot.lightingSnapshotLoadedChunksCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.lightingClearCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.lightingSeedCpuTimeNs()),
-                nanosToMillis(worldProfilingSnapshot.lightingPropagateCpuTimeNs()),
-                worldProfilingSnapshot.pendingLightingUpdatesBeforeCollection(),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingSnapshotLoadedChunksCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingClearCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingSeedCpuTimeNs)),
+                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingPropagateCpuTimeNs)),
+                firstWorldProfilingSnapshot.pendingLightingUpdatesBeforeCollection(),
                 worldProfilingSnapshot.pendingLightingUpdatesAfterCollection(),
-                worldProfilingSnapshot.lightingBatchSize(),
-                worldProfilingSnapshot.lightingAffectedChunkCount(),
-                worldProfilingSnapshot.lightingExpandedChunkCount(),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingBatchSize),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingAffectedChunkCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingExpandedChunkCount),
                 worldProfilingSnapshot.lightingLoadedChunkCount(),
-                worldProfilingSnapshot.lightingLoadedTargetChunkCount(),
-                worldProfilingSnapshot.lightingMarkedChunkCount(),
-                worldProfilingSnapshot.lightingClearedChunkCount(),
-                worldProfilingSnapshot.lightingEmitterCount(),
-                worldProfilingSnapshot.lightingSeedNodeCount(),
-                worldProfilingSnapshot.lightingPropagationNodeCount(),
-                worldProfilingSnapshot.lightingLightWriteCount(),
-                worldProfilingSnapshot.lightingBlockedByOpaqueCount(),
-                worldProfilingSnapshot.lightingMissingChunkNeighborCount(),
-                worldProfilingSnapshot.lightingNoGainCount(),
-                worldProfilingSnapshot.lightUploadFullSnapshotCount(),
-                worldProfilingSnapshot.lightUploadDeltaCount(),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingLoadedTargetChunkCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingMarkedChunkCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingClearedChunkCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingEmitterCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingSeedNodeCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingPropagationNodeCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingLightWriteCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingBlockedByOpaqueCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingMissingChunkNeighborCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingNoGainCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightUploadFullSnapshotCount),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightUploadDeltaCount),
                 lightCacheProfilingSnapshot.synchronizeCalls(),
                 lightCacheProfilingSnapshot.refreshedAllocationCount(),
                 lightCacheProfilingSnapshot.freedAllocationCount(),
@@ -578,11 +599,11 @@ public class Game {
                 worldProfilingSnapshot.pendingRemesh(),
                 worldProfilingSnapshot.pendingUploads(),
                 worldProfilingSnapshot.pendingUnloads(),
-                worldProfilingSnapshot.chunksPublished(),
-                worldProfilingSnapshot.chunksUnloaded(),
-                worldProfilingSnapshot.chunksGenerated(),
-                worldProfilingSnapshot.chunksMeshed(),
-                worldProfilingSnapshot.chunksRemeshed(),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksPublished),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksUnloaded),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksGenerated),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksMeshed),
+                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::chunksRemeshed),
                 worldMemorySnapshot.estimatedCpuResidentBytes(),
                 worldMemorySnapshot.maxCpuResidentBytes(),
                 worldMemorySnapshot.reservedInFlightBytes(),
@@ -592,7 +613,20 @@ public class Game {
                 worldMemorySnapshot.requestedRenderDistanceChunks(),
                 worldMemorySnapshot.effectiveRenderDistanceChunks(),
                 worldMemorySnapshot.rejectedLoadCount(),
-                worldMemorySnapshot.pressureState().name()
+                worldMemorySnapshot.pressureState().name(),
+                worldUpdatesThisFrame.size(),
+                worldMemorySnapshot.sparseChunkStreamingEnabled(),
+                worldMemorySnapshot.desiredMaterializedChunks(),
+                worldMemorySnapshot.virtualEmptyChunks(),
+                worldMemorySnapshot.virtualUniformChunks(),
+                worldMemorySnapshot.interactionBubbleChunks(),
+                legacyCandidateChunks,
+                avoidedChunkCandidates,
+                chunkAvoidancePercent,
+                worldMemorySnapshot.classificationCacheColumns(),
+                worldMemorySnapshot.classificationCacheHits(),
+                worldMemorySnapshot.classificationCacheMisses(),
+                classificationCacheHitPercent
         );
 
         if (runtimeProfilingSummaryCollector != null) {
@@ -697,5 +731,9 @@ public class Game {
 
     private static double nanosToMillis(long nanoseconds) {
         return nanoseconds / 1_000_000.0d;
+    }
+
+    private static double percentage(long numerator, long denominator) {
+        return denominator <= 0L ? 0.0d : numerator * 100.0d / denominator;
     }
 }

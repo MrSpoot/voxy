@@ -11,10 +11,21 @@
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <lwjgl.version>3.3.4</lwjgl.version>
-        <joml.version>1.10.5</joml.version>
-        <imgui.version>1.90.0</imgui.version>
-        <lombok.version>1.18.44</lombok.version>
+        <lwjgl.version>3.4.3</lwjgl.version>
+        <joml.version>1.10.9</joml.version>
+        <imgui.version>1.92.7.1</imgui.version>
+        <lombok.version>1.18.48</lombok.version>
+        <slf4j.version>2.0.18</slf4j.version>
+        <logback.version>1.6.3</logback.version>
+        <junit.version>6.1.3</junit.version>
+        <maven.minimum.version>3.9.16</maven.minimum.version>
+        <maven.clean.plugin.version>3.5.0</maven.clean.plugin.version>
+        <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
+        <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
+        <maven.jar.plugin.version>3.5.1</maven.jar.plugin.version>
+        <maven.resources.plugin.version>3.5.0</maven.resources.plugin.version>
+        <maven.shade.plugin.version>3.6.2</maven.shade.plugin.version>
+        <maven.surefire.plugin.version>3.5.5</maven.surefire.plugin.version>
     </properties>
 
     <profiles>
@@ -43,14 +54,28 @@
             </properties>
         </profile>
         <profile>
-            <id>OSX-profile</id>
+            <id>macos-x64-profile</id>
             <activation>
                 <os>
                     <family>mac</family>
+                    <arch>x86_64</arch>
                 </os>
             </activation>
             <properties>
-                <native.target>natives-osx</native.target>
+                <native.target>natives-macos</native.target>
+                <imgui.native.target>macos</imgui.native.target>
+            </properties>
+        </profile>
+        <profile>
+            <id>macos-arm64-profile</id>
+            <activation>
+                <os>
+                    <family>mac</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <native.target>natives-macos-arm64</native.target>
                 <imgui.native.target>macos</imgui.native.target>
             </properties>
         </profile>
@@ -65,6 +90,13 @@
                 <scope>import</scope>
                 <type>pom</type>
             </dependency>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -75,19 +107,7 @@
         </dependency>
         <dependency>
             <groupId>org.lwjgl</groupId>
-            <artifactId>lwjgl-assimp</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-glfw</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.lwjgl</groupId>
-            <artifactId>lwjgl-nanovg</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.lwjgl</groupId>
-            <artifactId>lwjgl-openal</artifactId>
         </dependency>
         <dependency>
             <groupId>org.lwjgl</groupId>
@@ -101,37 +121,25 @@
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl</artifactId>
             <classifier>${native.target}</classifier>
-        </dependency>
-        <dependency>
-            <groupId>org.lwjgl</groupId>
-            <artifactId>lwjgl-assimp</artifactId>
-            <classifier>${native.target}</classifier>
-        </dependency>
-        <dependency>
-            <groupId>org.lwjgl</groupId>
-            <artifactId>lwjgl-nanovg</artifactId>
-            <classifier>${native.target}</classifier>
             <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-glfw</artifactId>
             <classifier>${native.target}</classifier>
-        </dependency>
-        <dependency>
-            <groupId>org.lwjgl</groupId>
-            <artifactId>lwjgl-openal</artifactId>
-            <classifier>${native.target}</classifier>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-opengl</artifactId>
             <classifier>${native.target}</classifier>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.lwjgl</groupId>
             <artifactId>lwjgl-stb</artifactId>
             <classifier>${native.target}</classifier>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.joml</groupId>
@@ -139,9 +147,15 @@
             <version>${joml.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.4.14</version>
+            <version>${logback.version}</version>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -150,14 +164,8 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.flowpowered</groupId>
-            <artifactId>flow-noise</artifactId>
-            <version>1.0.0</version>
-        </dependency>
-        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>5.11.3</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -169,6 +177,12 @@
             <groupId>io.github.spair</groupId>
             <artifactId>imgui-java-lwjgl3</artifactId>
             <version>${imgui.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.lwjgl</groupId>
+                    <artifactId>lwjgl-sdl</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>io.github.spair</groupId>
@@ -184,10 +198,10 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
-                <version>3.5.0</version>
+                <version>${maven.enforcer.plugin.version}</version>
                 <executions>
                     <execution>
-                        <id>enforce-java-25</id>
+                        <id>enforce-build-environment</id>
                         <goals>
                             <goal>enforce</goal>
                         </goals>
@@ -197,6 +211,11 @@
                                     <version>[25,26)</version>
                                     <message>Voxy must be built and run with JDK 25.</message>
                                 </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[${maven.minimum.version},4.0.0)</version>
+                                    <message>Voxy requires Maven ${maven.minimum.version} or newer. Use the Maven Wrapper.</message>
+                                </requireMavenVersion>
+                                <dependencyConvergence/>
                             </rules>
                         </configuration>
                     </execution>
@@ -205,7 +224,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
+                <version>${maven.compiler.plugin.version}</version>
                 <configuration>
                     <release>${maven.compiler.release}</release>
                     <annotationProcessorPaths>
@@ -220,7 +239,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.4.1</version>
+                <version>${maven.shade.plugin.version}</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -232,11 +251,38 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>org.weaw.Game</mainClass>
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                        <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+                                    </manifestEntries>
                                 </transformer>
                             </transformers>
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven.surefire.plugin.version}</version>
+                <configuration>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>${maven.clean.plugin.version}</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>${maven.resources.plugin.version}</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>${maven.jar.plugin.version}</version>
             </plugin>
         </plugins>
     </build>

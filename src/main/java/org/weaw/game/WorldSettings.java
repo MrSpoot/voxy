@@ -3,11 +3,12 @@ package org.weaw.game;
 public class WorldSettings {
     public static final int MIN_RENDER_DISTANCE_CHUNKS = 2;
     public static final int MAX_RENDER_DISTANCE_CHUNKS = 64;
-    public static final int DEFAULT_RENDER_DISTANCE_CHUNKS = 16;
+    public static final int DEFAULT_RENDER_DISTANCE_CHUNKS = 32;
 
     private final float[] renderDistanceChunks;
     private final WorldHeightRange heightRange;
     private final WorldMemoryBudget memoryBudget;
+    private final boolean sparseChunkStreamingEnabled;
 
     public WorldSettings() {
         this(DEFAULT_RENDER_DISTANCE_CHUNKS);
@@ -22,9 +23,24 @@ public class WorldSettings {
             WorldHeightRange heightRange,
             WorldMemoryBudget memoryBudget
     ) {
+        this(
+                renderDistanceChunks,
+                heightRange,
+                memoryBudget,
+                Boolean.parseBoolean(System.getProperty("voxy.sparseChunkStreaming", "true"))
+        );
+    }
+
+    public WorldSettings(
+            int renderDistanceChunks,
+            WorldHeightRange heightRange,
+            WorldMemoryBudget memoryBudget,
+            boolean sparseChunkStreamingEnabled
+    ) {
         this.renderDistanceChunks = new float[]{clamp(renderDistanceChunks)};
         this.heightRange = java.util.Objects.requireNonNull(heightRange, "heightRange");
         this.memoryBudget = java.util.Objects.requireNonNull(memoryBudget, "memoryBudget");
+        this.sparseChunkStreamingEnabled = sparseChunkStreamingEnabled;
     }
 
     public int getRenderDistanceChunks() {
@@ -44,6 +60,10 @@ public class WorldSettings {
 
     public WorldMemoryBudget getMemoryBudget() {
         return memoryBudget;
+    }
+
+    public boolean isSparseChunkStreamingEnabled() {
+        return sparseChunkStreamingEnabled;
     }
 
     public void reset() {

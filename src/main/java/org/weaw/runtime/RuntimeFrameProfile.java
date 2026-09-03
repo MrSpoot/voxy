@@ -93,7 +93,20 @@ public record RuntimeFrameProfile(
         int requestedRenderDistanceChunks,
         int effectiveRenderDistanceChunks,
         int rejectedLoads,
-        String memoryPressureState
+        String memoryPressureState,
+        int worldStreamingUpdates,
+        boolean sparseStreamingEnabled,
+        int desiredMaterializedChunks,
+        int virtualEmptyChunks,
+        int virtualUniformChunks,
+        int interactionBubbleChunks,
+        int legacyCandidateChunks,
+        int avoidedChunkCandidates,
+        double chunkAvoidancePercent,
+        int classificationCacheColumns,
+        long classificationCacheHits,
+        long classificationCacheMisses,
+        double classificationCacheHitPercent
 ) {
     public static String csvHeader() {
         return String.join(",",
@@ -187,7 +200,20 @@ public record RuntimeFrameProfile(
                 "requested_render_distance_chunks",
                 "effective_render_distance_chunks",
                 "rejected_loads",
-                "memory_pressure_state"
+                "memory_pressure_state",
+                "world_streaming_updates",
+                "sparse_streaming_enabled",
+                "desired_materialized_chunks",
+                "virtual_empty_chunks",
+                "virtual_uniform_chunks",
+                "interaction_bubble_chunks",
+                "legacy_candidate_chunks",
+                "avoided_chunk_candidates",
+                "chunk_avoidance_percent",
+                "classification_cache_columns",
+                "classification_cache_hits",
+                "classification_cache_misses",
+                "classification_cache_hit_percent"
         );
     }
 
@@ -283,7 +309,20 @@ public record RuntimeFrameProfile(
                 Integer.toString(requestedRenderDistanceChunks),
                 Integer.toString(effectiveRenderDistanceChunks),
                 Integer.toString(rejectedLoads),
-                memoryPressureState
+                memoryPressureState,
+                Integer.toString(worldStreamingUpdates),
+                Boolean.toString(sparseStreamingEnabled),
+                Integer.toString(desiredMaterializedChunks),
+                Integer.toString(virtualEmptyChunks),
+                Integer.toString(virtualUniformChunks),
+                Integer.toString(interactionBubbleChunks),
+                Integer.toString(legacyCandidateChunks),
+                Integer.toString(avoidedChunkCandidates),
+                format(chunkAvoidancePercent),
+                Integer.toString(classificationCacheColumns),
+                Long.toString(classificationCacheHits),
+                Long.toString(classificationCacheMisses),
+                format(classificationCacheHitPercent)
         );
     }
 

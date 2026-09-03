@@ -22,6 +22,7 @@ public record LaunchOptions(
         boolean remeshEnabled,
         boolean unloadsEnabled,
         boolean transparentChunksEnabled,
+        boolean sparseChunkStreamingEnabled,
         WorldHeightRange worldHeightRange,
         WorldMemoryBudget worldMemoryBudget
 ) {
@@ -111,6 +112,8 @@ public record LaunchOptions(
                         && !Boolean.getBoolean("voxy.disableUnloads"),
                 !hasFlag(cliOptions, "disable-transparent-chunks")
                         && !Boolean.getBoolean("voxy.disableTransparentChunks"),
+                !hasFlag(cliOptions, "disable-sparse-streaming")
+                        && Boolean.parseBoolean(System.getProperty("voxy.sparseChunkStreaming", "true")),
                 heightRange,
                 memoryBudget
         );

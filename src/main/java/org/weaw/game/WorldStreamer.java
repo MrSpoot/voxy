@@ -221,9 +221,7 @@ public class WorldStreamer implements AutoCloseable {
         this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
         this.maxPublishesPerUpdate = Math.max(1, maxPublishesPerUpdate);
         this.maxUpdateBudgetNs = Math.max(250_000L, maxUpdateBudgetNs);
-        this.sparseChunkStreamingEnabled = Boolean.parseBoolean(
-                System.getProperty("voxy.sparseChunkStreaming", "true")
-        );
+        this.sparseChunkStreamingEnabled = settings.isSparseChunkStreamingEnabled();
         workerCount = Math.max(1, workerCount);
         int memoryLimitedQueueCount = Math.max(1, (int) (memoryBudget.maxInFlightBytes() / TASK_MEMORY_RESERVATION_BYTES));
         this.maxQueuedChunkCount = Math.min(
