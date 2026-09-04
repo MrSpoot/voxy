@@ -48,6 +48,7 @@ public class RenderContext {
     private final RenderStats renderStats = new RenderStats();
     private final ColorGradingSettings colorGradingSettings = new ColorGradingSettings();
     private final LightingSettings lightingSettings = new LightingSettings();
+    private final CloudSettings cloudSettings = new CloudSettings();
     private final FogSettings fogSettings = new FogSettings();
     private WorldSettings worldSettings = new WorldSettings();
     private String currentColorTargetName;

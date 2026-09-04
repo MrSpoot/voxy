@@ -6,6 +6,7 @@ import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPipeline;
 import org.weaw.engine.graphics.pipeline.passes.AntiAliasingPass;
 import org.weaw.engine.graphics.pipeline.passes.BlockOutlinePass;
+import org.weaw.engine.graphics.pipeline.passes.CloudRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.CutoutChunkRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.DebugImGuiPass;
 import org.weaw.engine.graphics.pipeline.passes.FogPass;
@@ -64,6 +65,7 @@ public class Renderer {
         // Create and configure render pipeline
         pipeline = new RenderPipeline(context);
         pipeline.addPass(new SkyBoxPass());
+        pipeline.addPass(new CloudRenderPass());
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
         if (transparentChunksEnabled) {
