@@ -7,9 +7,20 @@ public record ChunkLightCacheProfilingSnapshot(
         int refreshedAllocationCount,
         int freedAllocationCount,
         int uploadedChunkCount,
-        int residentAllocationCount
+        int residentAllocationCount,
+        int deferredUploadCount,
+        int allocationFailureCount,
+        int evictionCount,
+        int skippedRetryCount,
+        int urgentUploadedChunkCount,
+        int backgroundUploadedChunkCount,
+        int newVisibleMissingCount,
+        int prefetchedUploadedChunkCount,
+        int prefetchHitCount,
+        int fallbackChunkCount
 ) {
     public static ChunkLightCacheProfilingSnapshot empty() {
-        return new ChunkLightCacheProfilingSnapshot(0, 0, 0, 0, 0, 0, 0);
+        return new ChunkLightCacheProfilingSnapshot(0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 }

@@ -129,7 +129,9 @@ public class Game {
                 launchOptions.transparentChunksEnabled()
         );
         renderer.create();
-        renderer.getContext().getLightingSettings().setBlockLightEnabled(launchOptions.lightUploadEnabled());
+        boolean voxelLightDataEnabled = launchOptions.dynamicLightingEnabled() && launchOptions.lightUploadEnabled();
+        renderer.getContext().setVoxelLightDataEnabled(voxelLightDataEnabled);
+        renderer.getContext().getLightingSettings().setBlockLightEnabled(voxelLightDataEnabled);
 
         // Connect renderer to window for resize notifications
         window.setRenderer(renderer);
@@ -330,6 +332,10 @@ public class Game {
                     worldUpdatesThisFrame.add(world.getLastProfilingSnapshot());
                 }
         );
+        world.processLightingFrame();
+        if (!worldUpdatesThisFrame.isEmpty()) {
+            worldUpdatesThisFrame.replaceLast(world.getLastProfilingSnapshot());
+        }
     }
 
     private void accumulatePlayerInputFrame() {
@@ -549,7 +555,7 @@ public class Game {
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::worldUpdateCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::worldStreamerUpdateCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingCollectionCpuTimeNs)),
-                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingCpuTimeNs)),
+                nanosToMillis(worldProfilingSnapshot.lightingCpuTimeNs()),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkGenerationCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshCpuTimeNs)),
                 nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::chunkMeshingSnapshotCpuTimeNs)),
@@ -587,26 +593,26 @@ public class Game {
                 nanosToMillis(passLightUploadCpuTimeNs(renderStats, "TransparentChunkRenderPass")),
                 nanosToMillis(totalMeshUploadCpuTimeNs(renderStats)),
                 nanosToMillis(totalLightUploadCpuTimeNs(renderStats)),
-                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingSnapshotLoadedChunksCpuTimeNs)),
-                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingClearCpuTimeNs)),
-                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingSeedCpuTimeNs)),
-                nanosToMillis(worldUpdatesThisFrame.sumLong(WorldProfilingSnapshot::lightingPropagateCpuTimeNs)),
+                nanosToMillis(worldProfilingSnapshot.lightingSnapshotLoadedChunksCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingClearCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingSeedCpuTimeNs()),
+                nanosToMillis(worldProfilingSnapshot.lightingPropagateCpuTimeNs()),
                 firstWorldProfilingSnapshot.pendingLightingUpdatesBeforeCollection(),
                 worldProfilingSnapshot.pendingLightingUpdatesAfterCollection(),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingBatchSize),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingAffectedChunkCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingExpandedChunkCount),
+                worldProfilingSnapshot.lightingBatchSize(),
+                worldProfilingSnapshot.lightingAffectedChunkCount(),
+                worldProfilingSnapshot.lightingExpandedChunkCount(),
                 worldProfilingSnapshot.lightingLoadedChunkCount(),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingLoadedTargetChunkCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingMarkedChunkCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingClearedChunkCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingEmitterCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingSeedNodeCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingPropagationNodeCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingLightWriteCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingBlockedByOpaqueCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingMissingChunkNeighborCount),
-                worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightingNoGainCount),
+                worldProfilingSnapshot.lightingLoadedTargetChunkCount(),
+                worldProfilingSnapshot.lightingMarkedChunkCount(),
+                worldProfilingSnapshot.lightingClearedChunkCount(),
+                worldProfilingSnapshot.lightingEmitterCount(),
+                worldProfilingSnapshot.lightingSeedNodeCount(),
+                worldProfilingSnapshot.lightingPropagationNodeCount(),
+                worldProfilingSnapshot.lightingLightWriteCount(),
+                worldProfilingSnapshot.lightingBlockedByOpaqueCount(),
+                worldProfilingSnapshot.lightingMissingChunkNeighborCount(),
+                worldProfilingSnapshot.lightingNoGainCount(),
                 worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightUploadFullSnapshotCount),
                 worldUpdatesThisFrame.sumInt(WorldProfilingSnapshot::lightUploadDeltaCount),
                 lightCacheProfilingSnapshot.synchronizeCalls(),
@@ -614,6 +620,16 @@ public class Game {
                 lightCacheProfilingSnapshot.freedAllocationCount(),
                 lightCacheProfilingSnapshot.uploadedChunkCount(),
                 lightCacheProfilingSnapshot.residentAllocationCount(),
+                lightCacheProfilingSnapshot.deferredUploadCount(),
+                lightCacheProfilingSnapshot.allocationFailureCount(),
+                lightCacheProfilingSnapshot.evictionCount(),
+                lightCacheProfilingSnapshot.skippedRetryCount(),
+                lightCacheProfilingSnapshot.urgentUploadedChunkCount(),
+                lightCacheProfilingSnapshot.backgroundUploadedChunkCount(),
+                lightCacheProfilingSnapshot.newVisibleMissingCount(),
+                lightCacheProfilingSnapshot.prefetchedUploadedChunkCount(),
+                lightCacheProfilingSnapshot.prefetchHitCount(),
+                lightCacheProfilingSnapshot.fallbackChunkCount(),
                 worldProfilingSnapshot.loadedChunks(),
                 renderer.getContext().getVisibleChunkPositions().size(),
                 worldProfilingSnapshot.queuedTasks(),

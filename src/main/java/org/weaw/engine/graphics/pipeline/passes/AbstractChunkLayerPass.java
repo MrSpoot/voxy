@@ -34,6 +34,14 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     private static final boolean USE_MULTI_DRAW = !"legacy".equalsIgnoreCase(CHUNK_DRAW_MODE);
     private static final String DRAW_SUBMISSION_MODE = USE_MULTI_DRAW ? "Indirect" : "Legacy";
     private static final int INITIAL_DRAW_BATCH_CAPACITY = Integer.getInteger("voxy.chunkBatchInitialCapacity", 8192);
+    private static final int LIGHT_PREFETCH_MAX_FOV_DEGREES = Math.clamp(
+            Integer.getInteger("voxy.chunkLightPrefetchFovDegrees", 150), 90, 175);
+    private static final int LIGHT_PREFETCH_RADIUS_CHUNKS = Math.max(0,
+            Integer.getInteger("voxy.chunkLightPrefetchRadiusChunks", 4));
+    private static final float LIGHT_PREFETCH_LOOK_AHEAD_SECONDS = Math.max(0.0f,
+            Float.parseFloat(System.getProperty("voxy.chunkLightPrefetchLookAheadSeconds", "0.25")));
+    private static final float LIGHT_PREFETCH_MAX_YAW_LEAD_DEGREES = Math.max(0.0f,
+            Float.parseFloat(System.getProperty("voxy.chunkLightPrefetchMaxYawLeadDegrees", "60")));
 
     private final ChunkManager chunkManager;
     private final String name;
@@ -44,7 +52,13 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     private final Matrix4f projectionMatrix = new Matrix4f();
     private final Matrix4f viewMatrix = new Matrix4f();
     private final Matrix4f viewProjectionMatrix = new Matrix4f();
+    private final Matrix4f lightPrefetchProjectionMatrix = new Matrix4f();
+    private final Matrix4f lightPrefetchViewProjectionMatrix = new Matrix4f();
+    private final Matrix4f predictedLightViewMatrix = new Matrix4f();
+    private final Matrix4f predictedLightViewProjectionMatrix = new Matrix4f();
     private final FrustumIntersection frustumIntersection = new FrustumIntersection();
+    private final FrustumIntersection lightPrefetchFrustumIntersection = new FrustumIntersection();
+    private final FrustumIntersection predictedLightPrefetchFrustumIntersection = new FrustumIntersection();
 
     private Shader shader;
     private ChunkMultiDrawBatch multiDrawBatch;
@@ -54,6 +68,9 @@ abstract class AbstractChunkLayerPass implements RenderPass {
     private int residentFaceCountCache;
     private long lastDeferredRetryCameraVersion = Long.MIN_VALUE;
     private long lastDeferredRetryUploadsVersion = Long.MIN_VALUE;
+    private float lastLightPrefetchYaw;
+    private float lastLightPrefetchPitch;
+    private boolean lightPrefetchPoseInitialized;
 
     protected AbstractChunkLayerPass(ChunkManager chunkManager, String name, String shaderPath) {
         this.chunkManager = chunkManager;
@@ -74,17 +91,13 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     @Override
     public final void execute(RenderContext context) {
+        long passStartNs = System.nanoTime();
         boolean requiresLightData = context.isLightDebugVisualizationEnabled()
-                || context.getLightingSettings().isBlockLightEnabled();
+                || context.isVoxelLightDataEnabled();
         ChunkLightCache lightCache = context.getChunkLightCache();
-        long lightUploadStartNs = System.nanoTime();
-        lightCache.synchronize(requiresLightData);
-        long lightUploadCpuTimeNs = System.nanoTime() - lightUploadStartNs;
         long meshUploadStartNs = System.nanoTime();
         synchronizeRenderEntries(context, lightCache);
         long meshUploadCpuTimeNs = System.nanoTime() - meshUploadStartNs;
-        long syncCpuTimeNs = lightUploadCpuTimeNs + meshUploadCpuTimeNs;
-        long passStartNs = lightUploadStartNs;
 
         RenderTarget sceneTarget = context.getRenderTarget("sceneColor");
         if (sceneTarget != null) {
@@ -126,6 +139,17 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         int culledMeshCount = Math.max(0, residentMeshCount - visibleMeshCount);
         long visibilityCpuTimeNs = System.nanoTime() - visibilityStartNs;
 
+        long lightUploadStartNs = System.nanoTime();
+        lightCache.prepareFrame(
+                requiresLightData,
+                visibleChunkPositions,
+                context.getLightPrefetchChunkPositions(),
+                context.getCamera().getPosition(),
+                context.getRenderStats().getFrameIndex()
+        );
+        long lightUploadCpuTimeNs = System.nanoTime() - lightUploadStartNs;
+        long syncCpuTimeNs = lightUploadCpuTimeNs + meshUploadCpuTimeNs;
+
         long batchUploadStartNs = System.nanoTime();
         multiDrawBatch.upload(visibleDraws);
         long batchUploadCpuTimeNs = System.nanoTime() - batchUploadStartNs;
@@ -139,6 +163,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         shader.setUniform("uProjection", projectionMatrix);
         shader.setUniform("uView", viewMatrix);
         shader.setUniform("uDebugLightVisualizationEnabled", context.isLightDebugVisualizationEnabled() ? 1 : 0);
+        shader.setUniform("uVoxelLightDataEnabled", context.isVoxelLightDataEnabled() ? 1 : 0);
         shader.setUniform("uBlockLightEnabled", context.getLightingSettings().isBlockLightEnabled() ? 1 : 0);
         shader.setUniform("uBlockLightIntensity", context.getLightingSettings().getBlockLightIntensity());
         setLightingUniforms(context);
@@ -236,11 +261,14 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         shader.setUniform("uLightingEnabled", lighting.isEnabled() ? 1 : 0);
         shader.setUniform("uAmbientColor", lighting.getAmbientRed(), lighting.getAmbientGreen(), lighting.getAmbientBlue());
         shader.setUniform("uAmbientIntensity", lighting.getAmbientIntensity());
+        shader.setUniform("uShadowStrength", lighting.getShadowStrength());
         shader.setUniform("uSunColor", lighting.getSunRed(), lighting.getSunGreen(), lighting.getSunBlue());
         shader.setUniform("uSunIntensity", lighting.getSunIntensity());
         shader.setUniform("uSunDirection", lighting.getSunDirectionX(), lighting.getSunDirectionY(), lighting.getSunDirectionZ());
         shader.setUniform("uSkyColor", lighting.getSkyRed(), lighting.getSkyGreen(), lighting.getSkyBlue());
         shader.setUniform("uSkyIntensity", lighting.getSkyIntensity());
+        shader.setUniform("uVoxelLightGamma", lighting.getVoxelLightGamma());
+        shader.setUniform("uVoxelDarknessFloor", lighting.getVoxelDarknessFloor());
     }
 
     protected void sortVisibleDraws(RenderContext context, List<ChunkRenderEntry> visibleDraws) {
@@ -435,7 +463,50 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         }
 
         Set<ChunkPosition> visibleChunkPositions = context.getVisibleChunkPositions();
+        Set<ChunkPosition> prefetchChunkPositions = context.getLightPrefetchChunkPositions();
         visibleChunkPositions.clear();
+        prefetchChunkPositions.clear();
+
+        float prefetchFov = Math.min(context.getCamera().getFov() + 60.0f, LIGHT_PREFETCH_MAX_FOV_DEGREES);
+        lightPrefetchProjectionMatrix.identity().perspective(
+                (float) Math.toRadians(prefetchFov),
+                context.getCamera().getAspectRatio(),
+                context.getCamera().getFar(),
+                context.getCamera().getNear(),
+                true
+        );
+        lightPrefetchViewProjectionMatrix.set(lightPrefetchProjectionMatrix).mul(viewMatrix);
+        lightPrefetchFrustumIntersection.set(lightPrefetchViewProjectionMatrix);
+        Vector3f cameraPosition = context.getCamera().getPosition();
+        float cameraYaw = context.getCamera().getYaw();
+        float cameraPitch = context.getCamera().getPitch();
+        float predictedYaw = cameraYaw;
+        float predictedPitch = cameraPitch;
+        if (lightPrefetchPoseInitialized) {
+            float deltaSeconds = Math.clamp(context.getFrameDeltaSeconds(), 1.0f / 240.0f, 0.1f);
+            float yawVelocity = wrapDegrees(cameraYaw - lastLightPrefetchYaw) / deltaSeconds;
+            float pitchVelocity = (cameraPitch - lastLightPrefetchPitch) / deltaSeconds;
+            predictedYaw += Math.clamp(
+                    yawVelocity * LIGHT_PREFETCH_LOOK_AHEAD_SECONDS,
+                    -LIGHT_PREFETCH_MAX_YAW_LEAD_DEGREES,
+                    LIGHT_PREFETCH_MAX_YAW_LEAD_DEGREES
+            );
+            predictedPitch = Math.clamp(
+                    predictedPitch + pitchVelocity * LIGHT_PREFETCH_LOOK_AHEAD_SECONDS,
+                    -89.0f,
+                    89.0f
+            );
+        }
+        setViewMatrix(predictedLightViewMatrix, cameraPosition, predictedYaw, predictedPitch);
+        predictedLightViewProjectionMatrix.set(lightPrefetchProjectionMatrix).mul(predictedLightViewMatrix);
+        predictedLightPrefetchFrustumIntersection.set(predictedLightViewProjectionMatrix);
+        lastLightPrefetchYaw = cameraYaw;
+        lastLightPrefetchPitch = cameraPitch;
+        lightPrefetchPoseInitialized = true;
+        int cameraChunkX = (int) Math.floor(cameraPosition.x / Chunk.SIZE);
+        int cameraChunkY = (int) Math.floor(cameraPosition.y / Chunk.SIZE);
+        int cameraChunkZ = (int) Math.floor(cameraPosition.z / Chunk.SIZE);
+        int prefetchRadiusSquared = LIGHT_PREFETCH_RADIUS_CHUNKS * LIGHT_PREFETCH_RADIUS_CHUNKS;
 
         for (ChunkPosition position : chunkManager.snapshotChunkUploads().keySet()) {
             float minX = position.x() * Chunk.SIZE;
@@ -451,6 +522,31 @@ abstract class AbstractChunkLayerPass implements RenderPass {
                     minZ + Chunk.SIZE
             )) {
                 visibleChunkPositions.add(position);
+                prefetchChunkPositions.add(position);
+                continue;
+            }
+
+            int chunkDx = position.x() - cameraChunkX;
+            int chunkDy = position.y() - cameraChunkY;
+            int chunkDz = position.z() - cameraChunkZ;
+            boolean insideNearPrefetchSphere = chunkDx * chunkDx + chunkDy * chunkDy + chunkDz * chunkDz
+                    <= prefetchRadiusSquared;
+            if (insideNearPrefetchSphere || lightPrefetchFrustumIntersection.testAab(
+                    minX,
+                    minY,
+                    minZ,
+                    minX + Chunk.SIZE,
+                    minY + Chunk.SIZE,
+                    minZ + Chunk.SIZE
+            ) || predictedLightPrefetchFrustumIntersection.testAab(
+                    minX,
+                    minY,
+                    minZ,
+                    minX + Chunk.SIZE,
+                    minY + Chunk.SIZE,
+                    minZ + Chunk.SIZE
+            )) {
+                prefetchChunkPositions.add(position);
             }
         }
 
@@ -458,6 +554,42 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         context.setChunkVisibilityCameraVersion(currentCameraVersion);
         context.setChunkVisibilityUploadsVersion(currentUploadsVersion);
         return visibleChunkPositions;
+    }
+
+    private static void setViewMatrix(
+            Matrix4f destination,
+            Vector3f position,
+            float yawDegrees,
+            float pitchDegrees
+    ) {
+        float yaw = (float) Math.toRadians(yawDegrees);
+        float pitch = (float) Math.toRadians(pitchDegrees);
+        float cosPitch = (float) Math.cos(pitch);
+        float forwardX = (float) Math.cos(yaw) * cosPitch;
+        float forwardY = (float) Math.sin(pitch);
+        float forwardZ = (float) Math.sin(yaw) * cosPitch;
+        destination.identity().lookAt(
+                position.x,
+                position.y,
+                position.z,
+                position.x + forwardX,
+                position.y + forwardY,
+                position.z + forwardZ,
+                0.0f,
+                1.0f,
+                0.0f
+        );
+    }
+
+    private static float wrapDegrees(float degrees) {
+        float wrapped = degrees % 360.0f;
+        if (wrapped > 180.0f) {
+            return wrapped - 360.0f;
+        }
+        if (wrapped < -180.0f) {
+            return wrapped + 360.0f;
+        }
+        return wrapped;
     }
 
     protected record ChunkRenderEntry(

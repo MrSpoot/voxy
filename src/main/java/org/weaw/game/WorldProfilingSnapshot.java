@@ -53,6 +53,67 @@ public record WorldProfilingSnapshot(
         int chunkMeshingSampledBlocks,
         int cancelledChunkBuilds
 ) {
+    public WorldProfilingSnapshot withLighting(
+            long lightingCpuTimeNs,
+            WorldLightingProfilingSnapshot lighting,
+            int markedChunkCount,
+            int pendingAfter
+    ) {
+        return new WorldProfilingSnapshot(
+                Math.max(0L, worldUpdateCpuTimeNs - this.lightingCpuTimeNs) + lightingCpuTimeNs,
+                worldStreamerUpdateCpuTimeNs,
+                lightingCollectionCpuTimeNs,
+                lightingCpuTimeNs,
+                lighting.snapshotLoadedChunksCpuTimeNs(),
+                lighting.clearLightingCpuTimeNs(),
+                lighting.seedEmittersCpuTimeNs(),
+                lighting.propagateCpuTimeNs(),
+                chunkGenerationCpuTimeNs,
+                chunkMeshCpuTimeNs,
+                chunkMeshingSnapshotCpuTimeNs,
+                chunkMeshingFaceClassificationCpuTimeNs,
+                chunkMeshingGreedyMergeCpuTimeNs,
+                chunkMeshingOutputBuildCpuTimeNs,
+                chunkPublishCpuTimeNs,
+                chunkUnloadCpuTimeNs,
+                pendingLightingUpdatesBeforeCollection,
+                pendingAfter,
+                lighting.affectedChunkCount(),
+                lighting.affectedChunkCount(),
+                lighting.expandedChunkCount(),
+                lighting.loadedChunkCount(),
+                lighting.loadedTargetChunkCount(),
+                markedChunkCount,
+                lighting.clearedChunkCount(),
+                lighting.emitterCount(),
+                lighting.seededNodeCount(),
+                lighting.propagationNodeCount(),
+                lighting.lightWriteCount(),
+                lighting.blockedByOpaqueCount(),
+                lighting.missingChunkNeighborCount(),
+                lighting.noGainCount(),
+                lightUploadFullSnapshotCount,
+                lightUploadDeltaCount,
+                lightUploadRefreshedChunkCount,
+                lightUploadFreedChunkCount,
+                lightUploadUploadedChunkCount,
+                lightUploadResidentChunkCount,
+                loadedChunks,
+                queuedTasks,
+                pendingRemesh,
+                pendingUploads,
+                pendingUnloads,
+                chunksPublished,
+                chunksUnloaded,
+                chunksGenerated,
+                chunksMeshed,
+                chunksRemeshed,
+                chunkMeshingAmbientOcclusionFaces,
+                chunkMeshingSampledBlocks,
+                cancelledChunkBuilds
+        );
+    }
+
     public static WorldProfilingSnapshot empty() {
         return new WorldProfilingSnapshot(
                 0L,

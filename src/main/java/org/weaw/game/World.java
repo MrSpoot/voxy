@@ -10,21 +10,14 @@ import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockRegistry;
 
 import java.util.Objects;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.HashSet;
-import java.util.Set;
 
 public class World implements AutoCloseable, WorldBlockProvider {
-    private static final int MAX_LIGHTING_UPDATES_PER_FRAME = Integer.getInteger("voxy.maxLightingUpdatesPerFrame", 4);
-
     private final ChunkManager chunkManager;
     private final BlockCatalog blockCatalog;
     private final WorldStreamer worldStreamer;
     private final WorldGenerator worldGenerator;
     private final WorldSettings settings;
     private final WorldLightingSystem lightingSystem;
-    private final Set<ChunkPosition> pendingLightingUpdates = new LinkedHashSet<>();
     private volatile boolean dynamicLightingEnabled = !Boolean.getBoolean("voxy.disableDynamicLighting");
     private long synchronizedLightingUploadsVersion;
     private volatile WorldProfilingSnapshot lastProfilingSnapshot = WorldProfilingSnapshot.empty();
@@ -47,7 +40,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.worldStreamer = new WorldStreamer(chunkManager, this, worldGenerator, settings);
-        this.lightingSystem = new WorldLightingSystem(blockCatalog);
+        this.lightingSystem = new WorldLightingSystem(blockCatalog, this, settings.getHeightRange());
     }
 
     public ChunkManager getChunkManager() {
@@ -70,27 +63,21 @@ public class World implements AutoCloseable, WorldBlockProvider {
         long worldStreamerCpuTimeNs = System.nanoTime() - worldStreamerStartNs;
 
         LightingCollectionProfilingSnapshot lightingCollectionSnapshot = LightingCollectionProfilingSnapshot.empty();
-        LightingSynchronizationProfilingSnapshot lightingSynchronizationSnapshot =
-                LightingSynchronizationProfilingSnapshot.empty();
         long lightingCollectionCpuTimeNs = 0L;
-        long lightingCpuTimeNs = 0L;
         if (dynamicLightingEnabled) {
             long lightingCollectionStartNs = System.nanoTime();
             lightingCollectionSnapshot = collectChunkLightingUpdates();
             lightingCollectionCpuTimeNs = System.nanoTime() - lightingCollectionStartNs;
 
-            long lightingStartNs = System.nanoTime();
-            lightingSynchronizationSnapshot = synchronizeLighting();
-            lightingCpuTimeNs = System.nanoTime() - lightingStartNs;
         }
 
         WorldStreamerProfilingSnapshot streamerSnapshot = worldStreamer.getLastProfilingSnapshot();
-        WorldLightingProfilingSnapshot lightingSnapshot = lightingSynchronizationSnapshot.worldLightingProfilingSnapshot();
+        WorldLightingProfilingSnapshot lightingSnapshot = WorldLightingProfilingSnapshot.empty();
         lastProfilingSnapshot = new WorldProfilingSnapshot(
                 System.nanoTime() - worldUpdateStartNs,
                 worldStreamerCpuTimeNs,
                 lightingCollectionCpuTimeNs,
-                lightingCpuTimeNs,
+                0L,
                 lightingSnapshot.snapshotLoadedChunksCpuTimeNs(),
                 lightingSnapshot.clearLightingCpuTimeNs(),
                 lightingSnapshot.seedEmittersCpuTimeNs(),
@@ -105,12 +92,12 @@ public class World implements AutoCloseable, WorldBlockProvider {
                 streamerSnapshot.chunkUnloadCpuTimeNs(),
                 lightingCollectionSnapshot.pendingBeforeCollection(),
                 lightingCollectionSnapshot.pendingAfterCollection(),
-                lightingSynchronizationSnapshot.batchSize(),
+                0,
                 lightingSnapshot.affectedChunkCount(),
                 lightingSnapshot.expandedChunkCount(),
                 lightingSnapshot.loadedChunkCount(),
                 lightingSnapshot.loadedTargetChunkCount(),
-                lightingSynchronizationSnapshot.markedChunkCount(),
+                0,
                 lightingSnapshot.clearedChunkCount(),
                 lightingSnapshot.emitterCount(),
                 lightingSnapshot.seededNodeCount(),
@@ -121,10 +108,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
                 lightingSnapshot.noGainCount(),
                 lightingCollectionSnapshot.fullSnapshotCount(),
                 lightingCollectionSnapshot.deltaCount(),
-                lightingSynchronizationSnapshot.lightUploadRefreshedChunkCount(),
-                lightingSynchronizationSnapshot.lightUploadFreedChunkCount(),
-                lightingSynchronizationSnapshot.lightUploadUploadedChunkCount(),
-                lightingSynchronizationSnapshot.lightUploadResidentChunkCount(),
+                0,
+                0,
+                0,
+                0,
                 streamerSnapshot.loadedChunks(),
                 streamerSnapshot.queuedTasks(),
                 streamerSnapshot.pendingRemesh(),
@@ -139,6 +126,9 @@ public class World implements AutoCloseable, WorldBlockProvider {
                 streamerSnapshot.chunkMeshingSampledBlocks(),
                 streamerSnapshot.cancelledChunkBuilds()
         );
+        if (dynamicLightingEnabled && lightingSystem.getPendingPriorityChangeCount() > 0) {
+            processLightingFrame(false);
+        }
     }
 
     public WorldProfilingSnapshot getLastProfilingSnapshot() {
@@ -151,7 +141,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     public void setDynamicLightingEnabled(boolean dynamicLightingEnabled) {
         this.dynamicLightingEnabled = dynamicLightingEnabled;
-        pendingLightingUpdates.clear();
+        lightingSystem.clearPendingWork();
         synchronizedLightingUploadsVersion = dynamicLightingEnabled
                 ? Long.MIN_VALUE
                 : chunkManager.getChunkUploadsVersion();
@@ -174,7 +164,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
     }
 
     public boolean isStreamingConverged() {
-        return worldStreamer.isConverged();
+        return worldStreamer.isConverged() && (!dynamicLightingEnabled || !lightingSystem.hasPendingWork());
     }
 
     public boolean containsChunk(int x, int y, int z) {
@@ -190,6 +180,11 @@ public class World implements AutoCloseable, WorldBlockProvider {
         return worldGenerator.getBlockAtWorld(worldX, worldY, worldZ);
     }
 
+    @Override
+    public int getSkyLightScanStartY(int worldX, int worldZ, int maxWorldY) {
+        return worldGenerator.getSkyLightScanStartY(worldX, worldZ, maxWorldY);
+    }
+
     public void setBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {
         Objects.requireNonNull(block, "block");
         ChunkPosition position = toChunkPosition(worldX, worldY, worldZ);
@@ -198,9 +193,13 @@ public class World implements AutoCloseable, WorldBlockProvider {
                     "Unable to materialize chunk at world position: " + worldX + ", " + worldY + ", " + worldZ
             );
         }
+        Chunk editedChunk = chunkManager.getChunk(position.x(), position.y(), position.z());
+        if (dynamicLightingEnabled && editedChunk != null) {
+            lightingSystem.ensureInitialized(editedChunk);
+        }
         chunkManager.setBlockAtWorld(worldX, worldY, worldZ, block);
         if (dynamicLightingEnabled) {
-            pendingLightingUpdates.add(position);
+            lightingSystem.enqueueBlockChange(worldX, worldY, worldZ);
         }
         markChunksDirtyForBlockChange(worldX, worldY, worldZ);
     }
@@ -240,6 +239,32 @@ public class World implements AutoCloseable, WorldBlockProvider {
         return worldStreamer.getPendingRemeshCount();
     }
 
+    int getPendingPriorityLightingUpdateCount() {
+        return lightingSystem.getPendingPriorityChangeCount();
+    }
+
+    /** Runs lighting exactly once for the rendered frame, independently of the fixed-rate streamer. */
+    public void processLightingFrame() {
+        processLightingFrame(true);
+    }
+
+    private void processLightingFrame(boolean includeBackground) {
+        if (!dynamicLightingEnabled) {
+            return;
+        }
+        long start = System.nanoTime();
+        WorldLightingSystem.WorldLightingUpdateResult result = includeBackground
+                ? lightingSystem.processFrame(chunkManager)
+                : lightingSystem.processPriority(chunkManager);
+        long elapsed = System.nanoTime() - start;
+        lastProfilingSnapshot = lastProfilingSnapshot.withLighting(
+                elapsed,
+                result.profilingSnapshot(),
+                result.markedChunkCount(),
+                lightingSystem.getPendingPriorityChangeCount() + lightingSystem.getPendingBackgroundWorkCount()
+        );
+    }
+
     @Override
     public void close() {
         worldStreamer.close();
@@ -253,89 +278,40 @@ public class World implements AutoCloseable, WorldBlockProvider {
         );
     }
 
-    private LightingSynchronizationProfilingSnapshot synchronizeLighting() {
-        if (pendingLightingUpdates.isEmpty()) {
-            return LightingSynchronizationProfilingSnapshot.empty();
-        }
-
-        Set<ChunkPosition> batch = drainLightingUpdateBatch();
-        if (batch.isEmpty()) {
-            return LightingSynchronizationProfilingSnapshot.empty();
-        }
-
-        Set<ChunkPosition> updatedPositions = expandLightingUpdatePositions(batch);
-        WorldLightingProfilingSnapshot lightingSnapshot = lightingSystem.rebuildLightingAround(chunkManager, batch);
-        int markedChunkCount = chunkManager.markChunksLightUpdated(updatedPositions);
-        return new LightingSynchronizationProfilingSnapshot(
-                batch.size(),
-                markedChunkCount,
-                lightingSnapshot,
-                0,
-                0,
-                0,
-                0
-        );
-    }
-
     private LightingCollectionProfilingSnapshot collectChunkLightingUpdates() {
-        int pendingBeforeCollection = pendingLightingUpdates.size();
+        int pendingBeforeCollection = lightingSystem.getPendingBackgroundWorkCount();
         ChunkManager.ChunkUploadSync uploadSync = chunkManager.snapshotChunkUploadSync(synchronizedLightingUploadsVersion);
         if (uploadSync.requiresFullSnapshot()) {
-            pendingLightingUpdates.addAll(uploadSync.fullSnapshot().keySet());
+            for (ChunkPosition position : uploadSync.fullSnapshot().keySet()) {
+                lightingSystem.enqueueChunkBoundary(position);
+            }
             synchronizedLightingUploadsVersion = uploadSync.version();
             return new LightingCollectionProfilingSnapshot(
                     pendingBeforeCollection,
-                    pendingLightingUpdates.size(),
+                    lightingSystem.getPendingBackgroundWorkCount(),
                     uploadSync.fullSnapshot().size(),
                     0
             );
         }
 
         for (ChunkManager.ChunkUploadDelta delta : uploadSync.deltas()) {
-            pendingLightingUpdates.add(delta.position());
+            if (delta.changeType() != ChunkManager.ChunkUploadChangeType.UPDATED) {
+                lightingSystem.enqueueChunkBoundary(delta.position());
+            }
         }
         synchronizedLightingUploadsVersion = uploadSync.version();
         return new LightingCollectionProfilingSnapshot(
                 pendingBeforeCollection,
-                pendingLightingUpdates.size(),
+                lightingSystem.getPendingBackgroundWorkCount(),
                 0,
                 uploadSync.deltas().size()
         );
     }
 
-    private Set<ChunkPosition> drainLightingUpdateBatch() {
-        int maxUpdates = Math.max(1, MAX_LIGHTING_UPDATES_PER_FRAME);
-        Set<ChunkPosition> batch = new LinkedHashSet<>(Math.min(maxUpdates, pendingLightingUpdates.size()));
-        Iterator<ChunkPosition> iterator = pendingLightingUpdates.iterator();
-        while (iterator.hasNext() && batch.size() < maxUpdates) {
-            ChunkPosition position = iterator.next();
-            batch.add(position);
-            iterator.remove();
-        }
-        return batch;
-    }
-
-    private Set<ChunkPosition> expandLightingUpdatePositions(Set<ChunkPosition> positions) {
-        Set<ChunkPosition> expanded = new HashSet<>();
-        int radius = WorldLightingSystem.BLOCK_LIGHT_CHUNK_RADIUS;
-        for (ChunkPosition position : positions) {
-            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
-                for (int offsetY = -radius; offsetY <= radius; offsetY++) {
-                    for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
-                        expanded.add(new ChunkPosition(
-                                position.x() + offsetX,
-                                position.y() + offsetY,
-                                position.z() + offsetZ
-                        ));
-                    }
-                }
-            }
-        }
-        return expanded;
-    }
-
     private void markChunksDirtyForBlockChange(int worldX, int worldY, int worldZ) {
         ChunkPosition center = toChunkPosition(worldX, worldY, worldZ);
+        worldStreamer.markChunkDirtyPriority(center);
+
         int localX = Math.floorMod(worldX, Chunk.SIZE);
         int localY = Math.floorMod(worldY, Chunk.SIZE);
         int localZ = Math.floorMod(worldZ, Chunk.SIZE);
@@ -347,14 +323,19 @@ public class World implements AutoCloseable, WorldBlockProvider {
         for (int offsetX : offsetXs) {
             for (int offsetY : offsetYs) {
                 for (int offsetZ : offsetZs) {
-                    worldStreamer.markChunkDirtyPriority(new ChunkPosition(
+                    ChunkPosition affectedPosition = new ChunkPosition(
                             center.x() + offsetX,
                             center.y() + offsetY,
                             center.z() + offsetZ
-                    ));
+                    );
+                    if (!affectedPosition.equals(center)) {
+                        worldStreamer.markChunkDirtyPriority(affectedPosition);
+                    }
                 }
             }
         }
+
+        worldStreamer.submitInteractionRemeshes();
     }
 
     private static int[] resolveBoundaryOffsets(int localCoordinate) {
@@ -378,25 +359,4 @@ public class World implements AutoCloseable, WorldBlockProvider {
         }
     }
 
-    private record LightingSynchronizationProfilingSnapshot(
-            int batchSize,
-            int markedChunkCount,
-            WorldLightingProfilingSnapshot worldLightingProfilingSnapshot,
-            int lightUploadRefreshedChunkCount,
-            int lightUploadFreedChunkCount,
-            int lightUploadUploadedChunkCount,
-            int lightUploadResidentChunkCount
-    ) {
-        private static LightingSynchronizationProfilingSnapshot empty() {
-            return new LightingSynchronizationProfilingSnapshot(
-                    0,
-                    0,
-                    WorldLightingProfilingSnapshot.empty(),
-                    0,
-                    0,
-                    0,
-                    0
-            );
-        }
-    }
 }

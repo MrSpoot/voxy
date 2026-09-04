@@ -5,12 +5,15 @@ public class LightingSettings {
 
     private final float[] ambientColor = {0.60f, 0.66f, 0.76f};
     private final float[] ambientIntensity = {0.05f};
+    private final float[] shadowStrength = {0.8f};
 
     private final float[] sunColor = {1.0f, 0.90f, 0.72f};
     private final float[] sunIntensity = {0.85f};
 
     private final float[] skyColor = {0.47f, 0.68f, 0.90f};
-    private final float[] skyIntensity = {0.15f};
+    private final float[] skyIntensity = {0.35f};
+    private final float[] voxelLightGamma = {0.85f};
+    private final float[] voxelDarknessFloor = {0.04f};
 
     private final float[] blockLightIntensity = {1.0f};
 
@@ -48,6 +51,14 @@ public class LightingSettings {
 
     public float getAmbientIntensity() {
         return ambientIntensity[0];
+    }
+
+    public float[] shadowStrengthRef() {
+        return shadowStrength;
+    }
+
+    public float getShadowStrength() {
+        return shadowStrength[0];
     }
 
     public float[] sunColorRef() {
@@ -114,6 +125,22 @@ public class LightingSettings {
         return skyIntensity[0];
     }
 
+    public float[] voxelLightGammaRef() {
+        return voxelLightGamma;
+    }
+
+    public float getVoxelLightGamma() {
+        return voxelLightGamma[0];
+    }
+
+    public float[] voxelDarknessFloorRef() {
+        return voxelDarknessFloor;
+    }
+
+    public float getVoxelDarknessFloor() {
+        return voxelDarknessFloor[0];
+    }
+
     public void reset() {
         enabled[0] = true;
 
@@ -121,6 +148,7 @@ public class LightingSettings {
         ambientColor[1] = 0.66f;
         ambientColor[2] = 0.76f;
         ambientIntensity[0] = 0.08f;
+        shadowStrength[0] = 0.8f;
 
         sunColor[0] = 1.0f;
         sunColor[1] = 0.90f;
@@ -134,7 +162,9 @@ public class LightingSettings {
         skyColor[0] = 0.47f;
         skyColor[1] = 0.68f;
         skyColor[2] = 0.90f;
-        skyIntensity[0] = 0.25f;
+        skyIntensity[0] = 0.35f;
+        voxelLightGamma[0] = 0.85f;
+        voxelDarknessFloor[0] = 0.04f;
 
         blockLightEnabled[0] = true;
         blockLightIntensity[0] = 1.0f;

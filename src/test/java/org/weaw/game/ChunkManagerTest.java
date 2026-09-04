@@ -7,6 +7,8 @@ import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -94,6 +96,33 @@ class ChunkManagerTest {
                 ChunkManager.estimateResidentBytes(manager.getChunk(0, 0, 0), updatedMesh),
                 manager.getEstimatedResidentBytes()
         );
+    }
+
+    @Test
+    void remeshingDoesNotInvalidateUnchangedLighting() {
+        ChunkManager manager = new ChunkManager();
+        ChunkPosition position = new ChunkPosition(0, 0, 0);
+        manager.publishBuiltChunk(new Chunk(new Vector3i()), emptyMeshData());
+        long lightVersion = manager.getChunkLightVersion();
+
+        assertTrue(manager.publishRemeshedChunk(position, emptyMeshData()));
+
+        assertEquals(lightVersion, manager.getChunkLightVersion());
+    }
+
+    @Test
+    void lightUpdatesPreserveBoundaryAndInteractionPriority() {
+        ChunkManager manager = new ChunkManager();
+        ChunkPosition position = new ChunkPosition(0, 0, 0);
+        manager.publishBuiltChunk(new Chunk(new Vector3i()), emptyMeshData());
+        long lightVersion = manager.getChunkLightVersion();
+
+        manager.markChunksLightUpdated(Map.of(position, ChunkManager.LIGHT_BOUNDARY_LOW_X), true);
+
+        ChunkManager.ChunkLightSync sync = manager.snapshotChunkLightSync(lightVersion);
+        assertEquals(1, sync.deltas().size());
+        assertEquals(ChunkManager.LIGHT_BOUNDARY_LOW_X, sync.deltas().getFirst().boundaryMask());
+        assertTrue(sync.deltas().getFirst().priority());
     }
 
     private static ChunkMeshData emptyMeshData() {

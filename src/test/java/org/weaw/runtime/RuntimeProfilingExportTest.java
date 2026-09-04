@@ -37,6 +37,8 @@ class RuntimeProfilingExportTest {
                 Map.entry("chunksPublished", 2),
                 Map.entry("chunkMeshingSnapshotMs", 1.25d),
                 Map.entry("cancelledChunkBuilds", 4),
+                Map.entry("lightCacheDeferredUploads", 12),
+                Map.entry("lightCacheAllocationFailures", 2),
                 Map.entry("sparseStreamingEnabled", true),
                 Map.entry("desiredMaterializedChunks", 100),
                 Map.entry("virtualEmptyChunks", 200),
@@ -70,13 +72,19 @@ class RuntimeProfilingExportTest {
         collector.writeSummary(output, LaunchOptions.from(new String[]{"--benchmark"}));
         String json = Files.readString(output);
 
-        assertTrue(json.contains("\"schema_version\": 3"));
+        assertTrue(json.contains("\"schema_version\": 5"));
         assertTrue(json.contains("\"warmup_frames_excluded\": 1"));
         assertTrue(json.contains("\"world_streaming_update_count\": 1"));
         assertTrue(json.contains("\"chunks_generated\": 3"));
         assertTrue(json.contains("\"chunks_published\": 2"));
         assertTrue(json.contains("\"chunk_meshing_snapshot_ms\""));
         assertTrue(json.contains("\"cancelled_chunk_builds\": 4"));
+        assertTrue(json.contains("\"light_cache\""));
+        assertTrue(json.contains("\"deferred_uploads\""));
+        assertTrue(json.contains("\"allocation_failures\""));
+        assertTrue(json.contains("\"new_visible_misses\""));
+        assertTrue(json.contains("\"prefetch_uploads\""));
+        assertTrue(json.contains("\"prefetch_hits\""));
         assertTrue(json.contains("\"sparse_streaming\""));
         assertTrue(json.contains("\"classification_cache_hit_percent\": 80.0000"));
         assertTrue(json.contains("\"converged\": true"));

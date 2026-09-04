@@ -2,13 +2,19 @@ package org.weaw.game.generation;
 
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.WorldBlockProvider;
 
-public interface WorldGenerator {
+public interface WorldGenerator extends WorldBlockProvider {
     void generateChunkData(Chunk chunk);
 
+    @Override
     short getBlockAtWorld(int worldX, int worldY, int worldZ);
 
     int getSurfaceHeight(int worldX, int worldZ);
+
+    default int getSkyLightScanStartY(int worldX, int worldZ, int maxWorldY) {
+        return maxWorldY;
+    }
 
     /**
      * Returns a conservative chunk description used by sparse streaming.

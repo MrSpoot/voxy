@@ -12,13 +12,13 @@ public final class Blocks {
     public static final BlockDefinition SAND = new BlockDefinition("voxy:sand", "/textures/sand_full.png", OPAQUE, true);
     public static final BlockDefinition WOOD_LOG = new BlockDefinition("voxy:wood_log", "/textures/wood_log_full.png", OPAQUE, true);
     public static final BlockDefinition TEST = new BlockDefinition("voxy:test", "/textures/test_full.png", OPAQUE, true);
-    public static final BlockDefinition RED_LAMP = new BlockDefinition("voxy:red_lamp", "/textures/test_full.png", OPAQUE, true, 15, 0, 0);
-    public static final BlockDefinition GREEN_LAMP = new BlockDefinition("voxy:green_lamp", "/textures/test_full.png", OPAQUE, true, 0, 15, 0);
-    public static final BlockDefinition BLUE_LAMP = new BlockDefinition("voxy:blue_lamp", "/textures/test_full.png", OPAQUE, true, 0, 0, 15);
+    public static final BlockDefinition RED_LAMP = new BlockDefinition("voxy:red_lamp", "/textures/red_lamp_full.png", OPAQUE, true, 15, 0, 0);
+    public static final BlockDefinition GREEN_LAMP = new BlockDefinition("voxy:green_lamp", "/textures/green_lamp_full.png", OPAQUE, true, 0, 15, 0);
+    public static final BlockDefinition BLUE_LAMP = new BlockDefinition("voxy:blue_lamp", "/textures/blue_lamp_full.png", OPAQUE, true, 0, 0, 15);
     public static final BlockDefinition WHITE_LAMP = new BlockDefinition("voxy:white_lamp", "/textures/test_full.png", OPAQUE, true, 15, 15, 15);
-    public static final BlockDefinition LEAVES = new BlockDefinition("voxy:leaves", "/textures/leave_full.png", CUTOUT, false);
+    public static final BlockDefinition LEAVES = new BlockDefinition("voxy:leaves", "/textures/leave_full.png", CUTOUT, false, 0, 0, 0, 3);
     public static final BlockDefinition GLASS = new BlockDefinition("voxy:glass", "/textures/glass_full.png", TRANSPARENT, true);
-    public static final BlockDefinition WATER = new BlockDefinition("voxy:water", "/textures/water_full.png", TRANSPARENT, true);
+    public static final BlockDefinition WATER = new BlockDefinition("voxy:water", "/textures/water_full.png", TRANSPARENT, true, 0, 0, 0, 2);
 
     private Blocks() {
     }

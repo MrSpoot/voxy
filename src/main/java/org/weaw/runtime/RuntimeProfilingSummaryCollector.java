@@ -90,7 +90,7 @@ public final class RuntimeProfilingSummaryCollector {
 
         StringBuilder json = new StringBuilder(2048);
         json.append("{\n");
-        appendNumber(json, 1, "schema_version", 3, true);
+        appendNumber(json, 1, "schema_version", 5, true);
         appendString(json, 1, "generated_at", Instant.now().toString(), true);
         json.append(indent(1)).append("\"run\": {\n");
         appendNumber(json, 2, "sample_count", allFrames.size(), true);
@@ -135,6 +135,19 @@ public final class RuntimeProfilingSummaryCollector {
         appendMetricSummary(json, 2, "render_ms", summarize(allFrames, RuntimeFrameProfile::renderMs), true);
         appendMetricSummary(json, 2, "gpu_mesh_upload_ms", summarize(allFrames, RuntimeFrameProfile::gpuMeshUploadMs), true);
         appendMetricSummary(json, 2, "gpu_light_upload_ms", summarize(allFrames, RuntimeFrameProfile::gpuLightUploadMs), false);
+        json.append(indent(1)).append("},\n");
+
+        json.append(indent(1)).append("\"light_cache\": {\n");
+        appendMetricSummary(json, 2, "deferred_uploads", summarize(allFrames, RuntimeFrameProfile::lightCacheDeferredUploads), true);
+        appendMetricSummary(json, 2, "allocation_failures", summarize(allFrames, RuntimeFrameProfile::lightCacheAllocationFailures), true);
+        appendMetricSummary(json, 2, "evictions", summarize(allFrames, RuntimeFrameProfile::lightCacheEvictions), true);
+        appendMetricSummary(json, 2, "skipped_retries", summarize(allFrames, RuntimeFrameProfile::lightCacheSkippedRetries), true);
+        appendMetricSummary(json, 2, "urgent_uploads", summarize(allFrames, RuntimeFrameProfile::lightCacheUrgentUploads), true);
+        appendMetricSummary(json, 2, "background_uploads", summarize(allFrames, RuntimeFrameProfile::lightCacheBackgroundUploads), true);
+        appendMetricSummary(json, 2, "new_visible_misses", summarize(allFrames, RuntimeFrameProfile::lightCacheNewVisibleMisses), true);
+        appendMetricSummary(json, 2, "prefetch_uploads", summarize(allFrames, RuntimeFrameProfile::lightCachePrefetchUploads), true);
+        appendMetricSummary(json, 2, "prefetch_hits", summarize(allFrames, RuntimeFrameProfile::lightCachePrefetchHits), true);
+        appendMetricSummary(json, 2, "fallback_chunks", summarize(allFrames, RuntimeFrameProfile::lightCacheFallbackChunks), false);
         json.append(indent(1)).append("},\n");
 
         json.append(indent(1)).append("\"stage_per_world_update_ms\": {\n");

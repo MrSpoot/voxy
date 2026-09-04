@@ -11,7 +11,7 @@ public class PlayerInteractionSystem {
             Blocks.RED_LAMP,
             Blocks.GREEN_LAMP,
             Blocks.BLUE_LAMP,
-            Blocks.WHITE_LAMP
+            Blocks.STONE
     };
 
     private final GameplaySettings settings;

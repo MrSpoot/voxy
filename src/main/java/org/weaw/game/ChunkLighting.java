@@ -68,6 +68,35 @@ public final class ChunkLighting {
         uniformLight = packedLight;
     }
 
+    boolean replaceWithOwnedData(short[] replacement) {
+        if (replacement.length != Chunk.TOTAL_BLOCKS) {
+            throw new IllegalArgumentException("Lighting array must contain exactly " + Chunk.TOTAL_BLOCKS + " values");
+        }
+
+        short first = replacement[0];
+        boolean uniform = true;
+        for (int index = 1; index < replacement.length; index++) {
+            if (replacement[index] != first) {
+                uniform = false;
+                break;
+            }
+        }
+
+        if (uniform) {
+            boolean changed = data != null || uniformLight != first;
+            data = null;
+            uniformLight = first;
+            return changed;
+        }
+
+        if (data != null && Arrays.equals(data, replacement)) {
+            return false;
+        }
+        data = replacement;
+        uniformLight = 0;
+        return true;
+    }
+
     public ChunkLighting copy() {
         ChunkLighting copy = new ChunkLighting();
         copy.uniformLight = uniformLight;
@@ -146,6 +175,14 @@ public final class ChunkLighting {
 
     public static int getSky(short packedLight) {
         return (packedLight >>> SKY_SHIFT) & MAX_SKY_LIGHT;
+    }
+
+    /** Returns the strongest voxel-light component, including both skylight and RGB block light. */
+    public static int getCombinedLevel(short packedLight) {
+        return Math.max(
+                getSky(packedLight),
+                Math.max(getRed(packedLight), Math.max(getGreen(packedLight), getBlue(packedLight)))
+        );
     }
 
     private static int getBlockIndex(int x, int y, int z) {

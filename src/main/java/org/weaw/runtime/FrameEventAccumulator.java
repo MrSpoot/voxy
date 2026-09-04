@@ -22,6 +22,17 @@ public final class FrameEventAccumulator<T> {
         return samples.size();
     }
 
+    public boolean isEmpty() {
+        return samples.isEmpty();
+    }
+
+    public void replaceLast(T sample) {
+        if (samples.isEmpty()) {
+            throw new IllegalStateException("No frame event to replace");
+        }
+        samples.set(samples.size() - 1, Objects.requireNonNull(sample, "sample"));
+    }
+
     public long sumLong(ToLongFunction<T> extractor) {
         long total = 0L;
         for (T sample : samples) {

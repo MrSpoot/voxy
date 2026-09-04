@@ -10,8 +10,13 @@ public final class BenchmarkController {
     private static final float VERTICAL_AMPLITUDE_BLOCKS = 8.0f;
     private static final float LATERAL_WAVELENGTH_BLOCKS = 96.0f;
     private static final float VERTICAL_WAVELENGTH_BLOCKS = 192.0f;
+    private static final double RAPID_TURN_PERIOD_SECONDS = 4.0d;
+    private static final double RAPID_TURN_START_SECONDS = 1.0d;
+    private static final double RAPID_TURN_DURATION_SECONDS = 0.25d;
+    private static final double RAPID_TURN_RETURN_SECONDS = 2.75d;
 
     private final BenchmarkOptions options;
+    private final boolean rapidTurnsEnabled;
     private BenchmarkPhase phase = BenchmarkPhase.WARMUP;
     private double phaseElapsedSeconds;
     private double totalElapsedSeconds;
@@ -19,7 +24,12 @@ public final class BenchmarkController {
     private boolean loadingConverged;
 
     public BenchmarkController(BenchmarkOptions options) {
+        this(options, Boolean.getBoolean("voxy.benchmark.rapidTurns"));
+    }
+
+    BenchmarkController(BenchmarkOptions options, boolean rapidTurnsEnabled) {
         this.options = Objects.requireNonNull(options, "options");
+        this.rapidTurnsEnabled = rapidTurnsEnabled;
     }
 
     public BenchmarkFrame update(double deltaSeconds, boolean streamingConverged) {
@@ -95,6 +105,9 @@ public final class BenchmarkController {
                 * (LATERAL_AMPLITUDE_BLOCKS * FLY_SPEED_BLOCKS_PER_SECOND / LATERAL_WAVELENGTH_BLOCKS);
 
         float yaw = (float) Math.toDegrees(Math.atan2(dz, dx));
+        if (rapidTurnsEnabled) {
+            yaw += rapidTurnYawOffset(clampedElapsed);
+        }
         float pitch = (float) Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
 
         return new BenchmarkFrame(
@@ -107,6 +120,30 @@ public final class BenchmarkController {
                 loadingConverged,
                 loadingDurationSeconds
         );
+    }
+
+    private static float rapidTurnYawOffset(double elapsedSeconds) {
+        double phase = elapsedSeconds % RAPID_TURN_PERIOD_SECONDS;
+        if (phase < RAPID_TURN_START_SECONDS) {
+            return 0.0f;
+        }
+        if (phase < RAPID_TURN_START_SECONDS + RAPID_TURN_DURATION_SECONDS) {
+            double progress = (phase - RAPID_TURN_START_SECONDS) / RAPID_TURN_DURATION_SECONDS;
+            return (float) (90.0d * smoothStep(progress));
+        }
+        if (phase < RAPID_TURN_RETURN_SECONDS) {
+            return 90.0f;
+        }
+        if (phase < RAPID_TURN_RETURN_SECONDS + RAPID_TURN_DURATION_SECONDS) {
+            double progress = (phase - RAPID_TURN_RETURN_SECONDS) / RAPID_TURN_DURATION_SECONDS;
+            return (float) (90.0d * (1.0d - smoothStep(progress)));
+        }
+        return 0.0f;
+    }
+
+    private static double smoothStep(double value) {
+        double clamped = Math.clamp(value, 0.0d, 1.0d);
+        return clamped * clamped * (3.0d - 2.0d * clamped);
     }
 
     private double phaseDurationSeconds(BenchmarkPhase currentPhase) {

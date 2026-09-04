@@ -3,6 +3,7 @@ package org.weaw.game;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.generation.ChunkGenerationHint;
 import org.weaw.game.generation.WorldGenerator;
 import org.weaw.game.utils.BlockRegistry;
@@ -232,6 +233,164 @@ class WorldStreamerTest {
         }
     }
 
+    @Test
+    void interactionRemeshPublishesWhileBackgroundGenerationIsBlocked() throws Exception {
+        ChunkManager manager = new ChunkManager();
+        BlockingFirstGenerator generator = new BlockingFirstGenerator();
+        ExecutorService backgroundExecutor = Executors.newSingleThreadExecutor();
+        ExecutorService interactionExecutor = Executors.newSingleThreadExecutor();
+        WorldSettings settings = new WorldSettings(
+                2,
+                new WorldHeightRange(0, 0),
+                WorldMemoryBudget.balanced(),
+                false
+        );
+
+        ChunkPosition origin = new ChunkPosition(0, 0, 0);
+        Chunk originChunk = new Chunk(new org.joml.Vector3i(0, 0, 0));
+        short[] blocks = new short[Chunk.TOTAL_BLOCKS];
+        java.util.Arrays.fill(blocks, Blocks.STONE.getId());
+        originChunk.setAllBlocks(blocks);
+        manager.publishBuiltChunk(originChunk, emptyMeshData());
+
+        WorldStreamer streamer = new WorldStreamer(
+                manager,
+                generator,
+                generator,
+                settings,
+                1,
+                5,
+                2,
+                4,
+                1,
+                50_000_000L,
+                backgroundExecutor,
+                interactionExecutor,
+                2
+        );
+
+        try {
+            Vector3f playerPosition = new Vector3f(0.0f, 0.0f, 0.0f);
+            streamer.update(playerPosition);
+            assertTrue(generator.firstBuildStarted.await(5, TimeUnit.SECONDS));
+
+            manager.setBlockAtWorld(1, 1, 1, Blocks.AIR);
+            streamer.markChunkDirtyPriority(origin);
+            streamer.submitInteractionRemeshes();
+
+            long deadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            boolean interactionPublished = false;
+            while (System.nanoTime() < deadlineNs) {
+                streamer.update(playerPosition);
+                if (manager.getChunkUpload(origin).meshData().opaque().faceCount() > 0) {
+                    interactionPublished = true;
+                    break;
+                }
+                Thread.sleep(1L);
+            }
+
+            assertTrue(interactionPublished);
+            assertEquals(1L, generator.firstBuildFinished.getCount());
+        } finally {
+            generator.allowFirstBuildToFinish.countDown();
+            streamer.close();
+        }
+    }
+
+    @Test
+    void interactionResultPublishesBeforeAnEarlierCompletedLoad() {
+        ChunkManager manager = new ChunkManager();
+        ChunkPosition origin = new ChunkPosition(0, 0, 0);
+        Chunk originChunk = filledChunk(origin, Blocks.STONE.getId());
+        manager.publishBuiltChunk(originChunk, emptyMeshData());
+
+        DirectExecutorService executor = new DirectExecutorService();
+        WorldStreamer streamer = new WorldStreamer(
+                manager,
+                new AirBlockProvider(),
+                new FlatGenerator(Blocks.AIR.getId()),
+                new WorldSettings(2, new WorldHeightRange(0, 0), WorldMemoryBudget.balanced(), false),
+                1,
+                5,
+                2,
+                4,
+                1,
+                50_000_000L,
+                executor,
+                2
+        );
+
+        try {
+            Vector3f playerPosition = new Vector3f(0.0f, 0.0f, 0.0f);
+            streamer.update(playerPosition);
+
+            manager.setBlockAtWorld(1, 1, 1, Blocks.AIR);
+            streamer.markChunkDirtyPriority(origin);
+            streamer.submitInteractionRemeshes();
+            streamer.update(playerPosition);
+
+            assertTrue(manager.getChunkUpload(origin).meshData().opaque().faceCount() > 0);
+            assertEquals(1, manager.getChunkCount());
+
+            streamer.update(playerPosition);
+            assertEquals(2, manager.getChunkCount());
+        } finally {
+            streamer.close();
+        }
+    }
+
+    @Test
+    void repeatedInteractionPublishesOnlyTheLatestChunkState() {
+        ChunkManager manager = new ChunkManager();
+        ChunkPosition origin = new ChunkPosition(0, 0, 0);
+        manager.publishBuiltChunk(filledChunk(origin, Blocks.AIR.getId()), emptyMeshData());
+
+        WorldMemoryBudget budget = new WorldMemoryBudget(
+                16L * MIB,
+                16L * MIB,
+                1,
+                0.90,
+                0.80,
+                0.95,
+                0.90,
+                16L * MIB,
+                20L * MIB
+        );
+        DirectExecutorService executor = new DirectExecutorService();
+        WorldStreamer streamer = new WorldStreamer(
+                manager,
+                new AirBlockProvider(),
+                new FlatGenerator(Blocks.AIR.getId()),
+                new WorldSettings(2, new WorldHeightRange(0, 0), budget, false),
+                1,
+                5,
+                2,
+                4,
+                1,
+                50_000_000L,
+                executor,
+                2
+        );
+
+        try {
+            manager.setBlockAtWorld(1, 1, 1, Blocks.STONE);
+            streamer.markChunkDirtyPriority(origin);
+            streamer.submitInteractionRemeshes();
+
+            manager.setBlockAtWorld(1, 1, 1, Blocks.AIR);
+            streamer.markChunkDirtyPriority(origin);
+            streamer.submitInteractionRemeshes();
+
+            streamer.update(new Vector3f(0.0f, 0.0f, 0.0f));
+
+            assertEquals(0, manager.getChunkUpload(origin).meshData().opaque().faceCount());
+            assertEquals(0, streamer.getPendingTaskCount());
+            assertEquals(0L, streamer.getLastMemorySnapshot().reservedInFlightBytes());
+        } finally {
+            streamer.close();
+        }
+    }
+
     private record FlatGenerator(short blockId) implements WorldGenerator {
         @Override
         public void generateChunkData(Chunk chunk) {
@@ -349,5 +508,18 @@ class WorldStreamerTest {
         public void execute(Runnable command) {
             command.run();
         }
+    }
+
+    private static ChunkMeshData emptyMeshData() {
+        ChunkMeshData.LayerMeshData emptyLayer = new ChunkMeshData.LayerMeshData(new int[0], 0);
+        return new ChunkMeshData(emptyLayer, emptyLayer, emptyLayer);
+    }
+
+    private static Chunk filledChunk(ChunkPosition position, short blockId) {
+        Chunk chunk = new Chunk(new org.joml.Vector3i(position.x(), position.y(), position.z()));
+        short[] blocks = new short[Chunk.TOTAL_BLOCKS];
+        java.util.Arrays.fill(blocks, blockId);
+        chunk.setAllBlocks(blocks);
+        return chunk;
     }
 }

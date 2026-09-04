@@ -70,8 +70,10 @@ public class RenderContext {
     private int blockOutlinePlacementZ;
     private int selectedLampHotbarIndex = 3;
     private boolean lightDebugVisualizationEnabled;
+    private boolean voxelLightDataEnabled = true;
     private World world;
     private final Set<ChunkPosition> visibleChunkPositions = new HashSet<>();
+    private final Set<ChunkPosition> lightPrefetchChunkPositions = new HashSet<>();
 
     public RenderContext(int viewportWidth, int viewportHeight) {
         this.viewportWidth = viewportWidth;
@@ -201,6 +203,7 @@ public class RenderContext {
         chunkVisibilityCameraVersion = Long.MIN_VALUE;
         currentColorTargetName = null;
         visibleChunkPositions.clear();
+        lightPrefetchChunkPositions.clear();
         renderTargets.values().forEach(RenderTarget::cleanup);
         renderTargets.clear();
     }

@@ -3,11 +3,11 @@ package org.weaw.engine.graphics.pipeline;
 public class ColorGradingSettings {
     private final boolean[] enabled = {true};
     private final boolean[] toneMappingEnabled = {true};
-    private final boolean[] autoExposureEnabled = {false};
+    private final boolean[] autoExposureEnabled = {true};
 
     private final float[] exposure = {0.045f};
     private final float[] minimumExposureEv = {0.045f};
-    private final float[] maximumExposureEv = {4.0f};
+    private final float[] maximumExposureEv = {1.0f};
     private final float[] targetLuminance = {0.18f};
     private final float[] darkenAdaptationSpeed = {3.0f};
     private final float[] brightenAdaptationSpeed = {1.0f};

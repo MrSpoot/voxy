@@ -14,6 +14,7 @@ public final class BlockDefinition {
     private final int lightEmissionRed;
     private final int lightEmissionGreen;
     private final int lightEmissionBlue;
+    private final int lightAttenuation;
     private volatile int textureIndex = -1;
     private short runtimeId = -1;
 
@@ -30,6 +31,28 @@ public final class BlockDefinition {
             int lightEmissionGreen,
             int lightEmissionBlue
     ) {
+        this(
+                stableId,
+                texturePath,
+                transparencyType,
+                cullSameTypeFaces,
+                lightEmissionRed,
+                lightEmissionGreen,
+                lightEmissionBlue,
+                transparencyType == TransparencyType.OPAQUE && !"voxy:air".equals(stableId) ? 15 : 0
+        );
+    }
+
+    public BlockDefinition(
+            String stableId,
+            String texturePath,
+            TransparencyType transparencyType,
+            boolean cullSameTypeFaces,
+            int lightEmissionRed,
+            int lightEmissionGreen,
+            int lightEmissionBlue,
+            int lightAttenuation
+    ) {
         this.stableId = stableId;
         this.texturePath = texturePath;
         this.transparencyType = transparencyType;
@@ -37,6 +60,7 @@ public final class BlockDefinition {
         this.lightEmissionRed = validateLightComponent(lightEmissionRed, "lightEmissionRed");
         this.lightEmissionGreen = validateLightComponent(lightEmissionGreen, "lightEmissionGreen");
         this.lightEmissionBlue = validateLightComponent(lightEmissionBlue, "lightEmissionBlue");
+        this.lightAttenuation = validateLightComponent(lightAttenuation, "lightAttenuation");
     }
 
     public String getStableId() {
@@ -108,6 +132,10 @@ public final class BlockDefinition {
 
     public boolean blocksLight() {
         return isOpaque() && !isAir();
+    }
+
+    public int getLightAttenuation() {
+        return lightAttenuation;
     }
 
     public boolean isAir() {

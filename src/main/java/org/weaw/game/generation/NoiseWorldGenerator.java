@@ -110,6 +110,12 @@ public final class NoiseWorldGenerator implements WorldGenerator {
     }
 
     @Override
+    public int getSkyLightScanStartY(int worldX, int worldZ, int maxWorldY) {
+        // Current generated content can only extend six blocks above the terrain through trees.
+        return Math.min(maxWorldY, getSurfaceHeight(worldX, worldZ) + 6);
+    }
+
+    @Override
     public ChunkGenerationHint classifyChunk(ChunkPosition position) {
         ChunkGenerationHint globalHint = classifyAgainstBounds(position.y(), globalBounds);
         if (!globalHint.requiresMaterialization()) {

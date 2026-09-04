@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class WorldStreamer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorldStreamer.class);
     private static final long DEFAULT_UPDATE_BUDGET_NS = 2_000_000L;
-    private static final int DEFAULT_RESERVED_REMESH_TASK_SLOTS = 2;
+    private static final int DEFAULT_RESERVED_REMESH_TASK_SLOTS = 8;
     private static final long TASK_MEMORY_RESERVATION_BYTES = 2L * 1024L * 1024L;
     private static final int INTERACTION_BUBBLE_RADIUS_CHUNKS = 1;
 
@@ -43,7 +43,9 @@ public class WorldStreamer implements AutoCloseable {
     private final WorldSettings settings;
     private final WorldHeightRange heightRange;
     private final WorldMemoryBudget memoryBudget;
-    private final ExecutorService executor;
+    private final ChunkLightingInitializer lightingInitializer;
+    private final ExecutorService backgroundExecutor;
+    private final ExecutorService interactionExecutor;
     private final int horizontalUnloadPadding;
     private final int maxSubmissionsPerUpdate;
     private final int maxPublishesPerUpdate;
@@ -51,6 +53,7 @@ public class WorldStreamer implements AutoCloseable {
     private final int reservedRemeshTaskSlots;
     private final long maxUpdateBudgetNs;
     private final boolean sparseChunkStreamingEnabled;
+    private final Queue<CompletedChunk> completedInteractionChunks = new ConcurrentLinkedQueue<>();
     private final Queue<CompletedChunk> completedChunks = new ConcurrentLinkedQueue<>();
     private final Object taskLock = new Object();
     private final Map<ChunkPosition, ChunkBuildTask> activeChunkTasks = new LinkedHashMap<>();
@@ -202,7 +205,8 @@ public class WorldStreamer implements AutoCloseable {
                 maxSubmissionsPerUpdate,
                 maxPublishesPerUpdate,
                 maxUpdateBudgetNs,
-                Executors.newFixedThreadPool(workerCount),
+                Executors.newFixedThreadPool(Math.max(1, workerCount - 1)),
+                Executors.newSingleThreadExecutor(),
                 workerCount
         );
     }
@@ -221,6 +225,38 @@ public class WorldStreamer implements AutoCloseable {
             ExecutorService executor,
             int workerCount
     ) {
+        this(
+                chunkManager,
+                blockProvider,
+                worldGenerator,
+                settings,
+                verticalRenderHeight,
+                verticalUnloadHeight,
+                horizontalUnloadPadding,
+                maxSubmissionsPerUpdate,
+                maxPublishesPerUpdate,
+                maxUpdateBudgetNs,
+                executor,
+                executor,
+                workerCount
+        );
+    }
+
+    WorldStreamer(
+            ChunkManager chunkManager,
+            WorldBlockProvider blockProvider,
+            WorldGenerator worldGenerator,
+            WorldSettings settings,
+            int verticalRenderHeight,
+            int verticalUnloadHeight,
+            int horizontalUnloadPadding,
+            int maxSubmissionsPerUpdate,
+            int maxPublishesPerUpdate,
+            long maxUpdateBudgetNs,
+            ExecutorService backgroundExecutor,
+            ExecutorService interactionExecutor,
+            int workerCount
+    ) {
         this.chunkManager = Objects.requireNonNull(chunkManager, "chunkManager");
         this.blockCatalog = chunkManager.getBlockCatalog();
         this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
@@ -228,6 +264,7 @@ public class WorldStreamer implements AutoCloseable {
         this.settings = Objects.requireNonNull(settings, "settings");
         this.heightRange = settings.getHeightRange();
         this.memoryBudget = settings.getMemoryBudget();
+        this.lightingInitializer = new ChunkLightingInitializer(blockCatalog, blockProvider, heightRange);
         this.horizontalUnloadPadding = Math.max(2, horizontalUnloadPadding);
         this.maxSubmissionsPerUpdate = Math.max(1, maxSubmissionsPerUpdate);
         this.maxPublishesPerUpdate = Math.max(1, maxPublishesPerUpdate);
@@ -239,14 +276,15 @@ public class WorldStreamer implements AutoCloseable {
                 memoryLimitedQueueCount,
                 Math.max(workerCount * 4, this.maxSubmissionsPerUpdate * 2)
         );
-        this.reservedRemeshTaskSlots = Math.max(
-                1,
-                Math.min(
-                        this.maxQueuedChunkCount - 1,
-                        Integer.getInteger("voxy.reservedRemeshTaskSlots", DEFAULT_RESERVED_REMESH_TASK_SLOTS)
-                )
+        this.reservedRemeshTaskSlots = Math.min(
+                Math.max(0, this.maxQueuedChunkCount - 1),
+                Math.max(1, Integer.getInteger(
+                        "voxy.reservedRemeshTaskSlots",
+                        DEFAULT_RESERVED_REMESH_TASK_SLOTS
+                ))
         );
-        this.executor = Objects.requireNonNull(executor, "executor");
+        this.backgroundExecutor = Objects.requireNonNull(backgroundExecutor, "backgroundExecutor");
+        this.interactionExecutor = Objects.requireNonNull(interactionExecutor, "interactionExecutor");
         this.lastMemorySnapshot = createMemorySnapshot();
     }
 
@@ -312,7 +350,7 @@ public class WorldStreamer implements AutoCloseable {
                 chunkManager.getChunkCount(),
                 getPendingTaskCount(),
                 getPendingRemeshCount(),
-                completedChunks.size(),
+                completedInteractionChunks.size() + completedChunks.size(),
                 Math.max(0, pendingUnloadPositions.size() - unloadCursor),
                 frameProfiling.chunksPublished,
                 frameProfiling.chunksUnloaded,
@@ -335,7 +373,12 @@ public class WorldStreamer implements AutoCloseable {
             desiredChunkPositions.clear();
             reservedInFlightBytes = 0L;
         }
-        executor.shutdownNow();
+        completedInteractionChunks.clear();
+        completedChunks.clear();
+        backgroundExecutor.shutdownNow();
+        if (interactionExecutor != backgroundExecutor) {
+            interactionExecutor.shutdownNow();
+        }
     }
 
     public int getPendingTaskCount() {
@@ -347,7 +390,9 @@ public class WorldStreamer implements AutoCloseable {
     public boolean isConverged() {
         List<ChunkPosition> desiredPositions;
         synchronized (taskLock) {
-            if (!activeChunkTasks.isEmpty() || !completedChunks.isEmpty()) {
+            if (!activeChunkTasks.isEmpty()
+                    || !completedInteractionChunks.isEmpty()
+                    || !completedChunks.isEmpty()) {
                 return false;
             }
             desiredPositions = List.copyOf(desiredChunkPositions);
@@ -387,10 +432,15 @@ public class WorldStreamer implements AutoCloseable {
         if (!remeshEnabled) {
             return;
         }
+        cancelActiveRemeshTask(position);
         synchronized (taskLock) {
             dirtyChunkPositions.remove(position);
             priorityDirtyChunkPositions.add(position);
         }
+    }
+
+    void submitInteractionRemeshes() {
+        submitPriorityDirtyChunks(Long.MAX_VALUE, reservedRemeshTaskSlots);
     }
 
     public void setRemeshEnabled(boolean remeshEnabled) {
@@ -420,6 +470,7 @@ public class WorldStreamer implements AutoCloseable {
             Chunk chunk = new Chunk(new Vector3i(position.x(), position.y(), position.z()), blockCatalog);
             long generationStartNs = System.nanoTime();
             worldGenerator.generateChunkData(chunk);
+            lightingInitializer.initialize(chunk);
             asyncChunkGenerationCpuTimeNs.addAndGet(System.nanoTime() - generationStartNs);
             asyncChunksGenerated.incrementAndGet();
 
@@ -489,13 +540,13 @@ public class WorldStreamer implements AutoCloseable {
         if (cachedDesiredPositions.isEmpty() || System.nanoTime() >= deadlineNs) {
             return;
         }
-        if (!canSubmitMemoryTask()) {
+        if (!canSubmitLoadTask()) {
             rejectedLoadCount++;
             return;
         }
 
-        int remeshReservation = getPendingRemeshCount() > 0 ? reservedRemeshTaskSlots : 0;
-        int availableQueueSlots = maxQueuedChunkCount - getPendingTaskCount() - remeshReservation;
+        int backgroundTaskLimit = Math.max(1, maxQueuedChunkCount - reservedRemeshTaskSlots);
+        int availableQueueSlots = backgroundTaskLimit - getPendingTaskCount();
         if (availableQueueSlots <= 0) {
             return;
         }
@@ -505,7 +556,7 @@ public class WorldStreamer implements AutoCloseable {
         int scanned = 0;
 
         while (submitted < submissionBudget && scanned < cachedDesiredPositions.size()) {
-            if (!canSubmitMemoryTask()) {
+            if (!canSubmitLoadTask()) {
                 rejectedLoadCount++;
                 return;
             }
@@ -537,7 +588,7 @@ public class WorldStreamer implements AutoCloseable {
             }
 
             submitted++;
-            executor.submit(() -> buildChunk(task, null));
+            backgroundExecutor.execute(() -> buildChunk(task, null));
 
             if (System.nanoTime() >= deadlineNs) {
                 return;
@@ -549,18 +600,55 @@ public class WorldStreamer implements AutoCloseable {
         if (!remeshEnabled) {
             return;
         }
-        if (System.nanoTime() >= deadlineNs) {
+        submitPriorityDirtyChunks(deadlineNs, maxSubmissionsPerUpdate);
+        submitBackgroundDirtyChunks(deadlineNs);
+    }
+
+    private void submitPriorityDirtyChunks(long deadlineNs, int submissionLimit) {
+        submitDirtyChunks(
+                deadlineNs,
+                submissionLimit,
+                priorityDirtyChunkPositions,
+                ChunkTaskType.INTERACTION_REMESH,
+                interactionExecutor
+        );
+    }
+
+    private void submitBackgroundDirtyChunks(long deadlineNs) {
+        submitDirtyChunks(
+                deadlineNs,
+                maxSubmissionsPerUpdate,
+                dirtyChunkPositions,
+                ChunkTaskType.REMESH,
+                backgroundExecutor
+        );
+    }
+
+    private void submitDirtyChunks(
+            long deadlineNs,
+            int submissionLimit,
+            Set<ChunkPosition> dirtyPositions,
+            ChunkTaskType taskType,
+            ExecutorService targetExecutor
+    ) {
+        if (System.nanoTime() >= deadlineNs || submissionLimit <= 0) {
             return;
         }
 
-        int availableQueueSlots = maxQueuedChunkCount - getPendingTaskCount();
+        int taskLimit = taskType == ChunkTaskType.INTERACTION_REMESH
+                ? maxQueuedChunkCount
+                : Math.max(1, maxQueuedChunkCount - reservedRemeshTaskSlots);
+        int availableQueueSlots = taskLimit - getPendingTaskCount();
         if (availableQueueSlots <= 0) {
             return;
         }
 
-        int submissionBudget = Math.min(maxSubmissionsPerUpdate, availableQueueSlots);
+        int submissionBudget = Math.min(submissionLimit, availableQueueSlots);
         int submitted = 0;
-        List<ChunkPosition> dirtySnapshot = snapshotDirtyChunks();
+        List<ChunkPosition> dirtySnapshot;
+        synchronized (taskLock) {
+            dirtySnapshot = List.copyOf(dirtyPositions);
+        }
 
         for (ChunkPosition position : dirtySnapshot) {
             if (submitted >= submissionBudget || System.nanoTime() >= deadlineNs) {
@@ -570,7 +658,10 @@ public class WorldStreamer implements AutoCloseable {
                 continue;
             }
 
-            if (!canReserveTaskMemory()) {
+            boolean hasMemory = taskType == ChunkTaskType.INTERACTION_REMESH
+                    ? canReserveTaskMemory()
+                    : canReserveBackgroundTaskMemory();
+            if (!hasMemory) {
                 return;
             }
 
@@ -580,14 +671,16 @@ public class WorldStreamer implements AutoCloseable {
                 continue;
             }
 
-            ChunkBuildTask task = registerTask(position, ChunkTaskType.REMESH);
+            ChunkBuildTask task = registerTask(position, taskType);
             if (task == null) {
                 continue;
             }
 
-            removeDirtyChunk(position);
+            synchronized (taskLock) {
+                dirtyPositions.remove(position);
+            }
             submitted++;
-            executor.submit(() -> buildChunk(task, chunkSnapshot));
+            targetExecutor.execute(() -> buildChunk(task, chunkSnapshot));
         }
     }
 
@@ -607,6 +700,7 @@ public class WorldStreamer implements AutoCloseable {
                 long generationStartNs = System.nanoTime();
                 try {
                     worldGenerator.generateChunkData(chunk);
+                    lightingInitializer.initialize(chunk);
                 } finally {
                     asyncChunkGenerationCpuTimeNs.addAndGet(System.nanoTime() - generationStartNs);
                 }
@@ -633,17 +727,22 @@ public class WorldStreamer implements AutoCloseable {
             asyncMeshingAmbientOcclusionFaces.addAndGet(meshingMetrics.ambientOcclusionFaceCount());
             asyncMeshingSampledBlocks.addAndGet(meshingMetrics.sampledBlockCount());
             asyncChunksMeshed.incrementAndGet();
-            if (task.type() == ChunkTaskType.REMESH) {
+            if (task.type().isRemesh()) {
                 asyncChunksRemeshed.incrementAndGet();
             }
             throwIfTaskCancelled(task);
-            completedChunks.offer(new CompletedChunk(
+            CompletedChunk completedChunk = new CompletedChunk(
                     task.position(),
                     task.token(),
                     task.type(),
                     chunk,
                     meshingResult.meshData()
-            ));
+            );
+            if (task.type() == ChunkTaskType.INTERACTION_REMESH) {
+                completedInteractionChunks.offer(completedChunk);
+            } else {
+                completedChunks.offer(completedChunk);
+            }
         } catch (CancellationException exception) {
             if (failTask(task)) {
                 asyncCancelledBuilds.incrementAndGet();
@@ -656,13 +755,17 @@ public class WorldStreamer implements AutoCloseable {
 
     private void publishCompletedChunks(long deadlineNs, FrameProfilingAccumulator frameProfiling) {
         long startNs = System.nanoTime();
-        for (int published = 0; published < maxPublishesPerUpdate; published++) {
+        int published = 0;
+        while (published < maxPublishesPerUpdate) {
             if (System.nanoTime() >= deadlineNs) {
                 frameProfiling.chunkPublishCpuTimeNs += System.nanoTime() - startNs;
                 return;
             }
 
-            CompletedChunk completedChunk = completedChunks.poll();
+            CompletedChunk completedChunk = completedInteractionChunks.poll();
+            if (completedChunk == null) {
+                completedChunk = completedChunks.poll();
+            }
             if (completedChunk == null) {
                 frameProfiling.chunkPublishCpuTimeNs += System.nanoTime() - startNs;
                 return;
@@ -678,7 +781,7 @@ public class WorldStreamer implements AutoCloseable {
                 continue;
             }
 
-            Chunk residentChunk = task.type() == ChunkTaskType.REMESH
+            Chunk residentChunk = task.type().isRemesh()
                     ? chunkManager.getChunk(task.position().x(), task.position().y(), task.position().z())
                     : completedChunk.chunk();
             if (residentChunk == null) {
@@ -686,7 +789,7 @@ public class WorldStreamer implements AutoCloseable {
                 continue;
             }
             long completedBytes = ChunkManager.estimateResidentBytes(residentChunk, completedChunk.meshData());
-            long replacedBytes = task.type() == ChunkTaskType.REMESH
+            long replacedBytes = task.type().isRemesh()
                     ? chunkManager.getEstimatedResidentBytes(completedChunk.position())
                     : 0L;
             long projectedBytes = chunkManager.getEstimatedResidentBytes() - replacedBytes + completedBytes;
@@ -713,6 +816,7 @@ public class WorldStreamer implements AutoCloseable {
             if (publishedChunk) {
                 frameProfiling.chunksPublished++;
             }
+            published++;
         }
         frameProfiling.chunkPublishCpuTimeNs += System.nanoTime() - startNs;
     }
@@ -924,8 +1028,21 @@ public class WorldStreamer implements AutoCloseable {
         return columns * heightRange.chunkCount();
     }
 
-    private boolean canSubmitMemoryTask() {
-        return memoryPressureState == WorldMemorySnapshot.PressureState.NORMAL && canReserveTaskMemory();
+    private boolean canSubmitLoadTask() {
+        return memoryPressureState == WorldMemorySnapshot.PressureState.NORMAL
+                && canReserveBackgroundTaskMemory();
+    }
+
+    private boolean canReserveBackgroundTaskMemory() {
+        long reservedInteractionBytes = (long) reservedRemeshTaskSlots * TASK_MEMORY_RESERVATION_BYTES;
+        long backgroundInFlightLimit = Math.max(
+                TASK_MEMORY_RESERVATION_BYTES,
+                memoryBudget.maxInFlightBytes() - reservedInteractionBytes
+        );
+        synchronized (taskLock) {
+            return reservedInFlightBytes + TASK_MEMORY_RESERVATION_BYTES <= backgroundInFlightLimit
+                    && chunkManager.getEstimatedResidentBytes() + reservedInFlightBytes < memoryBudget.cpuStopBytes();
+        }
     }
 
     private boolean canReserveTaskMemory() {
@@ -1006,6 +1123,20 @@ public class WorldStreamer implements AutoCloseable {
         asyncCancelledBuilds.incrementAndGet();
     }
 
+    private void cancelActiveRemeshTask(ChunkPosition position) {
+        ChunkBuildTask cancelledTask;
+        synchronized (taskLock) {
+            ChunkBuildTask task = activeChunkTasks.get(position);
+            if (task == null || !task.type().isRemesh()) {
+                return;
+            }
+            cancelledTask = activeChunkTasks.remove(position);
+            cancelledTask.setState(ChunkTaskState.OBSOLETE);
+            releaseTaskReservation();
+        }
+        asyncCancelledBuilds.incrementAndGet();
+    }
+
     private boolean failTask(ChunkBuildTask task) {
         boolean removed;
         synchronized (taskLock) {
@@ -1021,8 +1152,12 @@ public class WorldStreamer implements AutoCloseable {
         if (removed && task.type() == ChunkTaskType.LOAD) {
             chunkManager.clearQueuedChunk(task.position());
         }
-        if (removed && task.type() == ChunkTaskType.REMESH) {
-            markChunkDirty(task.position());
+        if (removed && task.type().isRemesh()) {
+            if (task.type() == ChunkTaskType.INTERACTION_REMESH) {
+                markChunkDirtyPriority(task.position());
+            } else {
+                markChunkDirty(task.position());
+            }
         }
         return removed;
     }
@@ -1058,19 +1193,25 @@ public class WorldStreamer implements AutoCloseable {
     }
 
     private void completePublishedTask(ChunkPosition position, long token, boolean publishedChunk) {
+        ChunkTaskType taskType;
         synchronized (taskLock) {
             ChunkBuildTask task = activeChunkTasks.get(position);
             if (task == null || task.token() != token) {
                 return;
             }
 
+            taskType = task.type();
             task.setState(publishedChunk ? ChunkTaskState.PUBLISHED : ChunkTaskState.OBSOLETE);
             activeChunkTasks.remove(position);
             releaseTaskReservation();
         }
 
         if (!publishedChunk) {
-            markChunkDirty(position);
+            if (taskType == ChunkTaskType.INTERACTION_REMESH) {
+                markChunkDirtyPriority(position);
+            } else {
+                markChunkDirty(position);
+            }
         }
     }
 
@@ -1104,19 +1245,6 @@ public class WorldStreamer implements AutoCloseable {
         reservedInFlightBytes = Math.max(0L, reservedInFlightBytes - TASK_MEMORY_RESERVATION_BYTES);
     }
 
-    private List<ChunkPosition> snapshotDirtyChunks() {
-        synchronized (taskLock) {
-            if (priorityDirtyChunkPositions.isEmpty()) {
-                return List.copyOf(dirtyChunkPositions);
-            }
-
-            List<ChunkPosition> snapshot = new ArrayList<>(priorityDirtyChunkPositions.size() + dirtyChunkPositions.size());
-            snapshot.addAll(priorityDirtyChunkPositions);
-            snapshot.addAll(dirtyChunkPositions);
-            return List.copyOf(snapshot);
-        }
-    }
-
     private void removeDirtyChunk(ChunkPosition position) {
         synchronized (taskLock) {
             priorityDirtyChunkPositions.remove(position);
@@ -1126,7 +1254,13 @@ public class WorldStreamer implements AutoCloseable {
 
     int getPendingRemeshCount() {
         synchronized (taskLock) {
-            return priorityDirtyChunkPositions.size() + dirtyChunkPositions.size();
+            int activeRemeshCount = 0;
+            for (ChunkBuildTask task : activeChunkTasks.values()) {
+                if (task.type().isRemesh()) {
+                    activeRemeshCount++;
+                }
+            }
+            return priorityDirtyChunkPositions.size() + dirtyChunkPositions.size() + activeRemeshCount;
         }
     }
 
@@ -1151,7 +1285,12 @@ public class WorldStreamer implements AutoCloseable {
 
     private enum ChunkTaskType {
         LOAD,
-        REMESH
+        REMESH,
+        INTERACTION_REMESH;
+
+        private boolean isRemesh() {
+            return this != LOAD;
+        }
     }
 
     private enum ChunkTaskState {

@@ -405,11 +405,14 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.separator();
         ImGui.colorEdit3("Ambient Color", settings.ambientColorRef());
         ImGui.sliderFloat("Ambient Intensity", settings.ambientIntensityRef(), 0.0f, 2.0f);
+        ImGui.sliderFloat("Shadow Strength", settings.shadowStrengthRef(), 0.0f, 1.0f);
         ImGui.colorEdit3("Sun Color", settings.sunColorRef());
         ImGui.sliderFloat("Sun Intensity", settings.sunIntensityRef(), 0.0f, 8.0f);
         ImGui.sliderFloat3("Sun Direction", settings.sunDirectionRef(), -1.0f, 1.0f);
         ImGui.colorEdit3("Sky Color", settings.skyColorRef());
-        ImGui.sliderFloat("Sky Intensity", settings.skyIntensityRef(), 0.0f, 4.0f);
+        ImGui.sliderFloat("Indirect Sky Intensity", settings.skyIntensityRef(), 0.0f, 4.0f);
+        ImGui.sliderFloat("Voxel Light Gamma", settings.voxelLightGammaRef(), 0.25f, 3.0f);
+        ImGui.sliderFloat("Voxel Darkness Floor", settings.voxelDarknessFloorRef(), 0.0f, 0.25f);
         ImGui.separator();
         ImBoolean blockLightEnabled = new ImBoolean(settings.isBlockLightEnabled());
         if (ImGui.checkbox("Block Light", blockLightEnabled)) {
@@ -430,10 +433,10 @@ public class DebugImGuiPass implements RenderPass {
         applyWindowLayout(lightDebugRect, 0.9f);
         ImGui.begin("Render Light Debug");
         ImBoolean enabled = new ImBoolean(context.isLightDebugVisualizationEnabled());
-        if (ImGui.checkbox("Visualize Block Light", enabled)) {
+        if (ImGui.checkbox("Visualize Voxel Light", enabled)) {
             context.setLightDebugVisualizationEnabled(enabled.get());
         }
-        ImGui.text("Chunk faces are colored with local block light.");
+        ImGui.text("Heatmap = max(Sky, R, G, B): black 0, white 15.");
         ImGui.separator();
 
         World world = context.getWorld();
@@ -454,6 +457,7 @@ public class DebugImGuiPass implements RenderPass {
         int blue = ChunkLighting.getBlue(packedLight);
         int sky = ChunkLighting.getSky(packedLight);
         int intensity = Math.max(red, Math.max(green, blue));
+        int combinedLevel = ChunkLighting.getCombinedLevel(packedLight);
         int chunkX = Math.floorDiv(blockX, Chunk.SIZE);
         int chunkY = Math.floorDiv(blockY, Chunk.SIZE);
         int chunkZ = Math.floorDiv(blockZ, Chunk.SIZE);
@@ -469,22 +473,26 @@ public class DebugImGuiPass implements RenderPass {
         int sampleBlue = ChunkLighting.getBlue(sampledPackedLight);
         int sampleSky = ChunkLighting.getSky(sampledPackedLight);
         int sampleIntensity = Math.max(sampleRed, Math.max(sampleGreen, sampleBlue));
+        int sampleCombinedLevel = ChunkLighting.getCombinedLevel(sampledPackedLight);
 
         ImGui.text(String.format("Block: %s", blockDefinition != null ? blockDefinition.getStableId() : Short.toString(blockId)));
         ImGui.text(String.format("World: (%d, %d, %d)", blockX, blockY, blockZ));
         ImGui.text(String.format("Chunk: (%d, %d, %d) | Local: (%d, %d, %d)", chunkX, chunkY, chunkZ, localX, localY, localZ));
         ImGui.text(String.format("Chunk loaded: %s", world.containsChunkAtWorld(blockX, blockY, blockZ) ? "yes" : "no"));
         ImGui.text(String.format("Block cell light RGB: (%d, %d, %d)", red, green, blue));
-        ImGui.text(String.format("Block intensity: %d/15 | Sky: %d | Packed: 0x%04X", intensity, sky, packedLight & 0xFFFF));
+        ImGui.text(String.format("Block absolute light: %d/15", combinedLevel));
+        ImGui.text(String.format("RGB max: %d/15 | Sky: %d/15 | Packed: 0x%04X", intensity, sky, packedLight & 0xFFFF));
         ImGui.separator();
         ImGui.text(String.format("Face sample: (%d, %d, %d)", sampleX, sampleY, sampleZ));
         ImGui.text(String.format("Face light RGB: (%d, %d, %d)", sampleRed, sampleGreen, sampleBlue));
-        ImGui.text(String.format("Face intensity: %d/15 | Sky: %d | Packed: 0x%04X", sampleIntensity, sampleSky, sampledPackedLight & 0xFFFF));
+        ImGui.text(String.format("Face absolute light: %d/15", sampleCombinedLevel));
+        ImGui.text(String.format("RGB max: %d/15 | Sky: %d/15 | Packed: 0x%04X", sampleIntensity, sampleSky, sampledPackedLight & 0xFFFF));
         if (blockDefinition != null) {
             ImGui.text(String.format(
-                    "Opaque: %s | Blocks light: %s | Emitter: %s",
+                    "Opaque: %s | Blocks light: %s | Attenuation: %d | Emitter: %s",
                     blockDefinition.isOpaque() ? "yes" : "no",
                     blockDefinition.blocksLight() ? "yes" : "no",
+                    blockDefinition.getLightAttenuation(),
                     blockDefinition.isLightEmitter() ? "yes" : "no"
             ));
             ImGui.text(String.format(

@@ -60,4 +60,30 @@ class ChunkLightingTest {
         assertEquals(first, copy.getPackedLight(1, 2, 3));
         assertEquals(second, source.getPackedLight(1, 2, 3));
     }
+
+    @Test
+    void bulkReplacementCompactsUniformResultsAndDetectsUnchangedData() {
+        ChunkLighting lighting = new ChunkLighting();
+        short fullSky = ChunkLighting.pack(0, 0, 0, 15);
+        short[] replacement = new short[Chunk.TOTAL_BLOCKS];
+        java.util.Arrays.fill(replacement, fullSky);
+
+        assertTrue(lighting.replaceWithOwnedData(replacement));
+        assertTrue(lighting.isCompact());
+        assertEquals(fullSky, lighting.getUniformLight());
+
+        short[] sameReplacement = new short[Chunk.TOTAL_BLOCKS];
+        java.util.Arrays.fill(sameReplacement, fullSky);
+        assertFalse(lighting.replaceWithOwnedData(sameReplacement));
+    }
+
+    @Test
+    void combinedLevelIncludesSkyAndEveryBlockLightChannel() {
+        assertEquals(0, ChunkLighting.getCombinedLevel(ChunkLighting.pack(0, 0, 0, 0)));
+        assertEquals(15, ChunkLighting.getCombinedLevel(ChunkLighting.pack(0, 0, 0, 15)));
+        assertEquals(12, ChunkLighting.getCombinedLevel(ChunkLighting.pack(12, 3, 4, 2)));
+        assertEquals(13, ChunkLighting.getCombinedLevel(ChunkLighting.pack(3, 13, 4, 2)));
+        assertEquals(14, ChunkLighting.getCombinedLevel(ChunkLighting.pack(3, 4, 14, 2)));
+        assertEquals(11, ChunkLighting.getCombinedLevel(ChunkLighting.pack(3, 4, 5, 11)));
+    }
 }

@@ -79,6 +79,13 @@ Options utiles :
 java -jar target/voxy-0.0.1.jar --benchmark --benchmark-warmup=5 --benchmark-loading-timeout=60 --benchmark-duration=45 --benchmark-settle=10 --benchmark-seed=12345 --benchmark-render-distance=20 --benchmark-window=1920x1080 --benchmark-spawn=32,64,32
 ```
 
+Pour tester le cache d'eclairage lors de rotations rapides, le scenario optionnel
+effectue des balayages repetables de 90 degres en 250 ms :
+
+```powershell
+java "-Dvoxy.benchmark.rapidTurns=true" -jar target/voxy-0.0.1.jar --benchmark
+```
+
 Budgets memoire et hauteur mondiale :
 
 ```powershell
@@ -131,8 +138,21 @@ java -jar target/voxy-0.0.1.jar --profile-jfr
 - Le CSV inclut aussi des stats par pass pour `opaque`, `cutout` et `transparent` :
   `resident_meshes`, `visible_meshes`, `draw_calls`, `drawn_faces`, `mesh_upload_ms`, `light_upload_ms`.
 - Le CSV expose aussi le budget CPU du monde, la memoire reservee aux taches, la memoire GPU des chunks, le nombre de chunks a eclairage compact et la distance demandee/effective.
+- Le cache GPU de lumiere expose les uploads urgents et de fond, les uploads differes, les nouveaux chunks visibles sans allocation, les uploads et hits de prechargement, les echecs d'allocation, les evictions, les tentatives sautees et les chunks temporairement rendus avec l'eclairage de repli.
 - Les colonnes sparse ajoutent la cible materialisee, les chunks virtuels, l'equivalent de l'ancien cylindre, le pourcentage evite et les statistiques du cache de classification.
 - Les timings `chunk_gen_ms` et `chunk_mesh_ms` agregent du travail fait en threads de fond. Ils peuvent donc depasser le frame time d'une frame isolee.
+
+Le cache de lumiere precharge un frustum elargi a 150 degres ainsi qu'un rayon
+proche de 4 chunks. Les nouveaux chunks visibles utilisent une file urgente
+limitee a 64 chunks ou 4 ms par frame. Le prechargement de fond reste limite a
+16 chunks ou 1,5 ms par frame et ne s'execute que lorsque la file urgente est
+vide. Ces valeurs peuvent etre ajustees avec
+`voxy.chunkLightPrefetchFovDegrees`, `voxy.chunkLightPrefetchRadiusChunks`,
+`voxy.chunkLightPrefetchLookAheadSeconds`,
+`voxy.chunkLightPrefetchMaxYawLeadDegrees`,
+`voxy.chunkLightUrgentUploadsPerFrame`, `voxy.chunkLightUrgentUploadBudgetNs`,
+`voxy.chunkLightBackgroundUploadsPerFrame` et
+`voxy.chunkLightBackgroundUploadBudgetNs`.
 
 Exemple :
 

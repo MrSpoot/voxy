@@ -24,6 +24,7 @@ public class Chunk {
     private final Vector3i position;
     private final BlockCatalog blockCatalog;
     private final ChunkLighting lighting;
+    private final ChunkSkyLight directSkyLight;
 
     private boolean isUniform = true;
     @Getter
@@ -37,6 +38,7 @@ public class Chunk {
     private long[] data;
     private int[] lightEmitterBlockIndices;
     private int lightEmitterCount;
+    private boolean lightingInitialized;
 
     public Chunk(Vector3i position) {
         this(position, BlockRegistry.getDefaultCatalog());
@@ -46,6 +48,7 @@ public class Chunk {
         this.position = new Vector3i(position);
         this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
         this.lighting = new ChunkLighting();
+        this.directSkyLight = new ChunkSkyLight();
         applyUniformBlock(blockCatalog.air().getId());
     }
 
@@ -184,6 +187,23 @@ public class Chunk {
         return lighting;
     }
 
+    ChunkSkyLight getDirectSkyLight() {
+        return directSkyLight;
+    }
+
+    public int getDirectSkyLight(int x, int y, int z) {
+        checkBounds(x, y, z);
+        return directSkyLight.get(x, y, z);
+    }
+
+    boolean isLightingInitialized() {
+        return lightingInitialized;
+    }
+
+    void markLightingInitialized() {
+        lightingInitialized = true;
+    }
+
     public short getPackedLight(int x, int y, int z) {
         checkBounds(x, y, z);
         return lighting.getPackedLight(x, y, z);
@@ -277,7 +297,7 @@ public class Chunk {
     }
 
     public long estimateRetainedBytes() {
-        long bytes = 160L + lighting.estimateRetainedBytes();
+        long bytes = 168L + lighting.estimateRetainedBytes() + directSkyLight.estimateRetainedBytes();
         bytes += arrayBytes(palette == null ? 0 : palette.length, Short.BYTES);
         bytes += arrayBytes(paletteCounts == null ? 0 : paletteCounts.length, Integer.BYTES);
         bytes += arrayBytes(data == null ? 0 : data.length, Long.BYTES);
@@ -294,6 +314,8 @@ public class Chunk {
         copy.uniformBlockId = uniformBlockId;
         if (includeLighting) {
             copy.lighting.copyFrom(lighting);
+            copy.directSkyLight.copyFrom(directSkyLight);
+            copy.lightingInitialized = lightingInitialized;
         }
 
         if (isUniform) {

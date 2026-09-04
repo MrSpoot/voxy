@@ -14,6 +14,13 @@ import java.util.Set;
 
 public class ChunkManager {
     private static final int MAX_RETAINED_UPLOAD_DELTAS = 4096;
+    public static final int LIGHT_BOUNDARY_LOW_X = 1;
+    public static final int LIGHT_BOUNDARY_HIGH_X = 1 << 1;
+    public static final int LIGHT_BOUNDARY_LOW_Y = 1 << 2;
+    public static final int LIGHT_BOUNDARY_HIGH_Y = 1 << 3;
+    public static final int LIGHT_BOUNDARY_LOW_Z = 1 << 4;
+    public static final int LIGHT_BOUNDARY_HIGH_Z = 1 << 5;
+    public static final int LIGHT_BOUNDARY_ALL = (1 << 6) - 1;
     private final BlockCatalog blockCatalog;
 
     private final Map<ChunkPosition, Chunk> chunks = new LinkedHashMap<>();
@@ -203,7 +210,7 @@ public class ChunkManager {
                 position,
                 upload
         );
-        recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
+        recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position, LIGHT_BOUNDARY_ALL, false);
         refreshChunkUploadsSnapshot();
     }
 
@@ -222,7 +229,6 @@ public class ChunkManager {
                 position,
                 upload
         );
-        recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
         refreshChunkUploadsSnapshot();
         return true;
     }
@@ -235,7 +241,7 @@ public class ChunkManager {
 
         if (chunkUploads.remove(position) != null) {
             recordChunkUploadDelta(ChunkUploadChangeType.REMOVED, position, null);
-            recordChunkLightDelta(ChunkUploadChangeType.REMOVED, position);
+            recordChunkLightDelta(ChunkUploadChangeType.REMOVED, position, LIGHT_BOUNDARY_ALL, false);
             refreshChunkUploadsSnapshot();
         }
     }
@@ -331,13 +337,27 @@ public class ChunkManager {
     }
 
     public synchronized int markChunksLightUpdated(Set<ChunkPosition> positions) {
-        int updatedChunkCount = 0;
+        Map<ChunkPosition, Integer> updates = new LinkedHashMap<>(positions.size());
         for (ChunkPosition position : positions) {
+            updates.put(position, LIGHT_BOUNDARY_ALL);
+        }
+        return markChunksLightUpdated(updates, false);
+    }
+
+    public synchronized int markChunksLightUpdated(Map<ChunkPosition, Integer> updates, boolean priority) {
+        int updatedChunkCount = 0;
+        for (Map.Entry<ChunkPosition, Integer> entry : updates.entrySet()) {
+            ChunkPosition position = entry.getKey();
             if (!chunks.containsKey(position)) {
                 continue;
             }
             refreshResidentEstimate(position);
-            recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position);
+            recordChunkLightDelta(
+                    ChunkUploadChangeType.UPDATED,
+                    position,
+                    entry.getValue() & LIGHT_BOUNDARY_ALL,
+                    priority
+            );
             updatedChunkCount++;
         }
         return updatedChunkCount;
@@ -397,9 +417,14 @@ public class ChunkManager {
         trimRetainedChunkUploadDeltas();
     }
 
-    private void recordChunkLightDelta(ChunkUploadChangeType changeType, ChunkPosition position) {
+    private void recordChunkLightDelta(
+            ChunkUploadChangeType changeType,
+            ChunkPosition position,
+            int boundaryMask,
+            boolean priority
+    ) {
         chunkLightVersion++;
-        chunkLightDeltas.add(new ChunkLightDelta(chunkLightVersion, changeType, position));
+        chunkLightDeltas.add(new ChunkLightDelta(chunkLightVersion, changeType, position, boundaryMask, priority));
         trimRetainedChunkLightDeltas();
     }
 
@@ -465,7 +490,9 @@ public class ChunkManager {
     public record ChunkLightDelta(
             long version,
             ChunkUploadChangeType changeType,
-            ChunkPosition position
+            ChunkPosition position,
+            int boundaryMask,
+            boolean priority
     ) {
     }
 

@@ -52,7 +52,13 @@ class WorldTest {
     @Test
     void changingBlockOnChunkCornerMarksAllAdjacentBoundaryChunksDirty() {
         try (World world = new World(new FlatGenerator(Blocks.AIR.getId()), new WorldSettings(2))) {
-            publishChunk(world, new ChunkManager.ChunkPosition(0, 0, 0));
+            for (int chunkX = -1; chunkX <= 0; chunkX++) {
+                for (int chunkY = -1; chunkY <= 0; chunkY++) {
+                    for (int chunkZ = -1; chunkZ <= 0; chunkZ++) {
+                        publishChunk(world, new ChunkManager.ChunkPosition(chunkX, chunkY, chunkZ));
+                    }
+                }
+            }
 
             assertTrue(world.trySetBlockAtWorld(0, 0, 0, Blocks.STONE));
 
@@ -64,6 +70,41 @@ class WorldTest {
     void getBlockAtWorldFallsBackToGeneratorWhenChunkIsNotLoaded() {
         try (World world = new World(new FlatGenerator(Blocks.SAND.getId()), new WorldSettings(2))) {
             assertEquals(Blocks.SAND.getId(), world.getBlockAtWorld(100, 5, 100));
+        }
+    }
+
+    @Test
+    void blockEditQueuesAPriorityLightingUpdate() {
+        try (World world = new World(
+                new FlatGenerator(Blocks.AIR.getId()),
+                new WorldSettings(2, new WorldHeightRange(0, 0), WorldMemoryBudget.balanced(), false)
+        )) {
+            publishChunk(world, new ChunkManager.ChunkPosition(0, 0, 0));
+
+            world.setBlockAtWorld(4, 5, 6, Blocks.STONE);
+
+            assertEquals(1, world.getPendingPriorityLightingUpdateCount());
+        }
+    }
+
+    @Test
+    void interactionLightingRunsBeforeOlderGenerationLighting() {
+        try (World world = new World(
+                new FlatGenerator(Blocks.AIR.getId()),
+                new WorldSettings(2, new WorldHeightRange(0, 0), WorldMemoryBudget.balanced(), false)
+        )) {
+            world.setUnloadsEnabled(false);
+            world.setRemeshEnabled(false);
+            for (int chunkX = 10; chunkX < 15; chunkX++) {
+                publishChunk(world, new ChunkManager.ChunkPosition(chunkX, 0, 0));
+            }
+            publishChunk(world, new ChunkManager.ChunkPosition(0, 0, 0));
+            world.setBlockAtWorld(1, 1, 1, Blocks.STONE);
+
+            world.update(new org.joml.Vector3f(0.0f, 0.0f, 0.0f));
+
+            assertEquals(15, ChunkLighting.getSky(world.getPackedLightAtWorld(2, 1, 1)));
+            assertEquals(0, world.getPendingPriorityLightingUpdateCount());
         }
     }
 

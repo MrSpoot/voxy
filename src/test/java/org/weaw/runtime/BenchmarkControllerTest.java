@@ -37,6 +37,17 @@ class BenchmarkControllerTest {
         assertEquals(2.0d, controller.loadingDurationSeconds(), 0.0001d);
     }
 
+    @Test
+    void optionalRapidTurnScenarioAddsARepeatableNinetyDegreeSweep() {
+        BenchmarkController normal = new BenchmarkController(options(0, 0, 5, 0), false);
+        BenchmarkController rapidTurns = new BenchmarkController(options(0, 0, 5, 0), true);
+
+        float normalYaw = normal.update(1.125d, true).yaw();
+        float rapidYaw = rapidTurns.update(1.125d, true).yaw();
+
+        assertEquals(45.0f, rapidYaw - normalYaw, 0.001f);
+    }
+
     private static BenchmarkOptions options(int warmup, int loadingTimeout, int traversal, int settle) {
         return new BenchmarkOptions(
                 true,

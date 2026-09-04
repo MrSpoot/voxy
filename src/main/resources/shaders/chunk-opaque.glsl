@@ -116,16 +116,22 @@ void main() {
 uniform sampler2DArray uBlockTextures;
 uniform int uDebugLightVisualizationEnabled;
 uniform int uLightingEnabled;
+uniform int uVoxelLightDataEnabled;
 uniform int uBlockLightEnabled;
 uniform float uBlockLightIntensity;
 uniform vec3 uAmbientColor;
 uniform float uAmbientIntensity;
+uniform float uShadowStrength;
 uniform vec3 uSunColor;
 uniform float uSunIntensity;
 uniform vec3 uSunDirection;
 uniform vec3 uSkyColor;
 uniform float uSkyIntensity;
+uniform float uVoxelLightGamma;
+uniform float uVoxelDarknessFloor;
 const int DEBUG_LIGHT_PADDED_DIMENSION = 34;
+const int PACKED_LIGHT_COMPONENT_INTS =
+    (DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION + 1) / 2;
 
 layout(std430, binding = 2) readonly buffer ChunkLightBuffer {
     uint lightData[];
@@ -159,48 +165,54 @@ vec3 getFaceNormal(int face) {
 }
 
 uint getPackedLight(int lightOffset, int x, int y, int z);
+float getDirectSkyLevel(int lightOffset, ivec3 sampleCoords);
 vec3 getDebugLightColor(uint packedLight);
+vec3 getDebugAbsoluteLightColor(uint packedLight);
 ivec3 resolveDebugSampleCoords(int face, vec3 localPosition);
 vec4 sampleLightComponents(ivec3 sampleCoords);
-vec4 sampleSmoothedLight(int face, vec3 localPosition);
+vec4 sampleSmoothedVoxelLight(int face, vec3 localPosition, ivec3 faceSampleCoords);
+float sampleSmoothedDirectSkyLight(int face, vec3 localPosition, ivec3 faceSampleCoords);
 
-float attenuateAoNearBlockLight(float ao, vec3 blockLight) {
-    float blockLightStrength = max(max(blockLight.r, blockLight.g), blockLight.b);
-    float aoFade = smoothstep(0.18, 0.85, blockLightStrength);
-    return mix(ao, 0.88, aoFade);
+float getVoxelLightResponse(float normalizedLevel) {
+    float curvedLevel = pow(clamp(normalizedLevel, 0.0, 1.0), max(uVoxelLightGamma, 0.01));
+    float easedLevel = curvedLevel * curvedLevel * (3.0 - 2.0 * curvedLevel);
+    return mix(clamp(uVoxelDarknessFloor, 0.0, 0.25), 1.0, easedLevel);
 }
 
 vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
-    vec4 smoothedLight = sampleSmoothedLight(face, vChunkLocalPosition);
-    vec3 blockLight = smoothedLight.rgb * uBlockLightIntensity;
-    vec3 propagatedSkyLight = uSkyColor * smoothedLight.a * uBlockLightIntensity;
-    float shadedAo = ao;
-    if (uBlockLightEnabled != 0) {
-        shadedAo = attenuateAoNearBlockLight(ao, blockLight);
-    }
+    ivec3 faceSampleCoords = resolveDebugSampleCoords(face, vChunkLocalPosition);
+    vec4 voxelLight = sampleSmoothedVoxelLight(face, vChunkLocalPosition, faceSampleCoords);
+    vec3 blockLight = voxelLight.rgb * uBlockLightIntensity;
+    vec3 localLighting = uBlockLightEnabled != 0 ? blockLight : vec3(0.0);
+    float skyLevel = uVoxelLightDataEnabled != 0 ? voxelLight.a : 1.0;
+    float directSkyLevel = uVoxelLightDataEnabled != 0
+        ? sampleSmoothedDirectSkyLight(face, vChunkLocalPosition, faceSampleCoords)
+        : 1.0;
+    float diffuseSkyVisibility = getVoxelLightResponse(skyLevel);
+    float directSunVisibility = pow(clamp(directSkyLevel, 0.0, 1.0), 2.0);
+    float blockLightStrength = max(max(localLighting.r, localLighting.g), localLighting.b);
 
     if (uLightingEnabled == 0) {
-        vec3 lighting = vec3(1.0);
-        if (uBlockLightEnabled != 0) {
-            lighting += blockLight + propagatedSkyLight;
-        }
-        return albedo * lighting * shadedAo;
+        vec3 environmentLighting = vec3(1.0);
+        return albedo * (environmentLighting * ao + localLighting);
     }
 
     vec3 normal = getFaceNormal(face);
     vec3 sunDirection = normalize(uSunDirection + vec3(0.0, 0.00001, 0.0));
     float sunFactor = max(dot(normal, sunDirection), 0.0);
     float skyFactor = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+    float indirectSkyFactor = mix(0.35, 1.0, skyFactor);
 
-    vec3 ambient = uAmbientColor * uAmbientIntensity;
-    vec3 sky = uSkyColor * uSkyIntensity * skyFactor;
-    vec3 sun = uSunColor * uSunIntensity * sunFactor;
-    vec3 lighting = ambient + sky + sun;
-    if (uBlockLightEnabled != 0) {
-        lighting += blockLight + propagatedSkyLight;
-    }
+    float localLightLevel = clamp(max(skyLevel, blockLightStrength), 0.0, 1.0);
+    float ambientRecovery = getVoxelLightResponse(localLightLevel);
+    float ambientVisibility = 1.0 - clamp(uShadowStrength, 0.0, 1.0) * (1.0 - ambientRecovery);
+    vec3 ambient = uAmbientColor * uAmbientIntensity * ambientVisibility;
+    vec3 sky = uSkyColor * uSkyIntensity * indirectSkyFactor * diffuseSkyVisibility;
+    vec3 sun = uSunColor * uSunIntensity * sunFactor * directSunVisibility;
+    vec3 environmentLighting = ambient + sky + sun;
+    vec3 lighting = environmentLighting * ao + localLighting;
 
-    return albedo * lighting * shadedAo;
+    return albedo * lighting;
 }
 
 uint getPackedLight(int lightOffset, int x, int y, int z) {
@@ -220,12 +232,30 @@ vec3 getDebugLightColor(uint packedLight) {
     ) / 15.0;
 }
 
+vec3 getDebugAbsoluteLightColor(uint packedLight) {
+    float red = float(packedLight & 0xFu);
+    float green = float((packedLight >> 4u) & 0xFu);
+    float blue = float((packedLight >> 8u) & 0xFu);
+    float sky = float((packedLight >> 12u) & 0xFu);
+    float level = max(max(red, green), max(blue, sky)) / 15.0;
+    return vec3(level);
+}
+
 vec4 sampleLightComponents(ivec3 sampleCoords) {
     uint packedLight = getPackedLight(vLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z);
     return vec4(
         getDebugLightColor(packedLight),
         float((packedLight >> 12u) & 0xFu) / 15.0
     );
+}
+
+float getDirectSkyLevel(int lightOffset, ivec3 sampleCoords) {
+    int voxelIndex = sampleCoords.x
+        + sampleCoords.z * DEBUG_LIGHT_PADDED_DIMENSION
+        + sampleCoords.y * DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION;
+    uint packedLevels = lightData[lightOffset + PACKED_LIGHT_COMPONENT_INTS + (voxelIndex >> 3)];
+    uint shift = uint(voxelIndex & 7) * 4u;
+    return float((packedLevels >> shift) & 0xFu) / 15.0;
 }
 
 ivec3 resolveDebugSampleCoords(int face, vec3 localPosition) {
@@ -244,43 +274,72 @@ ivec3 resolveDebugSampleCoords(int face, vec3 localPosition) {
     return ivec3(sampleX + 1, sampleY + 1, sampleZ + 1);
 }
 
-vec4 sampleSmoothedLight(int face, vec3 localPosition) {
-    vec3 samplePosition = localPosition;
-    if (face == 0) samplePosition.x += 0.5;
-    else if (face == 1) samplePosition.x -= 0.5;
-    else if (face == 2) samplePosition.y += 0.5;
-    else if (face == 3) samplePosition.y -= 0.5;
-    else if (face == 4) samplePosition.z += 0.5;
-    else samplePosition.z -= 0.5;
-
-    samplePosition += vec3(1.0);
-    samplePosition = clamp(samplePosition, vec3(0.0), vec3(float(DEBUG_LIGHT_PADDED_DIMENSION - 1) - 0.001));
-
+vec4 sampleSmoothedVoxelLight(int face, vec3 localPosition, ivec3 faceSampleCoords) {
+    vec3 samplePosition = clamp(
+        localPosition + vec3(0.5),
+        vec3(0.0),
+        vec3(float(DEBUG_LIGHT_PADDED_DIMENSION - 1) - 0.001)
+    );
     ivec3 base = ivec3(floor(samplePosition));
     vec3 fraction = fract(samplePosition);
 
-    vec4 c000 = sampleLightComponents(base);
-    vec4 c100 = sampleLightComponents(base + ivec3(1, 0, 0));
-    vec4 c010 = sampleLightComponents(base + ivec3(0, 1, 0));
-    vec4 c110 = sampleLightComponents(base + ivec3(1, 1, 0));
-    vec4 c001 = sampleLightComponents(base + ivec3(0, 0, 1));
-    vec4 c101 = sampleLightComponents(base + ivec3(1, 0, 1));
-    vec4 c011 = sampleLightComponents(base + ivec3(0, 1, 1));
-    vec4 c111 = sampleLightComponents(base + ivec3(1, 1, 1));
+    if (face == 0 || face == 1) {
+        vec4 c00 = sampleLightComponents(ivec3(faceSampleCoords.x, base.y, base.z));
+        vec4 c10 = sampleLightComponents(ivec3(faceSampleCoords.x, base.y + 1, base.z));
+        vec4 c01 = sampleLightComponents(ivec3(faceSampleCoords.x, base.y, base.z + 1));
+        vec4 c11 = sampleLightComponents(ivec3(faceSampleCoords.x, base.y + 1, base.z + 1));
+        return mix(mix(c00, c10, fraction.y), mix(c01, c11, fraction.y), fraction.z);
+    }
+    if (face == 2 || face == 3) {
+        vec4 c00 = sampleLightComponents(ivec3(base.x, faceSampleCoords.y, base.z));
+        vec4 c10 = sampleLightComponents(ivec3(base.x + 1, faceSampleCoords.y, base.z));
+        vec4 c01 = sampleLightComponents(ivec3(base.x, faceSampleCoords.y, base.z + 1));
+        vec4 c11 = sampleLightComponents(ivec3(base.x + 1, faceSampleCoords.y, base.z + 1));
+        return mix(mix(c00, c10, fraction.x), mix(c01, c11, fraction.x), fraction.z);
+    }
 
-    vec4 c00 = mix(c000, c100, fraction.x);
-    vec4 c10 = mix(c010, c110, fraction.x);
-    vec4 c01 = mix(c001, c101, fraction.x);
-    vec4 c11 = mix(c011, c111, fraction.x);
-    vec4 c0 = mix(c00, c10, fraction.y);
-    vec4 c1 = mix(c01, c11, fraction.y);
-    return mix(c0, c1, fraction.z);
+    vec4 c00 = sampleLightComponents(ivec3(base.x, base.y, faceSampleCoords.z));
+    vec4 c10 = sampleLightComponents(ivec3(base.x + 1, base.y, faceSampleCoords.z));
+    vec4 c01 = sampleLightComponents(ivec3(base.x, base.y + 1, faceSampleCoords.z));
+    vec4 c11 = sampleLightComponents(ivec3(base.x + 1, base.y + 1, faceSampleCoords.z));
+    return mix(mix(c00, c10, fraction.x), mix(c01, c11, fraction.x), fraction.y);
+}
+
+float sampleSmoothedDirectSkyLight(int face, vec3 localPosition, ivec3 faceSampleCoords) {
+    vec3 samplePosition = clamp(
+        localPosition + vec3(0.5),
+        vec3(0.0),
+        vec3(float(DEBUG_LIGHT_PADDED_DIMENSION - 1) - 0.001)
+    );
+    ivec3 base = ivec3(floor(samplePosition));
+    vec3 fraction = fract(samplePosition);
+
+    if (face == 0 || face == 1) {
+        float c00 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y, base.z));
+        float c10 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y + 1, base.z));
+        float c01 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y, base.z + 1));
+        float c11 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y + 1, base.z + 1));
+        return mix(mix(c00, c10, fraction.y), mix(c01, c11, fraction.y), fraction.z);
+    }
+    if (face == 2 || face == 3) {
+        float c00 = getDirectSkyLevel(vLightOffset, ivec3(base.x, faceSampleCoords.y, base.z));
+        float c10 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, faceSampleCoords.y, base.z));
+        float c01 = getDirectSkyLevel(vLightOffset, ivec3(base.x, faceSampleCoords.y, base.z + 1));
+        float c11 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, faceSampleCoords.y, base.z + 1));
+        return mix(mix(c00, c10, fraction.x), mix(c01, c11, fraction.x), fraction.z);
+    }
+
+    float c00 = getDirectSkyLevel(vLightOffset, ivec3(base.x, base.y, faceSampleCoords.z));
+    float c10 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, base.y, faceSampleCoords.z));
+    float c01 = getDirectSkyLevel(vLightOffset, ivec3(base.x, base.y + 1, faceSampleCoords.z));
+    float c11 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, base.y + 1, faceSampleCoords.z));
+    return mix(mix(c00, c10, fraction.x), mix(c01, c11, fraction.x), fraction.y);
 }
 
 void main() {
     if (uDebugLightVisualizationEnabled != 0) {
         ivec3 sampleCoords = resolveDebugSampleCoords(vFace, vChunkLocalPosition);
-        fragColor = vec4(getDebugLightColor(getPackedLight(vLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z)), 1.0);
+        fragColor = vec4(getDebugAbsoluteLightColor(getPackedLight(vLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z)), 1.0);
         return;
     }
 
