@@ -14,6 +14,7 @@ import org.lwjgl.glfw.GLFW;
 import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.RenderStats;
+import org.weaw.engine.graphics.pipeline.WaterSettings;
 import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
@@ -71,6 +72,7 @@ public class DebugImGuiPass implements RenderPass {
     private boolean showResourcesWindow = false;
     private boolean showLightingWindow = false;
     private boolean showCloudWindow = false;
+    private boolean showWaterWindow = false;
     private boolean showLightDebugWindow = true;
     private boolean showColorGradingWindow = false;
     private boolean showFogWindow = false;
@@ -91,9 +93,10 @@ public class DebugImGuiPass implements RenderPass {
     private WindowRect resourcesRect = WindowRect.of(770.0f, 170.0f, 360.0f, 155.0f);
     private WindowRect lightingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 285.0f);
     private WindowRect cloudRect = WindowRect.of(770.0f, 635.0f, 360.0f, 240.0f);
-    private WindowRect lightDebugRect = WindowRect.of(770.0f, 890.0f, 360.0f, 210.0f);
-    private WindowRect colorGradingRect = WindowRect.of(770.0f, 1115.0f, 360.0f, 420.0f);
-    private WindowRect fogRect = WindowRect.of(770.0f, 1550.0f, 360.0f, 265.0f);
+    private WindowRect waterRect = WindowRect.of(770.0f, 890.0f, 360.0f, 220.0f);
+    private WindowRect lightDebugRect = WindowRect.of(770.0f, 1125.0f, 360.0f, 210.0f);
+    private WindowRect colorGradingRect = WindowRect.of(770.0f, 1350.0f, 360.0f, 420.0f);
+    private WindowRect fogRect = WindowRect.of(770.0f, 1785.0f, 360.0f, 265.0f);
     private WindowRect jvmRect = WindowRect.of(10.0f, 335.0f, 360.0f, 110.0f);
     private WindowRect deviceRect = WindowRect.of(390.0f, 555.0f, 360.0f, 150.0f);
     private WindowRect passBreakdownRect = WindowRect.of(770.0f, 530.0f, 460.0f, 230.0f);
@@ -154,6 +157,7 @@ public class DebugImGuiPass implements RenderPass {
         renderResourcesWindow();
         renderLightingWindow(context);
         renderCloudWindow(context);
+        renderWaterWindow(context);
         renderLightDebugWindow(context);
         renderColorGradingWindow(context);
         renderFogWindow(context);
@@ -233,6 +237,7 @@ public class DebugImGuiPass implements RenderPass {
             showResourcesWindow = toggleWindowMenuItem("Resources", showResourcesWindow);
             showLightingWindow = toggleWindowMenuItem("Lighting", showLightingWindow);
             showCloudWindow = toggleWindowMenuItem("Clouds", showCloudWindow);
+            showWaterWindow = toggleWindowMenuItem("Water", showWaterWindow);
             showLightDebugWindow = toggleWindowMenuItem("Light Debug", showLightDebugWindow);
             showColorGradingWindow = toggleWindowMenuItem("Tone Mapping", showColorGradingWindow);
             showFogWindow = toggleWindowMenuItem("Fog", showFogWindow);
@@ -451,6 +456,29 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.text("Cloud Size: size of cloud groups");
         ImGui.text("Cell Size: size of individual voxels");
         if (ImGui.button("Reset##Clouds")) {
+            settings.reset();
+        }
+        ImGui.end();
+    }
+
+    private void renderWaterWindow(RenderContext context) {
+        if (!showWaterWindow) {
+            return;
+        }
+
+        WaterSettings settings = context.getWaterSettings();
+        applyWindowLayout(waterRect, 0.9f);
+        ImGui.begin("Render Water");
+        ImBoolean wavesEnabled = new ImBoolean(settings.areWavesEnabled());
+        if (ImGui.checkbox("Waves Enabled", wavesEnabled)) {
+            settings.setWavesEnabled(wavesEnabled.get());
+        }
+        ImGui.separator();
+        ImGui.sliderFloat("Surface Inset", settings.surfaceInsetRef(), 0.0f, 0.5f);
+        ImGui.sliderFloat("Wave Amplitude", settings.waveAmplitudeRef(), 0.0f, 0.12f);
+        ImGui.sliderFloat("Wave Speed", settings.waveSpeedRef(), 0.0f, 4.0f);
+        ImGui.sliderFloat("Wave Length", settings.waveLengthRef(), 2.0f, 32.0f);
+        if (ImGui.button("Reset##Water")) {
             settings.reset();
         }
         ImGui.end();
@@ -845,7 +873,8 @@ public class DebugImGuiPass implements RenderPass {
             resourcesRect = WindowRect.of(rightX, top + 135.0f, columnWidth, 155.0f);
             lightingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
             cloudRect = WindowRect.of(rightX, lightingRect.bottom() + rowGap, columnWidth, 240.0f);
-            lightDebugRect = WindowRect.of(rightX, cloudRect.bottom() + rowGap, columnWidth, 210.0f);
+            waterRect = WindowRect.of(rightX, cloudRect.bottom() + rowGap, columnWidth, 220.0f);
+            lightDebugRect = WindowRect.of(rightX, waterRect.bottom() + rowGap, columnWidth, 210.0f);
             colorGradingRect = WindowRect.of(rightX, lightDebugRect.bottom() + rowGap, columnWidth, 420.0f);
             fogRect = WindowRect.of(rightX, colorGradingRect.bottom() + rowGap, columnWidth, 265.0f);
             chunkProfilingRect = WindowRect.of(rightX, fogRect.bottom() + rowGap, columnWidth, 200.0f);
@@ -868,7 +897,8 @@ public class DebugImGuiPass implements RenderPass {
             resourcesRect = WindowRect.of(leftX, jvmRect.bottom() + rowGap, columnWidth, 155.0f);
             lightingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
             cloudRect = WindowRect.of(leftX, lightingRect.bottom() + rowGap, columnWidth, 240.0f);
-            lightDebugRect = WindowRect.of(leftX, cloudRect.bottom() + rowGap, columnWidth, 210.0f);
+            waterRect = WindowRect.of(leftX, cloudRect.bottom() + rowGap, columnWidth, 220.0f);
+            lightDebugRect = WindowRect.of(leftX, waterRect.bottom() + rowGap, columnWidth, 210.0f);
             colorGradingRect = WindowRect.of(leftX, lightDebugRect.bottom() + rowGap, columnWidth, 420.0f);
             deviceRect = WindowRect.of(rightX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
             fogRect = WindowRect.of(rightX, deviceRect.bottom() + rowGap, columnWidth, 265.0f);
@@ -889,7 +919,8 @@ public class DebugImGuiPass implements RenderPass {
         resourcesRect = WindowRect.of(margin, arenaRect.bottom() + rowGap, fullWidth, 155.0f);
         lightingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 285.0f);
         cloudRect = WindowRect.of(margin, lightingRect.bottom() + rowGap, fullWidth, 240.0f);
-        lightDebugRect = WindowRect.of(margin, cloudRect.bottom() + rowGap, fullWidth, 210.0f);
+        waterRect = WindowRect.of(margin, cloudRect.bottom() + rowGap, fullWidth, 220.0f);
+        lightDebugRect = WindowRect.of(margin, waterRect.bottom() + rowGap, fullWidth, 210.0f);
         colorGradingRect = WindowRect.of(margin, lightDebugRect.bottom() + rowGap, fullWidth, 420.0f);
         fogRect = WindowRect.of(margin, colorGradingRect.bottom() + rowGap, fullWidth, 265.0f);
         jvmRect = WindowRect.of(margin, fogRect.bottom() + rowGap, fullWidth, 110.0f);
@@ -939,6 +970,7 @@ public class DebugImGuiPass implements RenderPass {
         showResourcesWindow = false;
         showLightingWindow = true;
         showCloudWindow = true;
+        showWaterWindow = true;
         showLightDebugWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
@@ -958,6 +990,7 @@ public class DebugImGuiPass implements RenderPass {
         showResourcesWindow = true;
         showLightingWindow = true;
         showCloudWindow = true;
+        showWaterWindow = true;
         showLightDebugWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
@@ -977,6 +1010,7 @@ public class DebugImGuiPass implements RenderPass {
         showResourcesWindow = true;
         showLightingWindow = true;
         showCloudWindow = true;
+        showWaterWindow = true;
         showLightDebugWindow = true;
         showColorGradingWindow = true;
         showFogWindow = true;
@@ -996,6 +1030,7 @@ public class DebugImGuiPass implements RenderPass {
         showResourcesWindow = false;
         showLightingWindow = false;
         showCloudWindow = false;
+        showWaterWindow = false;
         showLightDebugWindow = false;
         showColorGradingWindow = false;
         showFogWindow = false;

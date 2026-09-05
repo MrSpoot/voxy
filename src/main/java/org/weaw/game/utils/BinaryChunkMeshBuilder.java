@@ -313,6 +313,7 @@ public final class BinaryChunkMeshBuilder {
     }
 
     private static void greedyMerge(int[] mask, QuadConsumer consumer) {
+        int waterTextureIndex = Blocks.WATER.getTextureIndex();
         for (int row = 0; row < SIZE; row++) {
             for (int col = 0; col < SIZE; ) {
                 int key = mask[row * SIZE + col];
@@ -321,13 +322,16 @@ public final class BinaryChunkMeshBuilder {
                     continue;
                 }
 
+                boolean mergeable = TransparentFaceData.textureIndex(key) != waterTextureIndex;
                 int width = 1;
-                while (col + width < SIZE && mask[row * SIZE + col + width] == key) {
-                    width++;
+                if (mergeable) {
+                    while (col + width < SIZE && mask[row * SIZE + col + width] == key) {
+                        width++;
+                    }
                 }
 
                 int height = 1;
-                boolean canGrow = true;
+                boolean canGrow = mergeable;
                 while (row + height < SIZE && canGrow) {
                     for (int dx = 0; dx < width; dx++) {
                         if (mask[(row + height) * SIZE + col + dx] != key) {
@@ -383,7 +387,17 @@ public final class BinaryChunkMeshBuilder {
             return VoxelAmbientOcclusion.packOpaqueFaceData(blockDefinition.getTextureIndex(), aoPacked);
         }
 
-        return blockDefinition.getTextureIndex();
+        return transparencyType == BlockDefinition.TransparencyType.TRANSPARENT
+                ? TransparentFaceData.pack(
+                        snapshot,
+                        blockDefinition,
+                        blockDefinition.getTextureIndex(),
+                        x,
+                        y,
+                        z,
+                        faceDirection
+                )
+                : blockDefinition.getTextureIndex();
     }
 
     private static boolean shouldEmitFace(

@@ -69,7 +69,7 @@ public final class LegacyChunkMeshBuilder {
                                         z,
                                         FACE_POS_X
                                 )
-                                : textureIndex;
+                                : transparentFacePayload(snapshot, blockDefinition, textureIndex, x, y, z, FACE_POS_X);
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
@@ -93,7 +93,7 @@ public final class LegacyChunkMeshBuilder {
                                         z,
                                         FACE_NEG_X
                                 )
-                                : textureIndex;
+                                : transparentFacePayload(snapshot, blockDefinition, textureIndex, x, y, z, FACE_NEG_X);
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
@@ -117,7 +117,7 @@ public final class LegacyChunkMeshBuilder {
                                         z,
                                         FACE_POS_Y
                                 )
-                                : textureIndex;
+                                : transparentFacePayload(snapshot, blockDefinition, textureIndex, x, y, z, FACE_POS_Y);
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
@@ -141,7 +141,7 @@ public final class LegacyChunkMeshBuilder {
                                         z,
                                         FACE_NEG_Y
                                 )
-                                : textureIndex;
+                                : transparentFacePayload(snapshot, blockDefinition, textureIndex, x, y, z, FACE_NEG_Y);
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
@@ -165,7 +165,7 @@ public final class LegacyChunkMeshBuilder {
                                         z,
                                         FACE_POS_Z
                                 )
-                                : textureIndex;
+                                : transparentFacePayload(snapshot, blockDefinition, textureIndex, x, y, z, FACE_POS_Z);
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
@@ -189,7 +189,7 @@ public final class LegacyChunkMeshBuilder {
                                         z,
                                         FACE_NEG_Z
                                 )
-                                : textureIndex;
+                                : transparentFacePayload(snapshot, blockDefinition, textureIndex, x, y, z, FACE_NEG_Z);
                         if (layer == MeshLayer.OPAQUE) {
                             opaqueFaces = ensureCapacity(opaqueFaces, opaqueCount);
                             writeFace(opaqueFaces, opaqueCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), facePayload);
@@ -237,6 +237,20 @@ public final class LegacyChunkMeshBuilder {
                 textureIndex,
                 VoxelAmbientOcclusion.computeOpaqueAoPacked(snapshot, x, y, z, faceDirection)
         );
+    }
+
+    private static int transparentFacePayload(
+            ChunkMeshingSnapshot snapshot,
+            BlockDefinition block,
+            int textureIndex,
+            int x,
+            int y,
+            int z,
+            int face
+    ) {
+        return block.isTransparent()
+                ? TransparentFaceData.pack(snapshot, block, textureIndex, x, y, z, face)
+                : textureIndex;
     }
 
     private static boolean shouldEmitFace(

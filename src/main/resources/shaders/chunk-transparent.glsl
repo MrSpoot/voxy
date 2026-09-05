@@ -23,6 +23,8 @@ flat out int vFace;
 flat out int vTextureIndex;
 flat out int vLightOffset;
 out vec3 vChunkLocalPosition;
+out vec3 vWorldPosition;
+flat out int vWaterSurfaceEdge;
 
 vec2 getQuadUv(int vertexIndex) {
     if (vertexIndex == 0) {
@@ -76,7 +78,8 @@ void main() {
     int lightOffset = int(drawData[drawBase + 1]);
     int faceIndex = faceOffset + (gl_InstanceID * 2);
     int faceData = int(faces[faceIndex]);
-    int textureIndex = int(faces[faceIndex + 1]);
+    int facePayload = int(faces[faceIndex + 1]);
+    int textureIndex = facePayload & 0xFFFF;
 
     int x = faceData & 31;
     int y = (faceData >> 5) & 31;
@@ -100,8 +103,111 @@ void main() {
     vTextureIndex = textureIndex;
     vLightOffset = lightOffset;
     vChunkLocalPosition = localPosition;
+    vWorldPosition = worldPosition;
+    vWaterSurfaceEdge = (facePayload >> 16) & 1;
 }
 //@endvs
+
+//@gs
+#version 460 core
+
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 3) out;
+
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform int uWaterTextureIndex;
+uniform int uWaterWavesEnabled;
+uniform float uWaterSurfaceInset;
+uniform float uWaterWaveAmplitude;
+uniform float uWaterWaveSpeed;
+uniform float uWaterWaveLength;
+uniform float uWaterTime;
+
+in vec2 vTexCoord[];
+flat in int vFace[];
+flat in int vTextureIndex[];
+flat in int vLightOffset[];
+in vec3 vChunkLocalPosition[];
+in vec3 vWorldPosition[];
+flat in int vWaterSurfaceEdge[];
+
+out vec2 gTexCoord;
+flat out int gFace;
+flat out int gTextureIndex;
+flat out int gLightOffset;
+out vec3 gChunkLocalPosition;
+flat out vec3 gNormal;
+
+vec3 getWaterBaseNormal(int face) {
+    if (face == 0) return vec3(1.0, 0.0, 0.0);
+    if (face == 1) return vec3(-1.0, 0.0, 0.0);
+    if (face == 2) return vec3(0.0, 1.0, 0.0);
+    if (face == 3) return vec3(0.0, -1.0, 0.0);
+    if (face == 4) return vec3(0.0, 0.0, 1.0);
+    return vec3(0.0, 0.0, -1.0);
+}
+
+float sampleWaterWave(vec2 worldPosition, float surfaceInset) {
+    if (uWaterWavesEnabled == 0) {
+        return 0.0;
+    }
+
+    const float TAU = 6.28318530718;
+    float wavelength = clamp(uWaterWaveLength, 2.0, 32.0);
+    float amplitude = min(
+        clamp(uWaterWaveAmplitude, 0.0, 0.12),
+        max(surfaceInset - 0.001, 0.0)
+    );
+    float phaseA = dot(worldPosition, vec2(0.82, 0.57)) * (TAU / wavelength)
+        + uWaterTime * uWaterWaveSpeed;
+    float phaseB = dot(worldPosition, vec2(-0.35, 0.94)) * (TAU / (wavelength * 0.63))
+        - uWaterTime * uWaterWaveSpeed * 0.73;
+    return amplitude * (sin(phaseA) * 0.65 + sin(phaseB) * 0.35);
+}
+
+void main() {
+    int face = vFace[0];
+    int textureIndex = vTextureIndex[0];
+    bool isWater = textureIndex == uWaterTextureIndex;
+    bool isTopFace = face == 2;
+    bool isSideFace = face == 0 || face == 1 || face == 4 || face == 5;
+    float surfaceInset = clamp(uWaterSurfaceInset, 0.0, 0.5);
+    vec3 deformedWorldPositions[3];
+
+    for (int vertex = 0; vertex < 3; vertex++) {
+        vec3 worldPosition = vWorldPosition[vertex];
+        bool isSurfaceSideVertex = isSideFace
+            && vWaterSurfaceEdge[vertex] != 0
+            && vTexCoord[vertex].y > 0.5;
+        if (isWater && (isTopFace || isSurfaceSideVertex)) {
+            worldPosition.y += -surfaceInset + sampleWaterWave(worldPosition.xz, surfaceInset);
+        }
+        deformedWorldPositions[vertex] = worldPosition;
+    }
+
+    vec3 baseNormal = getWaterBaseNormal(face);
+    vec3 triangleNormal = normalize(cross(
+        deformedWorldPositions[1] - deformedWorldPositions[0],
+        deformedWorldPositions[2] - deformedWorldPositions[0]
+    ));
+    if (dot(triangleNormal, baseNormal) < 0.0) {
+        triangleNormal = -triangleNormal;
+    }
+
+    for (int vertex = 0; vertex < 3; vertex++) {
+        gTexCoord = vTexCoord[vertex];
+        gFace = face;
+        gTextureIndex = textureIndex;
+        gLightOffset = vLightOffset[vertex];
+        gChunkLocalPosition = vChunkLocalPosition[vertex];
+        gNormal = triangleNormal;
+        gl_Position = uProjection * uView * vec4(deformedWorldPositions[vertex], 1.0);
+        EmitVertex();
+    }
+    EndPrimitive();
+}
+//@endgs
 
 //@fs
 #version 460 core
@@ -130,11 +236,12 @@ layout(std430, binding = 2) readonly buffer ChunkLightBuffer {
     uint lightData[];
 };
 
-in vec2 vTexCoord;
-flat in int vFace;
-flat in int vTextureIndex;
-flat in int vLightOffset;
-in vec3 vChunkLocalPosition;
+in vec2 gTexCoord;
+flat in int gFace;
+flat in int gTextureIndex;
+flat in int gLightOffset;
+in vec3 gChunkLocalPosition;
+flat in vec3 gNormal;
 
 out vec4 fragColor;
 
@@ -172,13 +279,13 @@ float getVoxelLightResponse(float normalizedLevel) {
 }
 
 vec3 applyHdrLighting(vec3 albedo, int face) {
-    ivec3 faceSampleCoords = resolveDebugSampleCoords(face, vChunkLocalPosition);
-    vec4 voxelLight = sampleSmoothedVoxelLight(face, vChunkLocalPosition, faceSampleCoords);
+    ivec3 faceSampleCoords = resolveDebugSampleCoords(face, gChunkLocalPosition);
+    vec4 voxelLight = sampleSmoothedVoxelLight(face, gChunkLocalPosition, faceSampleCoords);
     vec3 blockLight = voxelLight.rgb * uBlockLightIntensity;
     vec3 localLighting = uBlockLightEnabled != 0 ? blockLight : vec3(0.0);
     float skyLevel = uVoxelLightDataEnabled != 0 ? voxelLight.a : 1.0;
     float directSkyLevel = uVoxelLightDataEnabled != 0
-        ? sampleSmoothedDirectSkyLight(face, vChunkLocalPosition, faceSampleCoords)
+        ? sampleSmoothedDirectSkyLight(face, gChunkLocalPosition, faceSampleCoords)
         : 1.0;
     float diffuseSkyVisibility = getVoxelLightResponse(skyLevel);
     float directSunVisibility = pow(clamp(directSkyLevel, 0.0, 1.0), 2.0);
@@ -188,7 +295,7 @@ vec3 applyHdrLighting(vec3 albedo, int face) {
         return albedo * (environmentLighting + localLighting);
     }
 
-    vec3 normal = getFaceNormal(face);
+    vec3 normal = normalize(gNormal);
     vec3 sunDirection = normalize(uSunDirection + vec3(0.0, 0.00001, 0.0));
     float sunFactor = max(dot(normal, sunDirection), 0.0);
     float skyFactor = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
@@ -234,7 +341,7 @@ vec3 getDebugAbsoluteLightColor(uint packedLight) {
 }
 
 vec4 sampleLightComponents(ivec3 sampleCoords) {
-    uint packedLight = getPackedLight(vLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z);
+    uint packedLight = getPackedLight(gLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z);
     return vec4(
         getDebugLightColor(packedLight),
         float((packedLight >> 12u) & 0xFu) / 15.0
@@ -307,44 +414,44 @@ float sampleSmoothedDirectSkyLight(int face, vec3 localPosition, ivec3 faceSampl
     vec3 fraction = fract(samplePosition);
 
     if (face == 0 || face == 1) {
-        float c00 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y, base.z));
-        float c10 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y + 1, base.z));
-        float c01 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y, base.z + 1));
-        float c11 = getDirectSkyLevel(vLightOffset, ivec3(faceSampleCoords.x, base.y + 1, base.z + 1));
+        float c00 = getDirectSkyLevel(gLightOffset, ivec3(faceSampleCoords.x, base.y, base.z));
+        float c10 = getDirectSkyLevel(gLightOffset, ivec3(faceSampleCoords.x, base.y + 1, base.z));
+        float c01 = getDirectSkyLevel(gLightOffset, ivec3(faceSampleCoords.x, base.y, base.z + 1));
+        float c11 = getDirectSkyLevel(gLightOffset, ivec3(faceSampleCoords.x, base.y + 1, base.z + 1));
         return mix(mix(c00, c10, fraction.y), mix(c01, c11, fraction.y), fraction.z);
     }
     if (face == 2 || face == 3) {
-        float c00 = getDirectSkyLevel(vLightOffset, ivec3(base.x, faceSampleCoords.y, base.z));
-        float c10 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, faceSampleCoords.y, base.z));
-        float c01 = getDirectSkyLevel(vLightOffset, ivec3(base.x, faceSampleCoords.y, base.z + 1));
-        float c11 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, faceSampleCoords.y, base.z + 1));
+        float c00 = getDirectSkyLevel(gLightOffset, ivec3(base.x, faceSampleCoords.y, base.z));
+        float c10 = getDirectSkyLevel(gLightOffset, ivec3(base.x + 1, faceSampleCoords.y, base.z));
+        float c01 = getDirectSkyLevel(gLightOffset, ivec3(base.x, faceSampleCoords.y, base.z + 1));
+        float c11 = getDirectSkyLevel(gLightOffset, ivec3(base.x + 1, faceSampleCoords.y, base.z + 1));
         return mix(mix(c00, c10, fraction.x), mix(c01, c11, fraction.x), fraction.z);
     }
 
-    float c00 = getDirectSkyLevel(vLightOffset, ivec3(base.x, base.y, faceSampleCoords.z));
-    float c10 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, base.y, faceSampleCoords.z));
-    float c01 = getDirectSkyLevel(vLightOffset, ivec3(base.x, base.y + 1, faceSampleCoords.z));
-    float c11 = getDirectSkyLevel(vLightOffset, ivec3(base.x + 1, base.y + 1, faceSampleCoords.z));
+    float c00 = getDirectSkyLevel(gLightOffset, ivec3(base.x, base.y, faceSampleCoords.z));
+    float c10 = getDirectSkyLevel(gLightOffset, ivec3(base.x + 1, base.y, faceSampleCoords.z));
+    float c01 = getDirectSkyLevel(gLightOffset, ivec3(base.x, base.y + 1, faceSampleCoords.z));
+    float c11 = getDirectSkyLevel(gLightOffset, ivec3(base.x + 1, base.y + 1, faceSampleCoords.z));
     return mix(mix(c00, c10, fraction.x), mix(c01, c11, fraction.x), fraction.y);
 }
 
 void main() {
     if (uDebugLightVisualizationEnabled != 0) {
-        ivec3 sampleCoords = resolveDebugSampleCoords(vFace, vChunkLocalPosition);
-        fragColor = vec4(getDebugAbsoluteLightColor(getPackedLight(vLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z)), 1.0);
+        ivec3 sampleCoords = resolveDebugSampleCoords(gFace, gChunkLocalPosition);
+        fragColor = vec4(getDebugAbsoluteLightColor(getPackedLight(gLightOffset, sampleCoords.x, sampleCoords.y, sampleCoords.z)), 1.0);
         return;
     }
 
-    float faceSlot = getFaceTextureSlot(vFace);
-    vec2 correctedUv = vTexCoord;
-    if (vFace == 4 || vFace == 5 || vFace == 1 || vFace == 0) {
+    float faceSlot = getFaceTextureSlot(gFace);
+    vec2 correctedUv = gTexCoord;
+    if (gFace == 4 || gFace == 5 || gFace == 1 || gFace == 0) {
         correctedUv.y = 1.0 - correctedUv.y;
     }
 
     correctedUv = fract(correctedUv);
 
     vec2 atlasCoord = vec2((faceSlot + correctedUv.x) / 6.0, correctedUv.y);
-    vec4 texel = texture(uBlockTextures, vec3(atlasCoord, float(vTextureIndex)));
-    fragColor = vec4(applyHdrLighting(texel.rgb, vFace), texel.a);
+    vec4 texel = texture(uBlockTextures, vec3(atlasCoord, float(gTextureIndex)));
+    fragColor = vec4(applyHdrLighting(texel.rgb, gFace), texel.a);
 }
 //@endfs

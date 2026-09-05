@@ -167,6 +167,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         shader.setUniform("uBlockLightEnabled", context.getLightingSettings().isBlockLightEnabled() ? 1 : 0);
         shader.setUniform("uBlockLightIntensity", context.getLightingSettings().getBlockLightIntensity());
         setLightingUniforms(context);
+        setLayerUniforms(context, shader);
 
         long drawSubmitStartNs = System.nanoTime();
         if (USE_MULTI_DRAW) {
@@ -254,6 +255,10 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     protected boolean includeSharedLightStats() {
         return false;
+    }
+
+    protected void setLayerUniforms(RenderContext context, Shader shader) {
+        // Most chunk layers do not require layer-specific uniforms.
     }
 
     private void setLightingUniforms(RenderContext context) {
