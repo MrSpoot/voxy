@@ -138,6 +138,9 @@ public class DebugImGuiPass implements RenderPass {
 
     @Override
     public void execute(RenderContext context) {
+        if (context.getCreativeInventoryState() != null && context.getCreativeInventoryState().isOpen()) {
+            return;
+        }
         updateFrameStats();
         updateChunkProfilingHistories(context.getRenderStats());
         refreshDisplaySnapshotIfNeeded(context.getRenderStats());

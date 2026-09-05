@@ -11,13 +11,15 @@ public class GameplaySession {
     private final Player player;
     private final PlayerController playerController;
     private final PlayerInteractionSystem playerInteractionSystem;
+    private final PlayerHotbar hotbar;
 
     public GameplaySession(World world, GameplaySettings settings) {
         this.world = Objects.requireNonNull(world, "world");
         GameplaySettings gameplaySettings = Objects.requireNonNull(settings, "settings");
         this.player = new Player();
         this.playerController = new PlayerController(gameplaySettings);
-        this.playerInteractionSystem = new PlayerInteractionSystem(gameplaySettings);
+        this.hotbar = new PlayerHotbar(world.getBlockCatalog());
+        this.playerInteractionSystem = new PlayerInteractionSystem(gameplaySettings, hotbar);
     }
 
     public void update(float deltaTime, PlayerInput input) {
@@ -45,6 +47,10 @@ public class GameplaySession {
 
     public BlockDefinition getSelectedBlock() {
         return playerInteractionSystem.getSelectedBlock();
+    }
+
+    public PlayerHotbar getHotbar() {
+        return hotbar;
     }
 
     public void setPlayerPosition(Vector3f position) {

@@ -12,6 +12,7 @@ import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.World;
 import org.weaw.game.WorldSettings;
+import org.weaw.gameplay.CreativeInventoryState;
 
 import java.util.HashSet;
 import java.util.HashMap;
@@ -75,7 +76,7 @@ public class RenderContext {
     private int blockOutlinePlacementX;
     private int blockOutlinePlacementY;
     private int blockOutlinePlacementZ;
-    private int selectedLampHotbarIndex = 3;
+    private CreativeInventoryState creativeInventoryState;
     private boolean lightDebugVisualizationEnabled;
     private boolean voxelLightDataEnabled = true;
     private World world;

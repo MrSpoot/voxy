@@ -7,23 +7,18 @@ import org.weaw.game.utils.Blocks;
 
 public class PlayerInteractionSystem {
     private static final float RAY_STEP = 0.05f;
-    private static final BlockDefinition[] LAMP_SELECTION = {
-            Blocks.RED_LAMP,
-            Blocks.GREEN_LAMP,
-            Blocks.BLUE_LAMP,
-            Blocks.STONE
-    };
 
     private final GameplaySettings settings;
-    private BlockDefinition selectedBlock = Blocks.WHITE_LAMP;
+    private final PlayerHotbar hotbar;
     private TargetedBlock targetedBlock;
 
-    public PlayerInteractionSystem(GameplaySettings settings) {
+    public PlayerInteractionSystem(GameplaySettings settings, PlayerHotbar hotbar) {
         this.settings = settings;
+        this.hotbar = hotbar;
     }
 
     public void update(Player player, World world, PlayerInput input) {
-        updateSelectedLamp(input);
+        hotbar.cycle(input.scrollDelta());
         targetedBlock = raycastBlock(player, world);
         if (!input.breakBlock()
                 && !input.placeBlock()) {
@@ -39,45 +34,27 @@ public class PlayerInteractionSystem {
             return;
         }
 
+        BlockDefinition selectedBlock = hotbar.getSelectedBlock();
         if (input.placeBlock()
+                && selectedBlock != null
                 && !wouldOverlapPlayer(player, targetedBlock.placeX(), targetedBlock.placeY(), targetedBlock.placeZ())) {
             world.trySetBlockAtWorld(targetedBlock.placeX(), targetedBlock.placeY(), targetedBlock.placeZ(), selectedBlock);
         }
     }
 
     public BlockDefinition getSelectedBlock() {
-        return selectedBlock;
+        return hotbar.getSelectedBlock();
     }
 
     public void setSelectedBlock(BlockDefinition selectedBlock) {
         if (selectedBlock == null || selectedBlock == Blocks.AIR) {
             return;
         }
-        this.selectedBlock = selectedBlock;
+        hotbar.setSlot(hotbar.getSelectedIndex(), selectedBlock);
     }
 
     public TargetedBlock getTargetedBlock() {
         return targetedBlock;
-    }
-
-    private void updateSelectedLamp(PlayerInput input) {
-        int scrollDelta = input.scrollDelta();
-        if (scrollDelta == 0) {
-            return;
-        }
-
-        int selectedIndex = getSelectedLampIndex();
-        selectedIndex = Math.floorMod(selectedIndex + scrollDelta, LAMP_SELECTION.length);
-        selectedBlock = LAMP_SELECTION[selectedIndex];
-    }
-
-    private int getSelectedLampIndex() {
-        for (int index = 0; index < LAMP_SELECTION.length; index++) {
-            if (selectedBlock == LAMP_SELECTION[index]) {
-                return index;
-            }
-        }
-        return LAMP_SELECTION.length - 1;
     }
 
     private TargetedBlock raycastBlock(Player player, World world) {

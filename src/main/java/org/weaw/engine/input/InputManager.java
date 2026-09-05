@@ -120,6 +120,21 @@ public class InputManager {
         return isValidMouseButton(button) && trackedMouseButtons[button] && mouseButtonStates[button] && !previousMouseButtonStates[button];
     }
 
+    public boolean isMouseKeyReleased(int button) {
+        return isValidMouseButton(button)
+                && trackedMouseButtons[button]
+                && !mouseButtonStates[button]
+                && previousMouseButtonStates[button];
+    }
+
+    public double getMouseX() {
+        return mouseX;
+    }
+
+    public double getMouseY() {
+        return mouseY;
+    }
+
     public boolean isActionDown(InputAction action) {
         InputBinding binding = getBinding(action);
         return binding != null && isBindingDown(binding);
@@ -285,6 +300,10 @@ public class InputManager {
         activeKeyCodeCount = 0;
         activeMouseButtonCount = 0;
         bindingLabels.clear();
+
+        // The creative inventory always needs the primary button, even when
+        // gameplay actions are rebound away from it.
+        trackMouseButton(GLFW_MOUSE_BUTTON_LEFT);
 
         for (InputAction action : InputAction.values()) {
             InputBinding binding = bindings.get(action);

@@ -22,6 +22,7 @@ import org.weaw.engine.input.InputManager;
 import org.weaw.engine.window.Window;
 import org.weaw.game.World;
 import org.weaw.game.utils.BlockDefinition;
+import org.weaw.gameplay.CreativeInventoryState;
 
 import java.util.Collection;
 
@@ -38,6 +39,7 @@ public class Renderer {
     private final InputManager inputManager;
     private final Collection<BlockDefinition> blockDefinitions;
     private final boolean transparentChunksEnabled;
+    private final CreativeInventoryState creativeInventoryState;
     // Multi-pass rendering pipeline
     private RenderPipeline pipeline;
     private RenderContext context;
@@ -47,13 +49,15 @@ public class Renderer {
             World world,
             InputManager inputManager,
             Collection<BlockDefinition> blockDefinitions,
-            boolean transparentChunksEnabled
+            boolean transparentChunksEnabled,
+            CreativeInventoryState creativeInventoryState
     ) {
         this.window = window;
         this.world = world;
         this.inputManager = inputManager;
         this.blockDefinitions = blockDefinitions;
         this.transparentChunksEnabled = transparentChunksEnabled;
+        this.creativeInventoryState = creativeInventoryState;
     }
 
     public void create() {
@@ -66,6 +70,7 @@ public class Renderer {
         context.setGraphicsVersion(safeGlString(GL_VERSION));
         context.setWorldSettings(world.getSettings());
         context.setWorld(world);
+        context.setCreativeInventoryState(creativeInventoryState);
         BlockTextureManager blockTextureManager = new BlockTextureManager(blockDefinitions);
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);

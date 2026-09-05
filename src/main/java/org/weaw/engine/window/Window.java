@@ -4,7 +4,9 @@ import lombok.Getter;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.glfw.GLFWFramebufferSizeCallback;
 import org.lwjgl.glfw.GLFWVidMode;
+import org.lwjgl.glfw.GLFWWindowSizeCallback;
 import org.lwjgl.opengl.GL;
+import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,9 +29,12 @@ public class Window {
     @Getter
     private int width, height;
     @Getter
+    private int logicalWidth, logicalHeight;
+    @Getter
     private boolean cursorLocked = true;
 
     private GLFWFramebufferSizeCallback resizeCallback;
+    private GLFWWindowSizeCallback windowSizeCallback;
     private GLFWErrorCallback errorCallback;
 
     // Renderer reference for resize notification
@@ -86,6 +91,23 @@ public class Window {
         if (id == NULL) {
             throw new RuntimeException("Failed to create the GLFW window");
         }
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            var widthBuffer = stack.mallocInt(1);
+            var heightBuffer = stack.mallocInt(1);
+            glfwGetWindowSize(id, widthBuffer, heightBuffer);
+            logicalWidth = widthBuffer.get(0);
+            logicalHeight = heightBuffer.get(0);
+        }
+
+        windowSizeCallback = new GLFWWindowSizeCallback() {
+            @Override
+            public void invoke(long window, int width, int height) {
+                Window.this.logicalWidth = width;
+                Window.this.logicalHeight = height;
+            }
+        };
+        glfwSetWindowSizeCallback(id, windowSizeCallback);
 
         resizeCallback = new GLFWFramebufferSizeCallback() {
             @Override
@@ -147,6 +169,7 @@ public class Window {
 
     public void cleanup() {
         if (resizeCallback != null) resizeCallback.close();
+        if (windowSizeCallback != null) windowSizeCallback.close();
         if (errorCallback != null) errorCallback.close();
         glfwDestroyWindow(id);
         glfwTerminate();

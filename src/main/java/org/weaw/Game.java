@@ -10,6 +10,7 @@ import org.weaw.engine.graphics.utils.ChunkLightCacheProfilingSnapshot;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
+import org.weaw.engine.ui.CreativeInventoryLayout;
 import org.weaw.engine.window.Window;
 import org.weaw.game.World;
 import org.weaw.game.ChunkMesher;
@@ -18,10 +19,9 @@ import org.weaw.game.WorldMemorySnapshot;
 import org.weaw.game.WorldSettings;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
-import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockRegistry;
-import org.weaw.game.utils.Blocks;
+import org.weaw.gameplay.CreativeInventoryState;
 import org.weaw.gameplay.GameplaySession;
 import org.weaw.gameplay.GameplaySettings;
 import org.weaw.gameplay.PlayerInput;
@@ -40,6 +40,7 @@ import org.weaw.server.GameServer;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
 import static org.lwjgl.opengl.GL11.GL_LINE;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
 
 public class Game {
     private static final Logger LOGGER = LoggerFactory.getLogger(Game.class);
@@ -48,6 +49,17 @@ public class Game {
             Integer.getInteger("voxy.worldStreamingUpdatesPerSecond", 60);
     private static final int MAX_WORLD_STREAMING_UPDATES_PER_FRAME =
             Integer.getInteger("voxy.maxWorldStreamingUpdatesPerFrame", 2);
+    private static final InputAction[] HOTBAR_ACTIONS = {
+            InputAction.HOTBAR_SLOT_1,
+            InputAction.HOTBAR_SLOT_2,
+            InputAction.HOTBAR_SLOT_3,
+            InputAction.HOTBAR_SLOT_4,
+            InputAction.HOTBAR_SLOT_5,
+            InputAction.HOTBAR_SLOT_6,
+            InputAction.HOTBAR_SLOT_7,
+            InputAction.HOTBAR_SLOT_8,
+            InputAction.HOTBAR_SLOT_9
+    };
 
     private final LaunchOptions launchOptions;
 
@@ -59,6 +71,7 @@ public class Game {
     private Camera camera;
     private World world;
     private GameplaySession gameplaySession;
+    private CreativeInventoryState creativeInventoryState;
     private GameServer gameServer;
     private BenchmarkController benchmarkController;
     private JfrProfileRecorder jfrProfileRecorder;
@@ -75,6 +88,8 @@ public class Game {
     private boolean pendingToggleNoclip;
     private boolean pendingBreakBlock;
     private boolean pendingPlaceBlock;
+    private boolean cursorLockedBeforeInventory;
+    private boolean suppressQuitUntilReleased;
 
     private boolean wireframe = false;
 
@@ -113,6 +128,7 @@ public class Game {
         world = createTestWorld();
         applyRuntimeIsolationOptions();
         gameplaySession = new GameplaySession(world, new GameplaySettings());
+        creativeInventoryState = new CreativeInventoryState(blockCatalog, gameplaySession.getHotbar());
         gameServer = new GameServer(world, gameplaySession);
         worldStreamingScheduler = new FixedRateUpdateScheduler(
                 WORLD_STREAMING_UPDATES_PER_SECOND,
@@ -125,7 +141,8 @@ public class Game {
                 world,
                 inputManager,
                 blockCatalog.getRegisteredBlocks().values(),
-                launchOptions.transparentChunksEnabled()
+                launchOptions.transparentChunksEnabled(),
+                creativeInventoryState
         );
         renderer.create();
         boolean voxelLightDataEnabled = launchOptions.dynamicLightingEnabled() && launchOptions.lightUploadEnabled();
@@ -268,31 +285,112 @@ public class Game {
     private void update(float deltaTime) {
         inputManager.update();
 
-        if (inputManager.isActionDown(InputAction.QUIT)) {
-            window.close();
-            return;
-        }
-
         if (launchOptions.benchmarkEnabled()) {
+            if (inputManager.isActionDown(InputAction.QUIT)) {
+                window.close();
+                return;
+            }
             updateBenchmark(deltaTime);
             return;
         }
 
-        handleInputModes();
+        boolean inventoryTransition = handleCreativeInventoryInput();
+        if (suppressQuitUntilReleased && !inputManager.isActionDown(InputAction.QUIT)) {
+            suppressQuitUntilReleased = false;
+        }
+        if (!creativeInventoryState.isOpen()
+                && !inventoryTransition
+                && !suppressQuitUntilReleased
+                && inputManager.isActionDown(InputAction.QUIT)) {
+            window.close();
+            return;
+        }
 
-        if (inputManager.isActionPressed(InputAction.TOGGLE_WIREFRAME)) {
+        if (!creativeInventoryState.isOpen() && !inventoryTransition) {
+            handleInputModes();
+            handleHotbarKeys();
+        }
+
+        if (!creativeInventoryState.isOpen()
+                && !inventoryTransition
+                && inputManager.isActionPressed(InputAction.TOGGLE_WIREFRAME)) {
             wireframe = !wireframe;
             GLStateManager.setPolygonMode(wireframe ? GL_LINE : GL_FILL);
         }
 
-        accumulatePlayerInputFrame();
-        int simulationTicks = gameServer.update(deltaTime, samplePlayerInput());
+        int simulationTicks;
+        if (creativeInventoryState.isOpen() || inventoryTransition) {
+            inputManager.getMouseScroll();
+            clearConsumedPlayerInput();
+            simulationTicks = gameServer.update(deltaTime, PlayerInput.disabled());
+        } else {
+            accumulatePlayerInputFrame();
+            simulationTicks = gameServer.update(deltaTime, samplePlayerInput());
+        }
         if (simulationTicks > 0) {
             clearConsumedPlayerInput();
         }
         updateWorldStreaming(deltaTime);
-        syncSelectedBlockHud();
         updateRenderInteractionTarget();
+    }
+
+    private boolean handleCreativeInventoryInput() {
+        boolean togglePressed = inputManager.isActionPressed(InputAction.TOGGLE_INVENTORY);
+        boolean escapePressed = inputManager.isActionPressed(InputAction.QUIT);
+
+        if (creativeInventoryState.isOpen() && (togglePressed || escapePressed)) {
+            creativeInventoryState.close();
+            window.setCursorLocked(cursorLockedBeforeInventory);
+            inputManager.resetMouseDelta();
+            if (escapePressed) {
+                suppressQuitUntilReleased = true;
+            }
+            return true;
+        }
+
+        if (!creativeInventoryState.isOpen() && togglePressed) {
+            cursorLockedBeforeInventory = window.isCursorLocked();
+            creativeInventoryState.open();
+            window.setCursorLocked(false);
+            inputManager.resetMouseDelta();
+            updateCreativeInventoryPointer();
+            return true;
+        }
+
+        if (creativeInventoryState.isOpen()) {
+            updateCreativeInventoryPointer();
+        }
+        return false;
+    }
+
+    private void updateCreativeInventoryPointer() {
+        CreativeInventoryLayout layout = CreativeInventoryLayout.forViewport(
+                window.getWidth(),
+                window.getHeight(),
+                true
+        );
+        float mouseX = (float) inputManager.getMouseX()
+                * window.getWidth() / Math.max(1, window.getLogicalWidth());
+        float mouseY = (float) inputManager.getMouseY()
+                * window.getHeight() / Math.max(1, window.getLogicalHeight());
+        creativeInventoryState.updatePointer(
+                layout,
+                mouseX,
+                mouseY,
+                inputManager.getMouseScroll(),
+                inputManager.isMouseKeyPressed(GLFW_MOUSE_BUTTON_LEFT),
+                inputManager.isMouseKeyDown(GLFW_MOUSE_BUTTON_LEFT),
+                inputManager.isMouseKeyReleased(GLFW_MOUSE_BUTTON_LEFT)
+        );
+    }
+
+    private void handleHotbarKeys() {
+        for (int index = 0; index < HOTBAR_ACTIONS.length; index++) {
+            if (inputManager.isActionPressed(HOTBAR_ACTIONS[index])) {
+                gameplaySession.getHotbar().select(index);
+                return;
+            }
+        }
     }
 
     private void updateBenchmark(float deltaTime) {
@@ -412,19 +510,6 @@ public class Game {
                 targetedBlock.placeY(),
                 targetedBlock.placeZ()
         );
-    }
-
-    private void syncSelectedBlockHud() {
-        BlockDefinition selectedBlock = gameplaySession.getSelectedBlock();
-        int hotbarIndex = 3;
-        if (selectedBlock == Blocks.RED_LAMP) {
-            hotbarIndex = 0;
-        } else if (selectedBlock == Blocks.GREEN_LAMP) {
-            hotbarIndex = 1;
-        } else if (selectedBlock == Blocks.BLUE_LAMP) {
-            hotbarIndex = 2;
-        }
-        renderer.getContext().setSelectedLampHotbarIndex(hotbarIndex);
     }
 
     private void safeCleanup(String label, Runnable cleanupAction) {
