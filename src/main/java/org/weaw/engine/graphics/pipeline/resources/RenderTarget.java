@@ -73,7 +73,7 @@ public class RenderTarget {
      */
     public void bind() {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glViewport(0, 0, width, height);
+        GLStateManager.setViewport(width, height);
     }
 
     /**

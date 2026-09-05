@@ -12,6 +12,7 @@ import java.util.Map;
 public class RenderStats {
     private long frameIndex;
     private long totalPassCpuTimeNs;
+    private long totalPassGpuTimeNs;
     private long frameCpuTimeNs;
     private long updateCpuTimeNs;
     private long renderCpuTimeNs;
@@ -48,6 +49,7 @@ public class RenderStats {
     public void beginFrame(Map<String, RenderTarget> renderTargets) {
         frameIndex++;
         totalPassCpuTimeNs = 0L;
+        totalPassGpuTimeNs = 0L;
 
         drawCalls = 0;
         residentMeshCount = 0;
@@ -94,6 +96,12 @@ public class RenderStats {
         PassStats stats = getOrCreatePassStats(passName);
         stats.cpuTimeNs = cpuTimeNs;
         totalPassCpuTimeNs += cpuTimeNs;
+    }
+
+    public void recordPassGpuTime(String passName, long gpuTimeNs) {
+        PassStats stats = getOrCreatePassStats(passName);
+        totalPassGpuTimeNs += gpuTimeNs - stats.gpuTimeNs;
+        stats.gpuTimeNs = gpuTimeNs;
     }
 
     public void recordFrameCpuTimes(long updateCpuTimeNs, long renderCpuTimeNs, long windowCpuTimeNs, long frameCpuTimeNs) {
@@ -161,6 +169,7 @@ public class RenderStats {
     public static final class PassStats {
         private final String name;
         private long cpuTimeNs;
+        private long gpuTimeNs;
         private int drawCalls;
         private int residentMeshCount;
         private int residentFaceCount;
@@ -191,6 +200,7 @@ public class RenderStats {
 
         private void resetFrameData() {
             cpuTimeNs = 0L;
+            gpuTimeNs = 0L;
             drawCalls = 0;
             residentMeshCount = 0;
             residentFaceCount = 0;

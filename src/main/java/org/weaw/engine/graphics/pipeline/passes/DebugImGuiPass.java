@@ -91,12 +91,12 @@ public class DebugImGuiPass implements RenderPass {
     private WindowRect arenaRect = WindowRect.of(390.0f, 315.0f, 360.0f, 300.0f);
     private WindowRect chunkProfilingRect = WindowRect.of(770.0f, 315.0f, 460.0f, 200.0f);
     private WindowRect resourcesRect = WindowRect.of(770.0f, 170.0f, 360.0f, 155.0f);
-    private WindowRect lightingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 285.0f);
-    private WindowRect cloudRect = WindowRect.of(770.0f, 635.0f, 360.0f, 240.0f);
-    private WindowRect waterRect = WindowRect.of(770.0f, 890.0f, 360.0f, 220.0f);
-    private WindowRect lightDebugRect = WindowRect.of(770.0f, 1125.0f, 360.0f, 210.0f);
-    private WindowRect colorGradingRect = WindowRect.of(770.0f, 1350.0f, 360.0f, 420.0f);
-    private WindowRect fogRect = WindowRect.of(770.0f, 1785.0f, 360.0f, 265.0f);
+    private WindowRect lightingRect = WindowRect.of(770.0f, 335.0f, 360.0f, 390.0f);
+    private WindowRect cloudRect = WindowRect.of(770.0f, 740.0f, 360.0f, 240.0f);
+    private WindowRect waterRect = WindowRect.of(770.0f, 995.0f, 360.0f, 220.0f);
+    private WindowRect lightDebugRect = WindowRect.of(770.0f, 1230.0f, 360.0f, 210.0f);
+    private WindowRect colorGradingRect = WindowRect.of(770.0f, 1455.0f, 360.0f, 420.0f);
+    private WindowRect fogRect = WindowRect.of(770.0f, 1890.0f, 360.0f, 265.0f);
     private WindowRect jvmRect = WindowRect.of(10.0f, 335.0f, 360.0f, 110.0f);
     private WindowRect deviceRect = WindowRect.of(390.0f, 555.0f, 360.0f, 150.0f);
     private WindowRect passBreakdownRect = WindowRect.of(770.0f, 530.0f, 460.0f, 230.0f);
@@ -423,6 +423,15 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.sliderFloat("Indirect Sky Intensity", settings.skyIntensityRef(), 0.0f, 4.0f);
         ImGui.sliderFloat("Voxel Light Gamma", settings.voxelLightGammaRef(), 0.25f, 3.0f);
         ImGui.sliderFloat("Voxel Darkness Floor", settings.voxelDarknessFloorRef(), 0.0f, 0.25f);
+        ImGui.separator();
+        ImBoolean distanceSofteningEnabled = new ImBoolean(settings.isDistanceSofteningEnabled());
+        if (ImGui.checkbox("Distance Softening", distanceSofteningEnabled)) {
+            settings.setDistanceSofteningEnabled(distanceSofteningEnabled.get());
+        }
+        ImGui.sliderFloat("Softening Start", settings.distanceSofteningStartRatioRef(), 0.0f, 0.95f);
+        ImGui.sliderFloat("Softening End", settings.distanceSofteningEndRatioRef(), 0.05f, 1.0f);
+        ImGui.sliderFloat("Distant Directional Strength", settings.distantDirectionalStrengthRef(), 0.0f, 1.0f);
+        ImGui.sliderFloat("Distant AO Strength", settings.distantAoStrengthRef(), 0.0f, 1.0f);
         ImGui.separator();
         ImBoolean blockLightEnabled = new ImBoolean(settings.isBlockLightEnabled());
         if (ImGui.checkbox("Block Light", blockLightEnabled)) {
@@ -871,7 +880,7 @@ public class DebugImGuiPass implements RenderPass {
             deviceRect = WindowRect.of(middleX, arenaRect.bottom() + rowGap, columnWidth, 150.0f);
 
             resourcesRect = WindowRect.of(rightX, top + 135.0f, columnWidth, 155.0f);
-            lightingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
+            lightingRect = WindowRect.of(rightX, resourcesRect.bottom() + rowGap, columnWidth, 390.0f);
             cloudRect = WindowRect.of(rightX, lightingRect.bottom() + rowGap, columnWidth, 240.0f);
             waterRect = WindowRect.of(rightX, cloudRect.bottom() + rowGap, columnWidth, 220.0f);
             lightDebugRect = WindowRect.of(rightX, waterRect.bottom() + rowGap, columnWidth, 210.0f);
@@ -895,7 +904,7 @@ public class DebugImGuiPass implements RenderPass {
             jvmRect = WindowRect.of(leftX, frameRect.bottom() + rowGap, columnWidth, 110.0f);
             arenaRect = WindowRect.of(rightX, gpuRect.bottom() + rowGap, columnWidth, 300.0f);
             resourcesRect = WindowRect.of(leftX, jvmRect.bottom() + rowGap, columnWidth, 155.0f);
-            lightingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 285.0f);
+            lightingRect = WindowRect.of(leftX, resourcesRect.bottom() + rowGap, columnWidth, 390.0f);
             cloudRect = WindowRect.of(leftX, lightingRect.bottom() + rowGap, columnWidth, 240.0f);
             waterRect = WindowRect.of(leftX, cloudRect.bottom() + rowGap, columnWidth, 220.0f);
             lightDebugRect = WindowRect.of(leftX, waterRect.bottom() + rowGap, columnWidth, 210.0f);
@@ -917,7 +926,7 @@ public class DebugImGuiPass implements RenderPass {
         gpuRect = WindowRect.of(margin, frameRect.bottom() + rowGap, fullWidth, 125.0f);
         arenaRect = WindowRect.of(margin, gpuRect.bottom() + rowGap, fullWidth, 300.0f);
         resourcesRect = WindowRect.of(margin, arenaRect.bottom() + rowGap, fullWidth, 155.0f);
-        lightingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 285.0f);
+        lightingRect = WindowRect.of(margin, resourcesRect.bottom() + rowGap, fullWidth, 390.0f);
         cloudRect = WindowRect.of(margin, lightingRect.bottom() + rowGap, fullWidth, 240.0f);
         waterRect = WindowRect.of(margin, cloudRect.bottom() + rowGap, fullWidth, 220.0f);
         lightDebugRect = WindowRect.of(margin, waterRect.bottom() + rowGap, fullWidth, 210.0f);
@@ -1210,9 +1219,10 @@ public class DebugImGuiPass implements RenderPass {
         private static DisplaySnapshot from(RenderStats stats) {
             String[] passLines = stats.getPassStats().stream()
                     .flatMap(passStats -> java.util.stream.Stream.of(
-                            String.format("%s: %.3f ms | draws %d | visible %d | culled %d",
+                            String.format("%s: CPU %.3f ms | GPU %.3f ms | draws %d | visible %d | culled %d",
                                     passStats.getName(),
                                     nanosToMillis(passStats.getCpuTimeNs()),
+                                    nanosToMillis(passStats.getGpuTimeNs()),
                                     passStats.getDrawCalls(),
                                     passStats.getVisibleMeshCount(),
                                     passStats.getCulledMeshCount()),
@@ -1242,8 +1252,9 @@ public class DebugImGuiPass implements RenderPass {
             }
 
             return new DisplaySnapshot(
-                    String.format("CPU render passes: %.3f ms | full frame CPU: %.3f ms",
+                    String.format("Render passes: CPU %.3f ms | GPU %.3f ms | full frame CPU %.3f ms",
                             nanosToMillis(stats.getTotalPassCpuTimeNs()),
+                            nanosToMillis(stats.getTotalPassGpuTimeNs()),
                             nanosToMillis(stats.getFrameCpuTimeNs())),
                     String.format("Draw calls: %d", stats.getDrawCalls()),
                     String.format("Faces: %d | Triangles: %d | Vertices: %d",

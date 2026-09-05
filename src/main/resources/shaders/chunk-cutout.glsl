@@ -15,6 +15,7 @@ layout(std430, binding = 2) readonly buffer ChunkLightBuffer {
 
 uniform mat4 uProjection;
 uniform mat4 uView;
+uniform vec3 uCameraPosition;
 uniform int uDebugLightVisualizationEnabled;
 const int DEBUG_LIGHT_PADDED_DIMENSION = 34;
 
@@ -23,6 +24,7 @@ flat out int vFace;
 flat out int vTextureIndex;
 flat out int vLightOffset;
 out vec3 vChunkLocalPosition;
+out float vCameraDistance;
 
 vec2 getQuadUv(int vertexIndex) {
     if (vertexIndex == 0) {
@@ -100,6 +102,7 @@ void main() {
     vTextureIndex = textureIndex;
     vLightOffset = lightOffset;
     vChunkLocalPosition = localPosition;
+    vCameraDistance = distance(worldPosition, uCameraPosition);
 }
 //@endvs
 
@@ -122,6 +125,10 @@ uniform vec3 uSkyColor;
 uniform float uSkyIntensity;
 uniform float uVoxelLightGamma;
 uniform float uVoxelDarknessFloor;
+uniform int uDistanceSofteningEnabled;
+uniform float uDistanceSofteningStart;
+uniform float uDistanceSofteningEnd;
+uniform float uDistantDirectionalStrength;
 const int DEBUG_LIGHT_PADDED_DIMENSION = 34;
 const int PACKED_LIGHT_COMPONENT_INTS =
     (DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION + 1) / 2;
@@ -135,6 +142,7 @@ flat in int vFace;
 flat in int vTextureIndex;
 flat in int vLightOffset;
 in vec3 vChunkLocalPosition;
+in float vCameraDistance;
 
 out vec4 fragColor;
 
@@ -171,6 +179,26 @@ float getVoxelLightResponse(float normalizedLevel) {
     return mix(clamp(uVoxelDarknessFloor, 0.0, 0.25), 1.0, easedLevel);
 }
 
+float getDistanceSofteningFactor() {
+    if (uDistanceSofteningEnabled == 0) {
+        return 0.0;
+    }
+    return smoothstep(
+        uDistanceSofteningStart,
+        max(uDistanceSofteningEnd, uDistanceSofteningStart + 1.0),
+        vCameraDistance
+    );
+}
+
+float getSoftenedSunFactor(vec3 normal, vec3 sunDirection, float distanceSoftening) {
+    float directionalSun = max(dot(normal, sunDirection), 0.0);
+    float averageSideSun = (abs(sunDirection.x) + abs(sunDirection.z)) * 0.25;
+    float neutralSun = max(normal.y * sunDirection.y, 0.0)
+        + (1.0 - abs(normal.y)) * averageSideSun;
+    float distantSun = mix(neutralSun, directionalSun, clamp(uDistantDirectionalStrength, 0.0, 1.0));
+    return mix(directionalSun, distantSun, distanceSoftening);
+}
+
 vec3 applyHdrLighting(vec3 albedo, int face) {
     ivec3 faceSampleCoords = resolveDebugSampleCoords(face, vChunkLocalPosition);
     vec4 voxelLight = sampleSmoothedVoxelLight(face, vChunkLocalPosition, faceSampleCoords);
@@ -190,7 +218,7 @@ vec3 applyHdrLighting(vec3 albedo, int face) {
 
     vec3 normal = getFaceNormal(face);
     vec3 sunDirection = normalize(uSunDirection + vec3(0.0, 0.00001, 0.0));
-    float sunFactor = max(dot(normal, sunDirection), 0.0);
+    float sunFactor = getSoftenedSunFactor(normal, sunDirection, getDistanceSofteningFactor());
     float skyFactor = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
     float indirectSkyFactor = mix(0.35, 1.0, skyFactor);
 

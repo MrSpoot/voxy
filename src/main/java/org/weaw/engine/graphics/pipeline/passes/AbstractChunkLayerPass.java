@@ -263,6 +263,14 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     private void setLightingUniforms(RenderContext context) {
         LightingSettings lighting = context.getLightingSettings();
+        int configuredRenderDistance = context.getWorldSettings().getRenderDistanceChunks();
+        int effectiveRenderDistance = context.getWorld() != null
+                ? context.getWorld().getMemorySnapshot().effectiveRenderDistanceChunks()
+                : configuredRenderDistance;
+        if (effectiveRenderDistance <= 0) {
+            effectiveRenderDistance = configuredRenderDistance;
+        }
+        float renderDistanceBlocks = Math.max(Chunk.SIZE, effectiveRenderDistance * (float) Chunk.SIZE);
         shader.setUniform("uLightingEnabled", lighting.isEnabled() ? 1 : 0);
         shader.setUniform("uAmbientColor", lighting.getAmbientRed(), lighting.getAmbientGreen(), lighting.getAmbientBlue());
         shader.setUniform("uAmbientIntensity", lighting.getAmbientIntensity());
@@ -274,6 +282,18 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         shader.setUniform("uSkyIntensity", lighting.getSkyIntensity());
         shader.setUniform("uVoxelLightGamma", lighting.getVoxelLightGamma());
         shader.setUniform("uVoxelDarknessFloor", lighting.getVoxelDarknessFloor());
+        shader.setUniform("uCameraPosition", context.getCamera().getPosition());
+        shader.setUniform("uDistanceSofteningEnabled", lighting.isDistanceSofteningEnabled() ? 1 : 0);
+        shader.setUniform(
+                "uDistanceSofteningStart",
+                renderDistanceBlocks * lighting.getDistanceSofteningStartRatio()
+        );
+        shader.setUniform(
+                "uDistanceSofteningEnd",
+                renderDistanceBlocks * lighting.getDistanceSofteningEndRatio()
+        );
+        shader.setUniform("uDistantDirectionalStrength", lighting.getDistantDirectionalStrength());
+        shader.setUniform("uDistantAoStrength", lighting.getDistantAoStrength());
     }
 
     protected void sortVisibleDraws(RenderContext context, List<ChunkRenderEntry> visibleDraws) {

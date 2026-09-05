@@ -74,6 +74,20 @@ class WorldTest {
     }
 
     @Test
+    void bulkSamplingOverlaysLoadedEditsOnProceduralBlocks() {
+        try (World world = new World(new FlatGenerator(Blocks.SAND.getId()), new WorldSettings(2))) {
+            publishChunk(world, new ChunkManager.ChunkPosition(0, 0, 0));
+            world.getChunkManager().setBlockAtWorld(3, 4, 5, Blocks.STONE);
+            short[] region = new short[6 * 6 * 6];
+
+            world.fillBlockRegion(-1, 0, 0, 6, 6, 6, region);
+
+            assertEquals(Blocks.SAND.getId(), region[0]);
+            assertEquals(Blocks.STONE.getId(), region[4 + 5 * 6 + 4 * 36]);
+        }
+    }
+
+    @Test
     void blockEditQueuesAPriorityLightingUpdate() {
         try (World world = new World(
                 new FlatGenerator(Blocks.AIR.getId()),

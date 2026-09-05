@@ -10,10 +10,6 @@ import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.graphics.utils.Shader;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
-import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
-import static org.lwjgl.opengl.GL11.GL_POLYGON_MODE;
-import static org.lwjgl.opengl.GL11.glGetIntegerv;
-import static org.lwjgl.opengl.GL11.glPolygonMode;
 
 /**
  * Renders the procedural HDR sky directly into the scene target before world geometry.
@@ -24,7 +20,6 @@ public final class SkyBoxPass implements RenderPass {
     private final Vector3f cameraRight = new Vector3f();
     private final Vector3f cameraUp = new Vector3f();
     private final Vector3f cameraForward = new Vector3f();
-    private final int[] polygonMode = new int[2];
 
     private Shader shader;
     private FullscreenQuad fullscreenQuad;
@@ -57,8 +52,8 @@ public final class SkyBoxPass implements RenderPass {
         GLStateManager.clear(0.0f, 0.0f, 0.0f, 1.0f);
         GLStateManager.setDepthTest(false, false);
 
-        glGetIntegerv(GL_POLYGON_MODE, polygonMode);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        int polygonMode = GLStateManager.getPolygonMode();
+        GLStateManager.setPolygonMode(GL_FILL);
 
         camera.getRight(cameraRight);
         camera.getUp(cameraUp);
@@ -74,7 +69,7 @@ public final class SkyBoxPass implements RenderPass {
         fullscreenQuad.render();
         shader.unbind();
 
-        glPolygonMode(GL_FRONT_AND_BACK, polygonMode[0]);
+        GLStateManager.setPolygonMode(polygonMode);
     }
 
     @Override

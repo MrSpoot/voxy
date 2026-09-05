@@ -17,6 +17,10 @@ public final class ChunkLighting {
 
     public short getPackedLight(int x, int y, int z) {
         int index = getBlockIndex(x, y, z);
+        return getPackedLightAtIndex(index);
+    }
+
+    short getPackedLightAtIndex(int index) {
         return data == null ? uniformLight : data[index];
     }
 

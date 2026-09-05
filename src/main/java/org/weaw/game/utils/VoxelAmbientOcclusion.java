@@ -16,6 +16,14 @@ public final class VoxelAmbientOcclusion {
     private static final int FACE_NEG_Y = 3;
     private static final int FACE_POS_Z = 4;
     private static final int FACE_NEG_Z = 5;
+    private static final AxisVectors[] FACE_AXES = {
+            new AxisVectors(1, 0, 0, 0, 0, -1, 0, 1, 0),
+            new AxisVectors(-1, 0, 0, 0, 0, 1, 0, 1, 0),
+            new AxisVectors(0, 1, 0, 1, 0, 0, 0, 0, -1),
+            new AxisVectors(0, -1, 0, 1, 0, 0, 0, 0, 1),
+            new AxisVectors(0, 0, 1, 1, 0, 0, 0, 1, 0),
+            new AxisVectors(0, 0, -1, -1, 0, 0, 0, 1, 0)
+    };
 
     private VoxelAmbientOcclusion() {
     }
@@ -31,15 +39,10 @@ public final class VoxelAmbientOcclusion {
             int z,
             int faceDirection
     ) {
-        AxisVectors axes = switch (faceDirection) {
-            case FACE_POS_X -> new AxisVectors(1, 0, 0, 0, 0, -1, 0, 1, 0);
-            case FACE_NEG_X -> new AxisVectors(-1, 0, 0, 0, 0, 1, 0, 1, 0);
-            case FACE_POS_Y -> new AxisVectors(0, 1, 0, 1, 0, 0, 0, 0, -1);
-            case FACE_NEG_Y -> new AxisVectors(0, -1, 0, 1, 0, 0, 0, 0, 1);
-            case FACE_POS_Z -> new AxisVectors(0, 0, 1, 1, 0, 0, 0, 1, 0);
-            case FACE_NEG_Z -> new AxisVectors(0, 0, -1, -1, 0, 0, 0, 1, 0);
-            default -> throw new IllegalArgumentException("Unknown face direction: " + faceDirection);
-        };
+        if (faceDirection < FACE_POS_X || faceDirection > FACE_NEG_Z) {
+            throw new IllegalArgumentException("Unknown face direction: " + faceDirection);
+        }
+        AxisVectors axes = FACE_AXES[faceDirection];
 
         int ao0 = computeVertexAo(snapshot, x, y, z, axes, -1, -1);
         int ao1 = computeVertexAo(snapshot, x, y, z, axes, 1, -1);

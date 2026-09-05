@@ -19,6 +19,9 @@ class BlockCatalogTest {
         assertEquals(0, catalog.getRuntimeId("voxy:air"));
         assertEquals(1, catalog.getRuntimeId("test:stone"));
         assertSame(stone, catalog.getBlock((short) 1));
+        assertEquals(2, catalog.size());
+        assertEquals(null, catalog.getBlock((short) -1));
+        assertEquals(null, catalog.getBlock((short) 2));
         assertEquals("test:stone", catalog.getStableId((short) 1));
         assertFalse(air.isSolid());
         assertFalse(air.blocksLight());

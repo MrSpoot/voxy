@@ -40,7 +40,12 @@ public class World implements AutoCloseable, WorldBlockProvider {
         this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.worldStreamer = new WorldStreamer(chunkManager, this, worldGenerator, settings);
-        this.lightingSystem = new WorldLightingSystem(blockCatalog, this, settings.getHeightRange());
+        this.lightingSystem = new WorldLightingSystem(
+                blockCatalog,
+                this,
+                settings.getHeightRange(),
+                worldStreamer::executeAuxiliaryTask
+        );
     }
 
     public ChunkManager getChunkManager() {
@@ -173,11 +178,22 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     @Override
     public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
-        ChunkPosition position = toChunkPosition(worldX, worldY, worldZ);
-        if (chunkManager.hasChunk(position.x(), position.y(), position.z())) {
-            return chunkManager.getBlockAtWorld(worldX, worldY, worldZ);
-        }
-        return worldGenerator.getBlockAtWorld(worldX, worldY, worldZ);
+        int loadedBlock = chunkManager.getLoadedBlockAtWorld(worldX, worldY, worldZ);
+        return loadedBlock >= 0 ? (short) loadedBlock : worldGenerator.getBlockAtWorld(worldX, worldY, worldZ);
+    }
+
+    @Override
+    public void fillBlockRegion(
+            int originX,
+            int originY,
+            int originZ,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            short[] destination
+    ) {
+        worldGenerator.fillBlockRegion(originX, originY, originZ, sizeX, sizeY, sizeZ, destination);
+        chunkManager.overlayLoadedBlocks(originX, originY, originZ, sizeX, sizeY, sizeZ, destination);
     }
 
     @Override
@@ -283,7 +299,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
         ChunkManager.ChunkUploadSync uploadSync = chunkManager.snapshotChunkUploadSync(synchronizedLightingUploadsVersion);
         if (uploadSync.requiresFullSnapshot()) {
             for (ChunkPosition position : uploadSync.fullSnapshot().keySet()) {
-                lightingSystem.enqueueChunkBoundary(position);
+                lightingSystem.enqueueChunkBoundary(position, chunkManager);
             }
             synchronizedLightingUploadsVersion = uploadSync.version();
             return new LightingCollectionProfilingSnapshot(
@@ -296,7 +312,7 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
         for (ChunkManager.ChunkUploadDelta delta : uploadSync.deltas()) {
             if (delta.changeType() != ChunkManager.ChunkUploadChangeType.UPDATED) {
-                lightingSystem.enqueueChunkBoundary(delta.position());
+                lightingSystem.enqueueChunkBoundary(delta.position(), chunkManager);
             }
         }
         synchronizedLightingUploadsVersion = uploadSync.version();

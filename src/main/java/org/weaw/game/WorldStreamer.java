@@ -35,6 +35,8 @@ public class WorldStreamer implements AutoCloseable {
     private static final int DEFAULT_RESERVED_REMESH_TASK_SLOTS = 8;
     private static final long TASK_MEMORY_RESERVATION_BYTES = 2L * 1024L * 1024L;
     private static final int INTERACTION_BUBBLE_RADIUS_CHUNKS = 1;
+    private static final int DEFAULT_MAX_SUBMISSIONS_PER_UPDATE = 24;
+    private static final int DEFAULT_MAX_PUBLISHES_PER_UPDATE = 8;
 
     private final ChunkManager chunkManager;
     private final BlockCatalog blockCatalog;
@@ -124,8 +126,14 @@ public class WorldStreamer implements AutoCloseable {
                 20,
                 24,
                 2,
-                12,
-                4,
+                Math.max(1, Integer.getInteger(
+                        "voxy.chunkSubmissionsPerUpdate",
+                        DEFAULT_MAX_SUBMISSIONS_PER_UPDATE
+                )),
+                Math.max(1, Integer.getInteger(
+                        "voxy.chunkPublishesPerUpdate",
+                        DEFAULT_MAX_PUBLISHES_PER_UPDATE
+                )),
                 resolveUpdateBudgetNs()
         );
     }
@@ -362,6 +370,10 @@ public class WorldStreamer implements AutoCloseable {
                 asyncCancelledBuilds.getAndSet(0)
         );
         lastMemorySnapshot = createMemorySnapshot();
+    }
+
+    void executeAuxiliaryTask(Runnable task) {
+        interactionExecutor.execute(task);
     }
 
     @Override
@@ -714,7 +726,7 @@ public class WorldStreamer implements AutoCloseable {
                 meshingResult = ChunkMesher.buildMeshDataProfiled(
                         chunk,
                         blockProvider,
-                        () -> isTaskCancelled(task)
+                        task::isCancellationRequested
                 );
             } finally {
                 asyncChunkMeshCpuTimeNs.addAndGet(System.nanoTime() - meshStartNs);
@@ -1305,7 +1317,7 @@ public class WorldStreamer implements AutoCloseable {
         private final ChunkPosition position;
         private final long token;
         private final ChunkTaskType type;
-        private ChunkTaskState state;
+        private volatile ChunkTaskState state;
 
         private ChunkBuildTask(ChunkPosition position, long token, ChunkTaskType type, ChunkTaskState state) {
             this.position = position;
@@ -1332,6 +1344,10 @@ public class WorldStreamer implements AutoCloseable {
 
         private void setState(ChunkTaskState state) {
             this.state = state;
+        }
+
+        private boolean isCancellationRequested() {
+            return Thread.currentThread().isInterrupted() || state != ChunkTaskState.BUILDING;
         }
     }
 }

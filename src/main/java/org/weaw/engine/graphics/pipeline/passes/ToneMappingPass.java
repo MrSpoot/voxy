@@ -8,15 +8,9 @@ import org.weaw.engine.graphics.pipeline.resources.GLStateManager;
 import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
 import org.weaw.engine.graphics.utils.Shader;
 
-import static org.lwjgl.opengl.GL11.GL_CULL_FACE;
 import static org.lwjgl.opengl.GL11.GL_FILL;
-import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
-import static org.lwjgl.opengl.GL11.GL_POLYGON_MODE;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.glBindTexture;
-import static org.lwjgl.opengl.GL11.glDisable;
-import static org.lwjgl.opengl.GL11.glGetIntegerv;
-import static org.lwjgl.opengl.GL11.glPolygonMode;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE1;
 import static org.lwjgl.opengl.GL13.glActiveTexture;
@@ -27,7 +21,8 @@ public class ToneMappingPass implements RenderPass {
     private Shader shader;
     private FullscreenQuad fullscreenQuad;
     private AutoExposureSystem autoExposureSystem;
-    private final int[] polygonMode = new int[2];
+    private int lastExposureTexture;
+    private int autoExposureFrame;
 
     @Override
     public String getName() {
@@ -57,18 +52,22 @@ public class ToneMappingPass implements RenderPass {
 
         GLStateManager.setDepthTest(false, false);
         GLStateManager.setBlending(false);
-        glDisable(GL_CULL_FACE);
-        glGetIntegerv(GL_POLYGON_MODE, polygonMode);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        GLStateManager.setCulling(false);
+        int polygonMode = GLStateManager.getPolygonMode();
+        GLStateManager.setPolygonMode(GL_FILL);
 
-        int exposureTexture = autoExposureSystem.update(
-                sourceTarget.getColorTexture(),
-                sourceTarget.getWidth(),
-                sourceTarget.getHeight(),
-                context.getFrameDeltaSeconds(),
-                settings,
-                fullscreenQuad
-        );
+        int exposureInterval = context.getAdaptiveGraphicsQuality().getLevel().autoExposureIntervalFrames();
+        if (lastExposureTexture == 0 || autoExposureFrame++ % exposureInterval == 0) {
+            lastExposureTexture = autoExposureSystem.update(
+                    sourceTarget.getColorTexture(),
+                    sourceTarget.getWidth(),
+                    sourceTarget.getHeight(),
+                    context.getFrameDeltaSeconds() * exposureInterval,
+                    settings,
+                    fullscreenQuad
+            );
+        }
+        int exposureTexture = lastExposureTexture;
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         GLStateManager.setViewport(context.getViewportWidth(), context.getViewportHeight());
@@ -100,13 +99,15 @@ public class ToneMappingPass implements RenderPass {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, 0);
         shader.unbind();
-        glPolygonMode(GL_FRONT_AND_BACK, polygonMode[0]);
+        GLStateManager.setPolygonMode(polygonMode);
     }
 
     @Override
     public void resize(int width, int height) {
         if (autoExposureSystem != null) {
             autoExposureSystem.invalidateLuminancePyramid();
+            lastExposureTexture = 0;
+            autoExposureFrame = 0;
         }
     }
 

@@ -12,6 +12,8 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,6 +50,28 @@ class ChunkManagerTest {
         assertEquals(1, manager.getChunkCount());
         assertEquals(Blocks.STONE.getId(), manager.getBlockAtWorld(Chunk.SIZE, 0, -Chunk.SIZE));
         assertEquals(meshData, manager.getChunkUpload(position).meshData());
+    }
+
+    @Test
+    void uploadSnapshotIsStableUntilThePublishedVersionChanges() {
+        ChunkManager manager = new ChunkManager();
+
+        Map<ChunkPosition, ChunkManager.ChunkUpload> empty = manager.snapshotChunkUploads();
+        assertSame(empty, manager.snapshotChunkUploads());
+
+        ChunkPosition position = new ChunkPosition(0, 0, 0);
+        manager.publishBuiltChunk(new Chunk(new Vector3i()), emptyMeshData());
+        Map<ChunkPosition, ChunkManager.ChunkUpload> populated = manager.snapshotChunkUploads();
+
+        assertNotSame(empty, populated);
+        assertTrue(populated.containsKey(position));
+        assertSame(populated, manager.snapshotChunkUploads());
+
+        manager.unloadChunk(position);
+        Map<ChunkPosition, ChunkManager.ChunkUpload> unloaded = manager.snapshotChunkUploads();
+        assertNotSame(populated, unloaded);
+        assertTrue(unloaded.isEmpty());
+        assertTrue(populated.containsKey(position));
     }
 
     @Test

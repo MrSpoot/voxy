@@ -18,9 +18,6 @@ import static org.lwjgl.opengl.GL31.glDrawArraysInstanced;
 
 /** Renders a camera-centered field of procedural opaque voxel clouds. */
 public final class CloudRenderPass implements RenderPass {
-    private static final int GRID_SIDE = 160;
-    private static final int INSTANCE_COUNT = GRID_SIDE * GRID_SIDE;
-
     private final Matrix4f projectionMatrix = new Matrix4f();
     private final Matrix4f viewMatrix = new Matrix4f();
 
@@ -83,9 +80,11 @@ public final class CloudRenderPass implements RenderPass {
         shader.setUniform("uCloudDensity", density);
         shader.setUniform("uCloudSize", cloudSize);
         shader.setUniform("uWindOffset", (float) windOffsetBlocks);
+        int gridSide = context.getAdaptiveGraphicsQuality().getLevel().cloudGridSide();
+        shader.setUniform("uGridSide", gridSide);
 
         glBindVertexArray(vao);
-        glDrawArraysInstanced(GL_POINTS, 0, 1, INSTANCE_COUNT);
+        glDrawArraysInstanced(GL_POINTS, 0, 1, gridSide * gridSide);
         glBindVertexArray(0);
         shader.unbind();
     }

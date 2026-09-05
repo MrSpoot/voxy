@@ -30,9 +30,11 @@ public final class LegacyChunkMeshBuilder {
         int[] opaqueFaces = new int[initialCapacity * 2];
         int[] cutoutFaces = new int[initialCapacity * 2];
         int[] transparentFaces = transparentChunksEnabled ? new int[initialCapacity * 2] : new int[0];
+        int[] waterFaces = transparentChunksEnabled ? new int[initialCapacity * 2] : new int[0];
         int opaqueCount = 0;
         int cutoutCount = 0;
         int transparentCount = 0;
+        int waterCount = 0;
 
         long classificationStartNs = System.nanoTime();
         for (int y = 0; y < org.weaw.game.Chunk.SIZE; y++) {
@@ -53,7 +55,9 @@ public final class LegacyChunkMeshBuilder {
                     }
 
                     int textureIndex = blockDefinition.getTextureIndex();
-                    MeshLayer layer = blockDefinition.isTransparent()
+                    MeshLayer layer = Blocks.WATER.getStableId().equals(blockDefinition.getStableId())
+                            ? MeshLayer.WATER
+                            : blockDefinition.isTransparent()
                             ? MeshLayer.TRANSPARENT
                             : (blockDefinition.isCutout() ? MeshLayer.CUTOUT : MeshLayer.OPAQUE);
 
@@ -76,9 +80,12 @@ public final class LegacyChunkMeshBuilder {
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
-                        } else {
+                        } else if (layer == MeshLayer.TRANSPARENT) {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
+                        } else {
+                            waterFaces = ensureCapacity(waterFaces, waterCount);
+                            writeFace(waterFaces, waterCount++, encodeFace(x, y, z, FACE_POS_X, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(snapshot, blockDefinition, x - 1, y, z)) {
@@ -100,9 +107,12 @@ public final class LegacyChunkMeshBuilder {
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
-                        } else {
+                        } else if (layer == MeshLayer.TRANSPARENT) {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
+                        } else {
+                            waterFaces = ensureCapacity(waterFaces, waterCount);
+                            writeFace(waterFaces, waterCount++, encodeFace(x, y, z, FACE_NEG_X, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(snapshot, blockDefinition, x, y + 1, z)) {
@@ -124,9 +134,12 @@ public final class LegacyChunkMeshBuilder {
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
-                        } else {
+                        } else if (layer == MeshLayer.TRANSPARENT) {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
+                        } else {
+                            waterFaces = ensureCapacity(waterFaces, waterCount);
+                            writeFace(waterFaces, waterCount++, encodeFace(x, y, z, FACE_POS_Y, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(snapshot, blockDefinition, x, y - 1, z)) {
@@ -148,9 +161,12 @@ public final class LegacyChunkMeshBuilder {
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
-                        } else {
+                        } else if (layer == MeshLayer.TRANSPARENT) {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
+                        } else {
+                            waterFaces = ensureCapacity(waterFaces, waterCount);
+                            writeFace(waterFaces, waterCount++, encodeFace(x, y, z, FACE_NEG_Y, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(snapshot, blockDefinition, x, y, z + 1)) {
@@ -172,9 +188,12 @@ public final class LegacyChunkMeshBuilder {
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
-                        } else {
+                        } else if (layer == MeshLayer.TRANSPARENT) {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
+                        } else {
+                            waterFaces = ensureCapacity(waterFaces, waterCount);
+                            writeFace(waterFaces, waterCount++, encodeFace(x, y, z, FACE_POS_Z, 1, 1), facePayload);
                         }
                     }
                     if (shouldEmitFace(snapshot, blockDefinition, x, y, z - 1)) {
@@ -196,9 +215,12 @@ public final class LegacyChunkMeshBuilder {
                         } else if (layer == MeshLayer.CUTOUT) {
                             cutoutFaces = ensureCapacity(cutoutFaces, cutoutCount);
                             writeFace(cutoutFaces, cutoutCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), facePayload);
-                        } else {
+                        } else if (layer == MeshLayer.TRANSPARENT) {
                             transparentFaces = ensureCapacity(transparentFaces, transparentCount);
                             writeFace(transparentFaces, transparentCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), facePayload);
+                        } else {
+                            waterFaces = ensureCapacity(waterFaces, waterCount);
+                            writeFace(waterFaces, waterCount++, encodeFace(x, y, z, FACE_NEG_Z, 1, 1), facePayload);
                         }
                     }
                 }
@@ -212,6 +234,9 @@ public final class LegacyChunkMeshBuilder {
                 new ChunkMeshData.LayerMeshData(trimFaces(cutoutFaces, cutoutCount), cutoutCount),
                 transparentChunksEnabled
                         ? new ChunkMeshData.LayerMeshData(trimFaces(transparentFaces, transparentCount), transparentCount)
+                        : EMPTY_LAYER,
+                transparentChunksEnabled
+                        ? new ChunkMeshData.LayerMeshData(trimFaces(waterFaces, waterCount), waterCount)
                         : EMPTY_LAYER
         );
         metrics.recordOutputBuild(System.nanoTime() - outputStartNs);
@@ -345,6 +370,7 @@ public final class LegacyChunkMeshBuilder {
     private enum MeshLayer {
         OPAQUE,
         CUTOUT,
-        TRANSPARENT
+        TRANSPARENT,
+        WATER
     }
 }

@@ -128,7 +128,7 @@ class ChunkMesherTest {
             Blocks.WATER.setTextureIndex(7);
             Blocks.GLASS.setTextureIndex(8);
 
-            ChunkMeshData.LayerMeshData waterMesh = meshAdjacentBlocks(Blocks.WATER).transparent();
+            ChunkMeshData.LayerMeshData waterMesh = meshAdjacentBlocks(Blocks.WATER).water();
             assertEquals(10, waterMesh.faceCount());
             assertEquals(6, countWaterSurfaceEdges(waterMesh));
             assertEquals(6, meshAdjacentBlocks(Blocks.GLASS).transparent().faceCount());
@@ -137,6 +137,24 @@ class ChunkMesherTest {
             ChunkMesher.setTransparentChunksEnabled(previousTransparentChunks);
             Blocks.WATER.setTextureIndex(previousWaterTextureIndex);
             Blocks.GLASS.setTextureIndex(previousGlassTextureIndex);
+        }
+    }
+
+    @Test
+    void legacyAndGreedyWaterLayersExposeTheSameSurface() {
+        ChunkMesher.MeshingMode previousMode = ChunkMesher.getMeshingMode();
+        int previousWaterTextureIndex = Blocks.WATER.getTextureIndex();
+        try {
+            Blocks.WATER.setTextureIndex(7);
+            ChunkMesher.setMeshingMode(ChunkMesher.MeshingMode.LEGACY);
+            ChunkMeshData.LayerMeshData legacy = meshAdjacentBlocks(Blocks.WATER).water();
+            ChunkMesher.setMeshingMode(ChunkMesher.MeshingMode.GREEDY);
+            ChunkMeshData.LayerMeshData greedy = meshAdjacentBlocks(Blocks.WATER).water();
+
+            assertEquals(expandSurface(legacy), expandSurface(greedy));
+        } finally {
+            ChunkMesher.setMeshingMode(previousMode);
+            Blocks.WATER.setTextureIndex(previousWaterTextureIndex);
         }
     }
 
@@ -168,6 +186,7 @@ class ChunkMesherTest {
         assertEquals(6, meshData.opaque().faceCount(), mode + " should expose each side of one block");
         assertEquals(0, meshData.cutout().faceCount());
         assertEquals(0, meshData.transparent().faceCount());
+        assertEquals(0, meshData.water().faceCount());
     }
 
     private static ChunkMeshData meshAdjacentBlocks(BlockDefinition block) {

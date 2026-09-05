@@ -15,6 +15,7 @@ layout(std430, binding = 2) readonly buffer ChunkLightBuffer {
 
 uniform mat4 uProjection;
 uniform mat4 uView;
+uniform vec3 uCameraPosition;
 uniform int uDebugLightVisualizationEnabled;
 
 const float AO_LEVELS[4] = float[](1.0, 0.75, 0.5, 0.3);
@@ -26,6 +27,7 @@ flat out int vTextureIndex;
 out float vAo;
 flat out int vLightOffset;
 out vec3 vChunkLocalPosition;
+out float vCameraDistance;
 
 vec2 getQuadUv(int vertexIndex) {
     if (vertexIndex == 0) {
@@ -107,6 +109,7 @@ void main() {
     vAo = pow(AO_LEVELS[aoLevel], 1.3);
     vLightOffset = lightOffset;
     vChunkLocalPosition = localPosition;
+    vCameraDistance = distance(worldPosition, uCameraPosition);
 }
 //@endvs
 
@@ -129,6 +132,11 @@ uniform vec3 uSkyColor;
 uniform float uSkyIntensity;
 uniform float uVoxelLightGamma;
 uniform float uVoxelDarknessFloor;
+uniform int uDistanceSofteningEnabled;
+uniform float uDistanceSofteningStart;
+uniform float uDistanceSofteningEnd;
+uniform float uDistantDirectionalStrength;
+uniform float uDistantAoStrength;
 const int DEBUG_LIGHT_PADDED_DIMENSION = 34;
 const int PACKED_LIGHT_COMPONENT_INTS =
     (DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION * DEBUG_LIGHT_PADDED_DIMENSION + 1) / 2;
@@ -143,6 +151,7 @@ flat in int vTextureIndex;
 in float vAo;
 flat in int vLightOffset;
 in vec3 vChunkLocalPosition;
+in float vCameraDistance;
 
 out vec4 fragColor;
 
@@ -179,6 +188,31 @@ float getVoxelLightResponse(float normalizedLevel) {
     return mix(clamp(uVoxelDarknessFloor, 0.0, 0.25), 1.0, easedLevel);
 }
 
+float getDistanceSofteningFactor() {
+    if (uDistanceSofteningEnabled == 0) {
+        return 0.0;
+    }
+    return smoothstep(
+        uDistanceSofteningStart,
+        max(uDistanceSofteningEnd, uDistanceSofteningStart + 1.0),
+        vCameraDistance
+    );
+}
+
+float getSoftenedSunFactor(vec3 normal, vec3 sunDirection, float distanceSoftening) {
+    float directionalSun = max(dot(normal, sunDirection), 0.0);
+    float averageSideSun = (abs(sunDirection.x) + abs(sunDirection.z)) * 0.25;
+    float neutralSun = max(normal.y * sunDirection.y, 0.0)
+        + (1.0 - abs(normal.y)) * averageSideSun;
+    float distantSun = mix(neutralSun, directionalSun, clamp(uDistantDirectionalStrength, 0.0, 1.0));
+    return mix(directionalSun, distantSun, distanceSoftening);
+}
+
+float getSoftenedAo(float ao, float distanceSoftening) {
+    float distantAo = mix(1.0, ao, clamp(uDistantAoStrength, 0.0, 1.0));
+    return mix(ao, distantAo, distanceSoftening);
+}
+
 vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
     ivec3 faceSampleCoords = resolveDebugSampleCoords(face, vChunkLocalPosition);
     vec4 voxelLight = sampleSmoothedVoxelLight(face, vChunkLocalPosition, faceSampleCoords);
@@ -191,15 +225,17 @@ vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
     float diffuseSkyVisibility = getVoxelLightResponse(skyLevel);
     float directSunVisibility = pow(clamp(directSkyLevel, 0.0, 1.0), 2.0);
     float blockLightStrength = max(max(localLighting.r, localLighting.g), localLighting.b);
+    float distanceSoftening = getDistanceSofteningFactor();
+    float effectiveAo = getSoftenedAo(ao, distanceSoftening);
 
     if (uLightingEnabled == 0) {
         vec3 environmentLighting = vec3(1.0);
-        return albedo * (environmentLighting * ao + localLighting);
+        return albedo * (environmentLighting * effectiveAo + localLighting);
     }
 
     vec3 normal = getFaceNormal(face);
     vec3 sunDirection = normalize(uSunDirection + vec3(0.0, 0.00001, 0.0));
-    float sunFactor = max(dot(normal, sunDirection), 0.0);
+    float sunFactor = getSoftenedSunFactor(normal, sunDirection, distanceSoftening);
     float skyFactor = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
     float indirectSkyFactor = mix(0.35, 1.0, skyFactor);
 
@@ -210,7 +246,7 @@ vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
     vec3 sky = uSkyColor * uSkyIntensity * indirectSkyFactor * diffuseSkyVisibility;
     vec3 sun = uSunColor * uSunIntensity * sunFactor * directSunVisibility;
     vec3 environmentLighting = ambient + sky + sun;
-    vec3 lighting = environmentLighting * ao + localLighting;
+    vec3 lighting = environmentLighting * effectiveAo + localLighting;
 
     return albedo * lighting;
 }

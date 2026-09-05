@@ -3,6 +3,7 @@ package org.weaw.engine.graphics.pipeline;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
+import org.weaw.engine.graphics.pipeline.resources.GLStateManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +40,8 @@ public class RenderPipeline {
 
     private final RenderContext context;
     private final List<RenderPass> passes = new ArrayList<>();
+    private final GpuPassProfiler gpuPassProfiler = new GpuPassProfiler();
+    private final AdaptiveQualityController adaptiveQualityController = new AdaptiveQualityController();
 
     /**
      * Create a new render pipeline.
@@ -67,7 +70,7 @@ public class RenderPipeline {
         LOGGER.info("Creating RenderPipeline with {} passes", passes.size());
 
         createSharedRenderTargets();
-        LOGGER.info("GPU Profiler initialized");
+        LOGGER.info("Asynchronous GPU pass profiler initialized");
 
         // Initialize all passes
         for (RenderPass pass : passes) {
@@ -83,11 +86,25 @@ public class RenderPipeline {
      */
     public void execute() {
         context.getRenderStats().beginFrame(context.getRenderTargets());
+        gpuPassProfiler.collectAvailable(context.getRenderStats());
+        adaptiveQualityController.update(
+                context.getAdaptiveGraphicsQuality(),
+                context.getRenderStats().getTotalPassGpuTimeNs(),
+                context.getFrameDeltaSeconds()
+        );
+        GLStateManager.invalidateFrameState();
         context.resetCurrentColorTarget();
         for (RenderPass pass : passes) {
             long start = System.nanoTime();
-            pass.execute(context);
-            context.getRenderStats().recordPassCpuTime(pass.getName(), System.nanoTime() - start);
+            boolean gpuTimingStarted = gpuPassProfiler.begin(pass.getName());
+            try {
+                pass.execute(context);
+            } finally {
+                if (gpuTimingStarted) {
+                    gpuPassProfiler.end(pass.getName());
+                }
+                context.getRenderStats().recordPassCpuTime(pass.getName(), System.nanoTime() - start);
+            }
         }
     }
 
@@ -128,6 +145,7 @@ public class RenderPipeline {
             pass.cleanup();
         }
         passes.clear();
+        gpuPassProfiler.cleanup();
 
         // Cleanup context (render targets)
         context.cleanup();

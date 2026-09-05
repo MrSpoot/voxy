@@ -32,6 +32,7 @@ public class ChunkManager {
     private final Map<ChunkPosition, Long> residentBytesByChunk = new LinkedHashMap<>();
     private final Map<ChunkPosition, Boolean> compactLightingByChunk = new LinkedHashMap<>();
     private volatile Map<ChunkPosition, ChunkUpload> chunkUploadsSnapshot = Map.of();
+    private long chunkUploadsSnapshotVersion = -1L;
 
     private long chunkUploadsVersion;
     private long chunkLightVersion;
@@ -100,19 +101,85 @@ public class ChunkManager {
     }
 
     public synchronized short getBlockAtWorld(int worldX, int worldY, int worldZ) {
+        int loadedBlock = getLoadedBlockAtWorld(worldX, worldY, worldZ);
+        return loadedBlock < 0 ? blockCatalog.air().getId() : (short) loadedBlock;
+    }
+
+    /** Returns an unsigned runtime id, or {@code -1} when the chunk is absent. */
+    public synchronized int getLoadedBlockAtWorld(int worldX, int worldY, int worldZ) {
         int chunkX = Math.floorDiv(worldX, Chunk.SIZE);
         int chunkY = Math.floorDiv(worldY, Chunk.SIZE);
         int chunkZ = Math.floorDiv(worldZ, Chunk.SIZE);
 
         Chunk chunk = chunks.get(new ChunkPosition(chunkX, chunkY, chunkZ));
         if (chunk == null) {
-            return blockCatalog.air().getId();
+            return -1;
         }
 
         int localX = Math.floorMod(worldX, Chunk.SIZE);
         int localY = Math.floorMod(worldY, Chunk.SIZE);
         int localZ = Math.floorMod(worldZ, Chunk.SIZE);
-        return chunk.getBlock(localX, localY, localZ);
+        return Short.toUnsignedInt(chunk.getBlock(localX, localY, localZ));
+    }
+
+    /** Overlays only loaded chunks onto an already initialized block region. */
+    public synchronized void overlayLoadedBlocks(
+            int originX,
+            int originY,
+            int originZ,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            short[] destination
+    ) {
+        if (sizeX < 0 || sizeY < 0 || sizeZ < 0
+                || destination.length < sizeX * sizeY * sizeZ) {
+            throw new IllegalArgumentException("Invalid block region dimensions or destination size");
+        }
+        int maxX = originX + sizeX;
+        int maxY = originY + sizeY;
+        int maxZ = originZ + sizeZ;
+        int minChunkX = Math.floorDiv(originX, Chunk.SIZE);
+        int minChunkY = Math.floorDiv(originY, Chunk.SIZE);
+        int minChunkZ = Math.floorDiv(originZ, Chunk.SIZE);
+        int maxChunkX = Math.floorDiv(maxX - 1, Chunk.SIZE);
+        int maxChunkY = Math.floorDiv(maxY - 1, Chunk.SIZE);
+        int maxChunkZ = Math.floorDiv(maxZ - 1, Chunk.SIZE);
+
+        for (int chunkY = minChunkY; chunkY <= maxChunkY; chunkY++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+                    Chunk chunk = chunks.get(new ChunkPosition(chunkX, chunkY, chunkZ));
+                    if (chunk == null) {
+                        continue;
+                    }
+                    int chunkOriginX = chunkX * Chunk.SIZE;
+                    int chunkOriginY = chunkY * Chunk.SIZE;
+                    int chunkOriginZ = chunkZ * Chunk.SIZE;
+                    int fromX = Math.max(originX, chunkOriginX);
+                    int fromY = Math.max(originY, chunkOriginY);
+                    int fromZ = Math.max(originZ, chunkOriginZ);
+                    int toX = Math.min(maxX, chunkOriginX + Chunk.SIZE);
+                    int toY = Math.min(maxY, chunkOriginY + Chunk.SIZE);
+                    int toZ = Math.min(maxZ, chunkOriginZ + Chunk.SIZE);
+                    for (int worldY = fromY; worldY < toY; worldY++) {
+                        int destinationY = (worldY - originY) * sizeX * sizeZ;
+                        int localY = worldY - chunkOriginY;
+                        for (int worldZ = fromZ; worldZ < toZ; worldZ++) {
+                            int destinationZ = destinationY + (worldZ - originZ) * sizeX;
+                            int localZ = worldZ - chunkOriginZ;
+                            for (int worldX = fromX; worldX < toX; worldX++) {
+                                destination[destinationZ + worldX - originX] = chunk.getBlock(
+                                        worldX - chunkOriginX,
+                                        localY,
+                                        localZ
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     public synchronized short getPackedLightAtWorld(int worldX, int worldY, int worldZ) {
@@ -211,7 +278,6 @@ public class ChunkManager {
                 upload
         );
         recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position, LIGHT_BOUNDARY_ALL, false);
-        refreshChunkUploadsSnapshot();
     }
 
     public synchronized boolean publishRemeshedChunk(ChunkPosition position, ChunkMeshData meshData) {
@@ -229,7 +295,6 @@ public class ChunkManager {
                 position,
                 upload
         );
-        refreshChunkUploadsSnapshot();
         return true;
     }
 
@@ -242,7 +307,6 @@ public class ChunkManager {
         if (chunkUploads.remove(position) != null) {
             recordChunkUploadDelta(ChunkUploadChangeType.REMOVED, position, null);
             recordChunkLightDelta(ChunkUploadChangeType.REMOVED, position, LIGHT_BOUNDARY_ALL, false);
-            refreshChunkUploadsSnapshot();
         }
     }
 
@@ -258,7 +322,11 @@ public class ChunkManager {
         return chunkUploads.get(position);
     }
 
-    public Map<ChunkPosition, ChunkUpload> snapshotChunkUploads() {
+    public synchronized Map<ChunkPosition, ChunkUpload> snapshotChunkUploads() {
+        if (chunkUploadsSnapshotVersion != chunkUploadsVersion) {
+            chunkUploadsSnapshot = Collections.unmodifiableMap(new LinkedHashMap<>(chunkUploads));
+            chunkUploadsSnapshotVersion = chunkUploadsVersion;
+        }
         return chunkUploadsSnapshot;
     }
 
@@ -456,10 +524,6 @@ public class ChunkManager {
         firstRetainedChunkLightVersion = chunkLightDeltas.isEmpty()
                 ? (chunkLightVersion + 1)
                 : chunkLightDeltas.get(0).version();
-    }
-
-    private void refreshChunkUploadsSnapshot() {
-        chunkUploadsSnapshot = Collections.unmodifiableMap(new LinkedHashMap<>(chunkUploads));
     }
 
     public record ChunkPosition(int x, int y, int z) {

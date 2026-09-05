@@ -90,7 +90,7 @@ public final class RuntimeProfilingSummaryCollector {
 
         StringBuilder json = new StringBuilder(2048);
         json.append("{\n");
-        appendNumber(json, 1, "schema_version", 5, true);
+        appendNumber(json, 1, "schema_version", 6, true);
         appendString(json, 1, "generated_at", Instant.now().toString(), true);
         json.append(indent(1)).append("\"run\": {\n");
         appendNumber(json, 2, "sample_count", allFrames.size(), true);
@@ -108,6 +108,12 @@ public final class RuntimeProfilingSummaryCollector {
         appendString(json, 2, "runtime_profile_csv", launchOptions.runtimeStatsOutputPath().toString(), true);
         appendString(json, 2, "runtime_summary_json", launchOptions.runtimeSummaryOutputPath().toString(), true);
         appendString(json, 2, "jfr_output", launchOptions.jfrOutputPath().toString(), false);
+        json.append(indent(1)).append("},\n");
+
+        json.append(indent(1)).append("\"graphics_device\": {\n");
+        appendString(json, 2, "vendor", finalFrame == null ? "unknown" : finalFrame.graphicsVendor(), true);
+        appendString(json, 2, "renderer", finalFrame == null ? "unknown" : finalFrame.graphicsRenderer(), true);
+        appendString(json, 2, "version", finalFrame == null ? "unknown" : finalFrame.graphicsVersion(), false);
         json.append(indent(1)).append("},\n");
 
         json.append(indent(1)).append("\"flags\": {\n");
@@ -133,6 +139,13 @@ public final class RuntimeProfilingSummaryCollector {
         appendMetricSummary(json, 2, "chunk_meshing_output_build_ms", summarize(allFrames, RuntimeFrameProfile::chunkMeshingOutputBuildMs), true);
         appendMetricSummary(json, 2, "chunk_lighting_ms", summarize(allFrames, RuntimeFrameProfile::chunkLightingMs), true);
         appendMetricSummary(json, 2, "render_ms", summarize(allFrames, RuntimeFrameProfile::renderMs), true);
+        appendMetricSummary(json, 2, "render_pass_gpu_total_ms", summarize(allFrames, RuntimeFrameProfile::renderPassGpuTotalMs), true);
+        appendMetricSummary(json, 2, "opaque_pass_gpu_ms", summarize(allFrames, RuntimeFrameProfile::opaquePassGpuMs), true);
+        appendMetricSummary(json, 2, "cutout_pass_gpu_ms", summarize(allFrames, RuntimeFrameProfile::cutoutPassGpuMs), true);
+        appendMetricSummary(json, 2, "transparent_pass_gpu_ms", summarize(allFrames, RuntimeFrameProfile::transparentPassGpuMs), true);
+        appendMetricSummary(json, 2, "water_pass_gpu_ms", summarize(allFrames, RuntimeFrameProfile::waterPassGpuMs), true);
+        appendMetricSummary(json, 2, "anti_aliasing_pass_gpu_ms", summarize(allFrames, RuntimeFrameProfile::antiAliasingPassGpuMs), true);
+        appendMetricSummary(json, 2, "tone_mapping_pass_gpu_ms", summarize(allFrames, RuntimeFrameProfile::toneMappingPassGpuMs), true);
         appendMetricSummary(json, 2, "gpu_mesh_upload_ms", summarize(allFrames, RuntimeFrameProfile::gpuMeshUploadMs), true);
         appendMetricSummary(json, 2, "gpu_light_upload_ms", summarize(allFrames, RuntimeFrameProfile::gpuLightUploadMs), false);
         json.append(indent(1)).append("},\n");
@@ -201,6 +214,10 @@ public final class RuntimeProfilingSummaryCollector {
         appendMetricSummary(json, 2, "world_in_flight_bytes", summarize(allFrames, RuntimeFrameProfile::worldInFlightBytes), true);
         appendMetricSummary(json, 2, "chunk_gpu_resident_bytes", summarize(allFrames, RuntimeFrameProfile::chunkGpuResidentBytes), true);
         appendMetricSummary(json, 2, "effective_render_distance_chunks", summarize(allFrames, RuntimeFrameProfile::effectiveRenderDistanceChunks), false);
+        json.append(indent(1)).append("},\n");
+
+        json.append(indent(1)).append("\"adaptive_quality\": {\n");
+        appendString(json, 2, "final_level", finalFrame == null ? "HIGH" : finalFrame.adaptiveQualityLevel(), false);
         json.append(indent(1)).append("},\n");
 
         json.append(indent(1)).append("\"slow_frames\": {\n");

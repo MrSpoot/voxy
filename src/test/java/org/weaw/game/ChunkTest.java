@@ -63,6 +63,21 @@ class ChunkTest {
     }
 
     @Test
+    void setAllBlocksBuildsPrimitivePaletteAndPreservesValues() {
+        Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
+        short[] blocks = new short[Chunk.TOTAL_BLOCKS];
+        for (int index = 0; index < blocks.length; index++) {
+            blocks[index] = (index & 1) == 0 ? Blocks.STONE.getId() : Blocks.DIRT.getId();
+        }
+
+        chunk.setAllBlocks(blocks);
+
+        assertFalse(chunk.isUniform());
+        assertEquals(Blocks.STONE.getId(), chunk.getBlock(0, 0, 0));
+        assertEquals(Blocks.DIRT.getId(), chunk.getBlock(1, 0, 0));
+    }
+
+    @Test
     void copyIsIndependentFromSource() {
         Chunk source = new Chunk(new Vector3i(0, 0, 0));
         source.setBlock(2, 3, 4, Blocks.STONE);

@@ -8,15 +8,9 @@ import org.weaw.engine.graphics.pipeline.resources.GLStateManager;
 import org.weaw.engine.graphics.pipeline.resources.RenderTarget;
 import org.weaw.engine.graphics.utils.Shader;
 
-import static org.lwjgl.opengl.GL11.GL_CULL_FACE;
 import static org.lwjgl.opengl.GL11.GL_FILL;
-import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
-import static org.lwjgl.opengl.GL11.GL_POLYGON_MODE;
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.glBindTexture;
-import static org.lwjgl.opengl.GL11.glDisable;
-import static org.lwjgl.opengl.GL11.glGetIntegerv;
-import static org.lwjgl.opengl.GL11.glPolygonMode;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL13.glActiveTexture;
 
@@ -24,7 +18,6 @@ public class AntiAliasingPass implements RenderPass {
     private Shader shader;
     private FullscreenQuad fullscreenQuad;
     private final Vector2f texelSize = new Vector2f();
-    private final int[] polygonMode = new int[2];
 
     @Override
     public String getName() {
@@ -52,9 +45,9 @@ public class AntiAliasingPass implements RenderPass {
         outputTarget.bind();
         GLStateManager.setDepthTest(false, false);
         GLStateManager.setBlending(false);
-        glDisable(GL_CULL_FACE);
-        glGetIntegerv(GL_POLYGON_MODE, polygonMode);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        GLStateManager.setCulling(false);
+        int polygonMode = GLStateManager.getPolygonMode();
+        GLStateManager.setPolygonMode(GL_FILL);
 
         shader.useProgram();
 
@@ -69,7 +62,7 @@ public class AntiAliasingPass implements RenderPass {
 
         glBindTexture(GL_TEXTURE_2D, 0);
         shader.unbind();
-        glPolygonMode(GL_FRONT_AND_BACK, polygonMode[0]);
+        GLStateManager.setPolygonMode(polygonMode);
         context.setCurrentColorTarget("antiAliasColor");
     }
 

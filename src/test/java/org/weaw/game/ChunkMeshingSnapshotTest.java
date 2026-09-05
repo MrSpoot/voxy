@@ -34,7 +34,7 @@ class ChunkMeshingSnapshotTest {
         assertEquals(Blocks.DIRT.getId(), snapshot.getBlock(1, 2, 3));
         assertEquals(Blocks.STONE.getId(), snapshot.getBlock(-1, 2, 3));
         assertEquals(34 * 34 * 34, snapshot.sampledBlockCount());
-        assertEquals((34 * 34 * 34) - Chunk.TOTAL_BLOCKS, haloQueries.get());
+        assertEquals(34 * 34 * 34, haloQueries.get());
         assertEquals(new Vector3i(-2, 3, 4), snapshot.position());
     }
 

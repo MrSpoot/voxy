@@ -15,6 +15,12 @@ public class LightingSettings {
     private final float[] voxelLightGamma = {0.85f};
     private final float[] voxelDarknessFloor = {0.04f};
 
+    private final boolean[] distanceSofteningEnabled = {true};
+    private final float[] distanceSofteningStartRatio = {0.35f};
+    private final float[] distanceSofteningEndRatio = {0.80f};
+    private final float[] distantDirectionalStrength = {0.20f};
+    private final float[] distantAoStrength = {0.25f};
+
     private final float[] blockLightIntensity = {1.0f};
 
     private final float[] sunDirection = {-0.35f, 0.86f, -0.28f};
@@ -141,6 +147,46 @@ public class LightingSettings {
         return voxelDarknessFloor[0];
     }
 
+    public boolean isDistanceSofteningEnabled() {
+        return distanceSofteningEnabled[0];
+    }
+
+    public void setDistanceSofteningEnabled(boolean enabled) {
+        distanceSofteningEnabled[0] = enabled;
+    }
+
+    public float[] distanceSofteningStartRatioRef() {
+        return distanceSofteningStartRatio;
+    }
+
+    public float getDistanceSofteningStartRatio() {
+        return Math.clamp(distanceSofteningStartRatio[0], 0.0f, 0.95f);
+    }
+
+    public float[] distanceSofteningEndRatioRef() {
+        return distanceSofteningEndRatio;
+    }
+
+    public float getDistanceSofteningEndRatio() {
+        return Math.clamp(distanceSofteningEndRatio[0], getDistanceSofteningStartRatio() + 0.05f, 1.0f);
+    }
+
+    public float[] distantDirectionalStrengthRef() {
+        return distantDirectionalStrength;
+    }
+
+    public float getDistantDirectionalStrength() {
+        return Math.clamp(distantDirectionalStrength[0], 0.0f, 1.0f);
+    }
+
+    public float[] distantAoStrengthRef() {
+        return distantAoStrength;
+    }
+
+    public float getDistantAoStrength() {
+        return Math.clamp(distantAoStrength[0], 0.0f, 1.0f);
+    }
+
     public void reset() {
         enabled[0] = true;
 
@@ -165,6 +211,12 @@ public class LightingSettings {
         skyIntensity[0] = 0.35f;
         voxelLightGamma[0] = 0.85f;
         voxelDarknessFloor[0] = 0.04f;
+
+        distanceSofteningEnabled[0] = true;
+        distanceSofteningStartRatio[0] = 0.35f;
+        distanceSofteningEndRatio[0] = 0.80f;
+        distantDirectionalStrength[0] = 0.20f;
+        distantAoStrength[0] = 0.25f;
 
         blockLightEnabled[0] = true;
         blockLightIntensity[0] = 1.0f;

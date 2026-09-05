@@ -15,6 +15,7 @@ import org.weaw.engine.graphics.pipeline.passes.OpaqueChunkRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.SkyBoxPass;
 import org.weaw.engine.graphics.pipeline.passes.ToneMappingPass;
 import org.weaw.engine.graphics.pipeline.passes.TransparentChunkRenderPass;
+import org.weaw.engine.graphics.pipeline.passes.WaterChunkRenderPass;
 import org.weaw.engine.graphics.textures.BlockTextureManager;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.input.InputManager;
@@ -23,6 +24,11 @@ import org.weaw.game.World;
 import org.weaw.game.utils.BlockDefinition;
 
 import java.util.Collection;
+
+import static org.lwjgl.opengl.GL11.GL_RENDERER;
+import static org.lwjgl.opengl.GL11.GL_VENDOR;
+import static org.lwjgl.opengl.GL11.GL_VERSION;
+import static org.lwjgl.opengl.GL11.glGetString;
 
 public class Renderer {
     private static final Logger LOGGER = LoggerFactory.getLogger(Renderer.class);
@@ -55,6 +61,9 @@ public class Renderer {
 
         // Create render context (shared state for all passes)
         context = new RenderContext(window.getWidth(), window.getHeight());
+        context.setGraphicsVendor(safeGlString(GL_VENDOR));
+        context.setGraphicsRenderer(safeGlString(GL_RENDERER));
+        context.setGraphicsVersion(safeGlString(GL_VERSION));
         context.setWorldSettings(world.getSettings());
         context.setWorld(world);
         BlockTextureManager blockTextureManager = new BlockTextureManager(blockDefinitions);
@@ -69,6 +78,7 @@ public class Renderer {
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
         if (transparentChunksEnabled) {
+            pipeline.addPass(new WaterChunkRenderPass(world.getChunkManager()));
             pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
         }
         pipeline.addPass(new BlockOutlinePass());
@@ -113,6 +123,11 @@ public class Renderer {
         }
 
         LOGGER.info("Renderer cleanup complete");
+    }
+
+    private static String safeGlString(int name) {
+        String value = glGetString(name);
+        return value == null ? "unknown" : value;
     }
 
     public RenderContext getContext() {

@@ -13,6 +13,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
 /** Persistent incremental RGB and skylight solver. */
@@ -37,6 +42,7 @@ public final class WorldLightingSystem {
     private final WorldBlockProvider blockProvider;
     private final WorldHeightRange heightRange;
     private final ChunkLightingInitializer initializer;
+    private final Executor boundaryScanExecutor;
     private final LongWorkQueue priorityChanges = new LongWorkQueue(32);
     private final LongWorkQueue priorityWork = new LongWorkQueue(1_024);
     private final LongWorkQueue backgroundWork = new LongWorkQueue(8_192);
@@ -44,6 +50,9 @@ public final class WorldLightingSystem {
     private final Set<ChunkPosition> queuedBoundaryChunks = new LinkedHashSet<>();
     private final LongIntMap dirtyChunks = new LongIntMap(64);
     private final ChunkLookupCache chunkCache = new ChunkLookupCache();
+    private final ConcurrentLinkedQueue<BoundaryScanResult> completedBoundaryScans = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger pendingBoundaryScans = new AtomicInteger();
+    private final AtomicLong boundaryScanEpoch = new AtomicLong();
 
     public WorldLightingSystem() {
         this(BlockRegistry.getDefaultCatalog(),
@@ -56,9 +65,19 @@ public final class WorldLightingSystem {
     }
 
     public WorldLightingSystem(BlockCatalog blockCatalog, WorldBlockProvider blockProvider, WorldHeightRange heightRange) {
+        this(blockCatalog, blockProvider, heightRange, Runnable::run);
+    }
+
+    WorldLightingSystem(
+            BlockCatalog blockCatalog,
+            WorldBlockProvider blockProvider,
+            WorldHeightRange heightRange,
+            Executor boundaryScanExecutor
+    ) {
         this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
         this.blockProvider = Objects.requireNonNull(blockProvider, "blockProvider");
         this.heightRange = Objects.requireNonNull(heightRange, "heightRange");
+        this.boundaryScanExecutor = Objects.requireNonNull(boundaryScanExecutor, "boundaryScanExecutor");
         this.initializer = new ChunkLightingInitializer(blockCatalog, blockProvider, heightRange);
     }
 
@@ -78,6 +97,41 @@ public final class WorldLightingSystem {
         }
     }
 
+    /**
+     * Seeds only boundary cells whose light can actually change across a newly
+     * published chunk edge. Removed chunks retain the conservative path needed
+     * to retract light which used to cross that edge.
+     */
+    public void enqueueChunkBoundary(ChunkPosition position, ChunkManager chunkManager) {
+        Objects.requireNonNull(position, "position");
+        Objects.requireNonNull(chunkManager, "chunkManager");
+        Chunk center = chunkManager.getChunk(position.x(), position.y(), position.z());
+        Chunk[] neighbors = new Chunk[OFFSETS.length];
+        for (int face = 0; face < OFFSETS.length; face++) {
+            int[] offset = OFFSETS[face];
+            neighbors[face] = chunkManager.getChunk(
+                    position.x() + offset[0],
+                    position.y() + offset[1],
+                    position.z() + offset[2]
+            );
+        }
+        long scanEpoch = boundaryScanEpoch.get();
+        pendingBoundaryScans.incrementAndGet();
+        try {
+            boundaryScanExecutor.execute(() -> {
+                long[] seeds;
+                try {
+                    seeds = scanRelevantBoundaryCells(position, center, neighbors);
+                } catch (RuntimeException exception) {
+                    seeds = new long[0];
+                }
+                completedBoundaryScans.add(new BoundaryScanResult(scanEpoch, seeds));
+            });
+        } catch (RejectedExecutionException exception) {
+            pendingBoundaryScans.decrementAndGet();
+        }
+    }
+
     public void enqueueBlockChange(int worldX, int worldY, int worldZ) {
         if (heightRange.contains(Math.floorDiv(worldY, Chunk.SIZE))) {
             priorityChanges.add(packPosition(worldX, worldY, worldZ));
@@ -86,7 +140,8 @@ public final class WorldLightingSystem {
 
     public boolean hasPendingWork() {
         return !priorityChanges.isEmpty() || !priorityWork.isEmpty()
-                || !backgroundWork.isEmpty() || !boundaryJobs.isEmpty();
+                || !backgroundWork.isEmpty() || !boundaryJobs.isEmpty()
+                || pendingBoundaryScans.get() != 0 || !completedBoundaryScans.isEmpty();
     }
 
     int getPendingPriorityChangeCount() {
@@ -94,7 +149,7 @@ public final class WorldLightingSystem {
     }
 
     int getPendingBackgroundWorkCount() {
-        return boundaryJobs.size() + backgroundWork.size();
+        return boundaryJobs.size() + backgroundWork.size() + pendingBoundaryScans.get();
     }
 
     public void clearPendingWork() {
@@ -103,6 +158,9 @@ public final class WorldLightingSystem {
         backgroundWork.clear();
         boundaryJobs.clear();
         queuedBoundaryChunks.clear();
+        boundaryScanEpoch.incrementAndGet();
+        completedBoundaryScans.clear();
+        pendingBoundaryScans.set(0);
         dirtyChunks.clear();
     }
 
@@ -118,6 +176,7 @@ public final class WorldLightingSystem {
         Objects.requireNonNull(chunkManager, "chunkManager");
         dirtyChunks.clear();
         chunkCache.reset(chunkManager);
+        collectCompletedBoundaryScans();
         long start = System.nanoTime();
         int seeded = 0;
 
@@ -292,6 +351,99 @@ public final class WorldLightingSystem {
         }
         job.cursor++;
     }
+
+    private long[] scanRelevantBoundaryCells(ChunkPosition centerPosition, Chunk center, Chunk[] neighbors) {
+        LongSeedBuffer seeds = new LongSeedBuffer();
+        for (int face = 0; face < neighbors.length; face++) {
+            Chunk neighbor = neighbors[face];
+            if (neighbor != null) {
+                seedRelevantFaceCells(centerPosition, center, neighbor, face, seeds);
+            }
+        }
+        return seeds.toArray();
+    }
+
+    private void seedRelevantFaceCells(
+            ChunkPosition centerPosition,
+            Chunk center,
+            Chunk neighbor,
+            int face,
+            LongSeedBuffer seeds
+    ) {
+        int[] offset = OFFSETS[face];
+        for (int b = 0; b < Chunk.SIZE; b++) {
+            for (int a = 0; a < Chunk.SIZE; a++) {
+                int centerX;
+                int centerY;
+                int centerZ;
+                switch (face) {
+                    case 0 -> { centerX = Chunk.SIZE - 1; centerY = b; centerZ = a; }
+                    case 1 -> { centerX = 0; centerY = b; centerZ = a; }
+                    case 2 -> { centerX = a; centerY = Chunk.SIZE - 1; centerZ = b; }
+                    case 3 -> { centerX = a; centerY = 0; centerZ = b; }
+                    case 4 -> { centerX = a; centerY = b; centerZ = Chunk.SIZE - 1; }
+                    default -> { centerX = a; centerY = b; centerZ = 0; }
+                }
+                int neighborX = Math.floorMod(centerX + offset[0], Chunk.SIZE);
+                int neighborY = Math.floorMod(centerY + offset[1], Chunk.SIZE);
+                int neighborZ = Math.floorMod(centerZ + offset[2], Chunk.SIZE);
+                int neighborWorldX = (centerPosition.x() + offset[0]) * Chunk.SIZE + neighborX;
+                int neighborWorldY = (centerPosition.y() + offset[1]) * Chunk.SIZE + neighborY;
+                int neighborWorldZ = (centerPosition.z() + offset[2]) * Chunk.SIZE + neighborZ;
+
+                if (center == null) {
+                    seeds.add(packPosition(neighborWorldX, neighborWorldY, neighborWorldZ));
+                    continue;
+                }
+
+                int centerIndex = blockIndex(centerX, centerY, centerZ);
+                int neighborIndex = blockIndex(neighborX, neighborY, neighborZ);
+                short centerLight = center.getPackedLightByIndex(centerIndex);
+                short neighborLight = neighbor.getPackedLightByIndex(neighborIndex);
+                if (canIncrease(centerLight, neighborLight, neighbor.getBlockByIndex(neighborIndex))) {
+                    seeds.add(packPosition(neighborWorldX, neighborWorldY, neighborWorldZ));
+                }
+                if (canIncrease(neighborLight, centerLight, center.getBlockByIndex(centerIndex))) {
+                    int centerWorldX = centerPosition.x() * Chunk.SIZE + centerX;
+                    int centerWorldY = centerPosition.y() * Chunk.SIZE + centerY;
+                    int centerWorldZ = centerPosition.z() * Chunk.SIZE + centerZ;
+                    seeds.add(packPosition(centerWorldX, centerWorldY, centerWorldZ));
+                }
+            }
+        }
+    }
+
+    private boolean canIncrease(short sourceLight, short destinationLight, short destinationBlockId) {
+        BlockDefinition destination = definition(destinationBlockId);
+        if (destination != null && destination.blocksLight()) {
+            return false;
+        }
+        int loss = propagationLoss(destination);
+        return ChunkLighting.getRed(sourceLight) - loss > ChunkLighting.getRed(destinationLight)
+                || ChunkLighting.getGreen(sourceLight) - loss > ChunkLighting.getGreen(destinationLight)
+                || ChunkLighting.getBlue(sourceLight) - loss > ChunkLighting.getBlue(destinationLight)
+                || ChunkLighting.getSky(sourceLight) - loss > ChunkLighting.getSky(destinationLight);
+    }
+
+    private static int blockIndex(int x, int y, int z) {
+        return x + z * Chunk.SIZE + y * Chunk.SIZE * Chunk.SIZE;
+    }
+
+    private void collectCompletedBoundaryScans() {
+        long currentEpoch = boundaryScanEpoch.get();
+        BoundaryScanResult result;
+        while ((result = completedBoundaryScans.poll()) != null) {
+            if (result.epoch() != currentEpoch) {
+                continue;
+            }
+            for (long seed : result.seeds()) {
+                backgroundWork.add(seed);
+            }
+            pendingBoundaryScans.decrementAndGet();
+        }
+    }
+
+    private record BoundaryScanResult(long epoch, long[] seeds) { }
 
     private void drainRelaxationQueue(ChunkManager manager, LongWorkQueue queue, int nodeBudget,
                                       long deadline, ProcessingCounters counters) {
@@ -516,6 +668,22 @@ public final class WorldLightingSystem {
             }
             values = grown;
             read = 0;
+        }
+    }
+
+    private static final class LongSeedBuffer {
+        private long[] values = new long[16];
+        private int size;
+
+        private void add(long value) {
+            if (size == values.length) {
+                values = Arrays.copyOf(values, values.length << 1);
+            }
+            values[size++] = value;
+        }
+
+        private long[] toArray() {
+            return size == 0 ? new long[0] : Arrays.copyOf(values, size);
         }
     }
 

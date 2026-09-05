@@ -72,7 +72,8 @@ class RuntimeProfilingExportTest {
         collector.writeSummary(output, LaunchOptions.from(new String[]{"--benchmark"}));
         String json = Files.readString(output);
 
-        assertTrue(json.contains("\"schema_version\": 5"));
+        assertTrue(json.contains("\"schema_version\": 6"));
+        assertTrue(json.contains("\"render_pass_gpu_total_ms\""));
         assertTrue(json.contains("\"warmup_frames_excluded\": 1"));
         assertTrue(json.contains("\"world_streaming_update_count\": 1"));
         assertTrue(json.contains("\"chunks_generated\": 3"));

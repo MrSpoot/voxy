@@ -23,6 +23,15 @@ import static org.lwjgl.opengl.GL30.glClearBufferfv;
  * </pre>
  */
 public class GLStateManager {
+    private static Boolean depthTestEnabled;
+    private static Boolean depthWriteEnabled;
+    private static Boolean blendingEnabled;
+    private static Boolean cullingEnabled;
+    private static int cullFace = Integer.MIN_VALUE;
+    private static int frontFace = Integer.MIN_VALUE;
+    private static int polygonMode = GL_FILL;
+    private static int viewportWidth = -1;
+    private static int viewportHeight = -1;
 
     /**
      * Configure depth testing and depth writing.
@@ -31,13 +40,21 @@ public class GLStateManager {
      * @param write Enable depth writing (update depth buffer)
      */
     public static void setDepthTest(boolean test, boolean write) {
-        if (test) {
-            glEnable(GL_DEPTH_TEST);
-            glDepthFunc(GL_GREATER);
-        } else {
-            glDisable(GL_DEPTH_TEST);
+        if (depthTestEnabled == null || depthTestEnabled != test) {
+            if (test) {
+                glEnable(GL_DEPTH_TEST);
+            } else {
+                glDisable(GL_DEPTH_TEST);
+            }
+            depthTestEnabled = test;
         }
-        glDepthMask(write);
+        if (test) {
+            glDepthFunc(GL_GREATER);
+        }
+        if (depthWriteEnabled == null || depthWriteEnabled != write) {
+            glDepthMask(write);
+            depthWriteEnabled = write;
+        }
     }
 
     /**
@@ -46,11 +63,16 @@ public class GLStateManager {
      * @param enabled Enable blending
      */
     public static void setBlending(boolean enabled) {
+        if (blendingEnabled == null || blendingEnabled != enabled) {
+            if (enabled) {
+                glEnable(GL_BLEND);
+            } else {
+                glDisable(GL_BLEND);
+            }
+            blendingEnabled = enabled;
+        }
         if (enabled) {
-            glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        } else {
-            glDisable(GL_BLEND);
         }
     }
 
@@ -61,11 +83,17 @@ public class GLStateManager {
      * @param cullFace Face to cull (GL_BACK, GL_FRONT, GL_FRONT_AND_BACK)
      */
     public static void setCulling(boolean enabled, int cullFace) {
-        if (enabled) {
-            glEnable(GL_CULL_FACE);
+        if (cullingEnabled == null || cullingEnabled != enabled) {
+            if (enabled) {
+                glEnable(GL_CULL_FACE);
+            } else {
+                glDisable(GL_CULL_FACE);
+            }
+            cullingEnabled = enabled;
+        }
+        if (enabled && GLStateManager.cullFace != cullFace) {
             glCullFace(cullFace);
-        } else {
-            glDisable(GL_CULL_FACE);
+            GLStateManager.cullFace = cullFace;
         }
     }
 
@@ -82,7 +110,10 @@ public class GLStateManager {
      * @param winding GL_CCW or GL_CW
      */
     public static void setFrontFace(int winding) {
-        glFrontFace(winding);
+        if (frontFace != winding) {
+            glFrontFace(winding);
+            frontFace = winding;
+        }
     }
 
     /**
@@ -91,7 +122,14 @@ public class GLStateManager {
      * @param mode GL_FILL or GL_LINE
      */
     public static void setPolygonMode(int mode) {
-        glPolygonMode(GL_FRONT_AND_BACK, mode);
+        if (polygonMode != mode) {
+            glPolygonMode(GL_FRONT_AND_BACK, mode);
+            polygonMode = mode;
+        }
+    }
+
+    public static int getPolygonMode() {
+        return polygonMode;
     }
 
     /**
@@ -117,6 +155,22 @@ public class GLStateManager {
      * @param height Viewport height
      */
     public static void setViewport(int width, int height) {
-        glViewport(0, 0, width, height);
+        if (viewportWidth != width || viewportHeight != height) {
+            glViewport(0, 0, width, height);
+            viewportWidth = width;
+            viewportHeight = height;
+        }
+    }
+
+    /** Invalidates states that external renderers may have modified between frames. */
+    public static void invalidateFrameState() {
+        depthTestEnabled = null;
+        depthWriteEnabled = null;
+        blendingEnabled = null;
+        cullingEnabled = null;
+        cullFace = Integer.MIN_VALUE;
+        frontFace = Integer.MIN_VALUE;
+        viewportWidth = -1;
+        viewportHeight = -1;
     }
 }

@@ -10,10 +10,13 @@ final class ChunkSkyLight {
     private byte[] packedLevels;
 
     int get(int x, int y, int z) {
+        return getAtIndex(index(x, y, z));
+    }
+
+    int getAtIndex(int index) {
         if (packedLevels == null) {
             return uniformLevel & LEVEL_MASK;
         }
-        int index = index(x, y, z);
         int packed = packedLevels[index >>> 1] & 0xFF;
         return (index & 1) == 0 ? packed & LEVEL_MASK : (packed >>> 4) & LEVEL_MASK;
     }

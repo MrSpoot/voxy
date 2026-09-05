@@ -134,6 +134,30 @@ class WorldLightingSystemTest {
     }
 
     @Test
+    void incrementalBoundarySeedingSkipsEqualLightAndPropagatesOnlyNeededCells() {
+        ChunkManager manager = managerWithAirChunk(0, 0, 0);
+        addAirChunk(manager, 1, 0, 0);
+        fillLayer(manager.getChunk(0, 0, 0), 20, Blocks.STONE);
+        fillLayer(manager.getChunk(1, 0, 0), 20, Blocks.STONE);
+        manager.getChunk(0, 0, 0).setBlock(31, 20, 16, Blocks.AIR);
+        WorldLightingSystem system = new WorldLightingSystem(
+                manager.getBlockCatalog(), manager::getBlockAtWorld, SINGLE_CHUNK_HEIGHT);
+        system.initializeChunk(manager.getChunk(0, 0, 0));
+        system.initializeChunk(manager.getChunk(1, 0, 0));
+
+        system.enqueueChunkBoundary(new ChunkPosition(1, 0, 0), manager);
+        while (system.hasPendingWork()) {
+            system.processFrame(manager);
+        }
+
+        assertEquals(14, sky(manager, 32, 19, 16));
+        assertEquals(13, sky(manager, 33, 19, 16));
+        system.enqueueChunkBoundary(new ChunkPosition(0, 0, 0), manager);
+        system.processFrame(manager);
+        assertFalse(system.hasPendingWork());
+    }
+
+    @Test
     void skyLightCrossesTheFullConfiguredWorldHeight() {
         ChunkManager manager = managerWithAirChunk(0, 0, 0);
         addAirChunk(manager, 0, 1, 0);

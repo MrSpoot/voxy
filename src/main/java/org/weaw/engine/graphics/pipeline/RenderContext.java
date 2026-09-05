@@ -41,6 +41,9 @@ public class RenderContext {
     private int viewportWidth;
     private int viewportHeight;
     private float frameDeltaSeconds = 1.0f / 60.0f;
+    private String graphicsVendor = "unknown";
+    private String graphicsRenderer = "unknown";
+    private String graphicsVersion = "unknown";
 
     // Shared render targets (managed by RenderPipeline)
     // Key examples: "sceneColor", "sceneDepth", "postProcessOutput"
@@ -50,6 +53,7 @@ public class RenderContext {
     private final LightingSettings lightingSettings = new LightingSettings();
     private final CloudSettings cloudSettings = new CloudSettings();
     private final WaterSettings waterSettings = new WaterSettings();
+    private final AdaptiveGraphicsQuality adaptiveGraphicsQuality = new AdaptiveGraphicsQuality();
     private final FogSettings fogSettings = new FogSettings();
     private WorldSettings worldSettings = new WorldSettings();
     private String currentColorTargetName;
@@ -58,6 +62,7 @@ public class RenderContext {
     private ChunkFaceArena opaqueChunkFaceArena;
     private ChunkFaceArena cutoutChunkFaceArena;
     private ChunkFaceArena transparentChunkFaceArena;
+    private ChunkFaceArena waterChunkFaceArena;
     private ChunkLightCache chunkLightCache;
     private ChunkGpuMemoryBudget chunkGpuMemoryBudget;
     private long chunkVisibilityFrameIndex = Long.MIN_VALUE;
@@ -141,6 +146,7 @@ public class RenderContext {
         opaqueChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 4096, chunkGpuMemoryBudget);
         cutoutChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048, chunkGpuMemoryBudget);
         transparentChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048, chunkGpuMemoryBudget);
+        waterChunkFaceArena = new ChunkFaceArena(sharedChunkVao, 2048, chunkGpuMemoryBudget);
     }
 
     public void initializeSharedChunkResources(ChunkManager chunkManager) {
@@ -149,7 +155,13 @@ public class RenderContext {
             return;
         }
 
-        chunkLightCache = new ChunkLightCache(chunkManager, chunkGpuMemoryBudget);
+        int renderDistance = worldSettings.getRenderDistanceChunks();
+        int expectedResidentLightChunks = Math.max(256, Math.multiplyExact(renderDistance, renderDistance) * 3);
+        chunkLightCache = new ChunkLightCache(
+                chunkManager,
+                chunkGpuMemoryBudget,
+                expectedResidentLightChunks
+        );
         chunkLightCache.create();
     }
 
@@ -190,6 +202,10 @@ public class RenderContext {
         if (transparentChunkFaceArena != null) {
             transparentChunkFaceArena.cleanup();
             transparentChunkFaceArena = null;
+        }
+        if (waterChunkFaceArena != null) {
+            waterChunkFaceArena.cleanup();
+            waterChunkFaceArena = null;
         }
         if (chunkLightCache != null) {
             chunkLightCache.cleanup();

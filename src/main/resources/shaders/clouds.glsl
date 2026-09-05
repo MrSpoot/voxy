@@ -7,8 +7,8 @@ uniform float uCloudCellSize;
 uniform float uCloudDensity;
 uniform float uCloudSize;
 uniform float uWindOffset;
+uniform int uGridSide;
 
-const int GRID_SIDE = 160;
 const int PATTERN_PERIOD_CELLS = 4096;
 
 flat out vec3 vCloudOrigin;
@@ -60,16 +60,17 @@ float cloudShape(ivec2 cloudCell) {
 }
 
 void main() {
-    int gridX = gl_InstanceID % GRID_SIDE;
-    int gridZ = gl_InstanceID / GRID_SIDE;
-    ivec2 gridOffset = ivec2(gridX, gridZ) - ivec2(GRID_SIDE / 2);
+    int gridSide = max(uGridSide, 2);
+    int gridX = gl_InstanceID % gridSide;
+    int gridZ = gl_InstanceID / gridSide;
+    ivec2 gridOffset = ivec2(gridX, gridZ) - ivec2(gridSide / 2);
 
     float cellSize = max(uCloudCellSize, 1.0);
     vec2 wind = vec2(uWindOffset, 0.0);
     ivec2 centerCloudCell = ivec2(floor((uCameraPosition.xz - wind) / cellSize));
     ivec2 cloudCell = centerCloudCell + gridOffset;
 
-    float edgeDistance = max(abs(float(gridOffset.x)), abs(float(gridOffset.y))) / float(GRID_SIDE / 2);
+    float edgeDistance = max(abs(float(gridOffset.x)), abs(float(gridOffset.y))) / float(gridSide / 2);
     float edgePenalty = smoothstep(0.82, 1.0, edgeDistance) * 0.32;
     float threshold = mix(0.82, 0.38, clamp(uCloudDensity, 0.0, 1.0)) + edgePenalty;
 

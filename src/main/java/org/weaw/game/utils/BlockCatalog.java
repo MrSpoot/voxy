@@ -11,7 +11,7 @@ import java.util.Objects;
 /** Immutable, injectable catalogue of block definitions. */
 public final class BlockCatalog {
     private final Map<String, BlockDefinition> blocksByStableId;
-    private final Map<Short, BlockDefinition> blocksByRuntimeId;
+    private final BlockDefinition[] blocksByRuntimeId;
     private final BlockDefinition air;
 
     public static BlockCatalog create(Collection<BlockDefinition> definitions) {
@@ -20,7 +20,6 @@ public final class BlockCatalog {
             throw new IllegalArgumentException("A block catalogue cannot contain more than 32768 definitions");
         }
         Map<String, BlockDefinition> byStableId = new LinkedHashMap<>();
-        Map<Short, BlockDefinition> byRuntimeId = new LinkedHashMap<>();
         for (BlockDefinition definition : definitions) {
             Objects.requireNonNull(definition, "block definition");
             String stableId = definition.getStableId();
@@ -34,10 +33,11 @@ public final class BlockCatalog {
             throw new IllegalStateException("A block catalogue must define voxy:air");
         }
 
-        short runtimeId = 0;
+        BlockDefinition[] byRuntimeId = new BlockDefinition[byStableId.size()];
+        int runtimeId = 0;
         for (BlockDefinition definition : byStableId.values()) {
-            definition.setRuntimeId(runtimeId);
-            byRuntimeId.put(runtimeId, definition);
+            definition.setRuntimeId((short) runtimeId);
+            byRuntimeId[runtimeId] = definition;
             runtimeId++;
         }
         return new BlockCatalog(byStableId, byRuntimeId, air);
@@ -59,16 +59,17 @@ public final class BlockCatalog {
 
     private BlockCatalog(
             Map<String, BlockDefinition> blocksByStableId,
-            Map<Short, BlockDefinition> blocksByRuntimeId,
+            BlockDefinition[] blocksByRuntimeId,
             BlockDefinition air
     ) {
         this.blocksByStableId = Collections.unmodifiableMap(new LinkedHashMap<>(blocksByStableId));
-        this.blocksByRuntimeId = Collections.unmodifiableMap(new LinkedHashMap<>(blocksByRuntimeId));
+        this.blocksByRuntimeId = blocksByRuntimeId.clone();
         this.air = air;
     }
 
     public BlockDefinition getBlock(short runtimeId) {
-        return blocksByRuntimeId.get(runtimeId);
+        int index = runtimeId;
+        return index >= 0 && index < blocksByRuntimeId.length ? blocksByRuntimeId[index] : null;
     }
 
     public BlockDefinition getBlock(String stableId) {
@@ -93,6 +94,11 @@ public final class BlockCatalog {
 
     public Map<String, BlockDefinition> getRegisteredBlocks() {
         return blocksByStableId;
+    }
+
+    /** Number of contiguous runtime ids available in this catalogue. */
+    public int size() {
+        return blocksByRuntimeId.length;
     }
 
     public BlockDefinition air() {

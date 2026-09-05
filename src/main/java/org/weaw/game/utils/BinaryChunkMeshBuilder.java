@@ -22,6 +22,7 @@ import java.util.function.BooleanSupplier;
 public final class BinaryChunkMeshBuilder {
     private static final int SIZE = Chunk.SIZE;
     private static final ChunkMeshData.LayerMeshData EMPTY_LAYER = new ChunkMeshData.LayerMeshData(new int[0], 0);
+    private static final ThreadLocal<MeshScratch> MESH_SCRATCH = ThreadLocal.withInitial(MeshScratch::new);
 
     private static final int FACE_POS_X = 0;
     private static final int FACE_NEG_X = 1;
@@ -41,46 +42,55 @@ public final class BinaryChunkMeshBuilder {
             ChunkMeshingMetrics.Recorder metrics
     ) {
         return new ChunkMeshData(
-                buildLayerMeshData(snapshot, BlockDefinition.TransparencyType.OPAQUE, ambientOcclusionEnabled, cancelled, metrics),
-                buildLayerMeshData(snapshot, BlockDefinition.TransparencyType.CUTOUT, ambientOcclusionEnabled, cancelled, metrics),
-                transparentChunksEnabled
+                snapshot.containsTransparencyType(BlockDefinition.TransparencyType.OPAQUE)
+                        ? buildLayerMeshData(snapshot, MeshLayer.OPAQUE, ambientOcclusionEnabled, cancelled, metrics)
+                        : EMPTY_LAYER,
+                snapshot.containsTransparencyType(BlockDefinition.TransparencyType.CUTOUT)
+                        ? buildLayerMeshData(snapshot, MeshLayer.CUTOUT, ambientOcclusionEnabled, cancelled, metrics)
+                        : EMPTY_LAYER,
+                transparentChunksEnabled && snapshot.hasGenericTransparentLayer()
                         ? buildLayerMeshData(
                                 snapshot,
-                                BlockDefinition.TransparencyType.TRANSPARENT,
+                                MeshLayer.TRANSPARENT,
                                 ambientOcclusionEnabled,
                                 cancelled,
                                 metrics
                         )
+                        : EMPTY_LAYER,
+                transparentChunksEnabled && snapshot.hasWaterLayer()
+                        ? buildLayerMeshData(snapshot, MeshLayer.WATER, ambientOcclusionEnabled, cancelled, metrics)
                         : EMPTY_LAYER
         );
     }
 
     private static ChunkMeshData.LayerMeshData buildLayerMeshData(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             BooleanSupplier cancelled,
             ChunkMeshingMetrics.Recorder metrics
     ) {
-        FaceBuffer buffer = new FaceBuffer(Math.max(256, SIZE * SIZE));
-        int[] mask = new int[SIZE * SIZE];
+        MeshScratch scratch = MESH_SCRATCH.get();
+        FaceBuffer buffer = scratch.buffer;
+        buffer.reset();
+        int[] mask = scratch.mask;
 
-        meshPositiveX(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
-        meshNegativeX(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
-        meshPositiveY(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
-        meshNegativeY(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
-        meshPositiveZ(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
-        meshNegativeZ(snapshot, transparencyType, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshPositiveX(snapshot, layer, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshNegativeX(snapshot, layer, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshPositiveY(snapshot, layer, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshNegativeY(snapshot, layer, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshPositiveZ(snapshot, layer, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
+        meshNegativeZ(snapshot, layer, ambientOcclusionEnabled, mask, buffer, cancelled, metrics);
 
         long outputStartNs = System.nanoTime();
-        ChunkMeshData.LayerMeshData layer = new ChunkMeshData.LayerMeshData(buffer.toArray(), buffer.faceCount());
+        ChunkMeshData.LayerMeshData outputLayer = new ChunkMeshData.LayerMeshData(buffer.toArray(), buffer.faceCount());
         metrics.recordOutputBuild(System.nanoTime() - outputStartNs);
-        return layer;
+        return outputLayer;
     }
 
     private static void meshPositiveX(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer,
@@ -95,7 +105,7 @@ public final class BinaryChunkMeshBuilder {
                 for (int z = 0; z < SIZE; z++) {
                     mask[y * SIZE + z] = createMaskEntry(
                             snapshot,
-                            transparencyType,
+                            layer,
                             ambientOcclusionEnabled,
                             FACE_POS_X,
                             x,
@@ -119,7 +129,7 @@ public final class BinaryChunkMeshBuilder {
 
     private static void meshNegativeX(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer,
@@ -134,7 +144,7 @@ public final class BinaryChunkMeshBuilder {
                 for (int z = 0; z < SIZE; z++) {
                     mask[y * SIZE + z] = createMaskEntry(
                             snapshot,
-                            transparencyType,
+                            layer,
                             ambientOcclusionEnabled,
                             FACE_NEG_X,
                             x,
@@ -158,7 +168,7 @@ public final class BinaryChunkMeshBuilder {
 
     private static void meshPositiveY(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer,
@@ -173,7 +183,7 @@ public final class BinaryChunkMeshBuilder {
                 for (int x = 0; x < SIZE; x++) {
                     mask[z * SIZE + x] = createMaskEntry(
                             snapshot,
-                            transparencyType,
+                            layer,
                             ambientOcclusionEnabled,
                             FACE_POS_Y,
                             x,
@@ -197,7 +207,7 @@ public final class BinaryChunkMeshBuilder {
 
     private static void meshNegativeY(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer,
@@ -212,7 +222,7 @@ public final class BinaryChunkMeshBuilder {
                 for (int x = 0; x < SIZE; x++) {
                     mask[z * SIZE + x] = createMaskEntry(
                             snapshot,
-                            transparencyType,
+                            layer,
                             ambientOcclusionEnabled,
                             FACE_NEG_Y,
                             x,
@@ -236,7 +246,7 @@ public final class BinaryChunkMeshBuilder {
 
     private static void meshPositiveZ(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer,
@@ -251,7 +261,7 @@ public final class BinaryChunkMeshBuilder {
                 for (int x = 0; x < SIZE; x++) {
                     mask[y * SIZE + x] = createMaskEntry(
                             snapshot,
-                            transparencyType,
+                            layer,
                             ambientOcclusionEnabled,
                             FACE_POS_Z,
                             x,
@@ -275,7 +285,7 @@ public final class BinaryChunkMeshBuilder {
 
     private static void meshNegativeZ(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             int[] mask,
             FaceBuffer buffer,
@@ -290,7 +300,7 @@ public final class BinaryChunkMeshBuilder {
                 for (int x = 0; x < SIZE; x++) {
                     mask[y * SIZE + x] = createMaskEntry(
                             snapshot,
-                            transparencyType,
+                            layer,
                             ambientOcclusionEnabled,
                             FACE_NEG_Z,
                             x,
@@ -356,7 +366,7 @@ public final class BinaryChunkMeshBuilder {
 
     private static int createMaskEntry(
             ChunkMeshingSnapshot snapshot,
-            BlockDefinition.TransparencyType transparencyType,
+            MeshLayer layer,
             boolean ambientOcclusionEnabled,
             int faceDirection,
             int x,
@@ -373,7 +383,7 @@ public final class BinaryChunkMeshBuilder {
         }
 
         BlockDefinition blockDefinition = snapshot.blockCatalog().getBlock(blockId);
-        if (blockDefinition == null || blockDefinition.getTransparencyType() != transparencyType) {
+        if (blockDefinition == null || !layer.accepts(blockDefinition)) {
             return -1;
         }
 
@@ -381,13 +391,13 @@ public final class BinaryChunkMeshBuilder {
             return -1;
         }
 
-        if (transparencyType == BlockDefinition.TransparencyType.OPAQUE && ambientOcclusionEnabled) {
+        if (layer == MeshLayer.OPAQUE && ambientOcclusionEnabled) {
             metrics.recordAmbientOcclusionFace();
             int aoPacked = VoxelAmbientOcclusion.computeOpaqueAoPacked(snapshot, x, y, z, faceDirection);
             return VoxelAmbientOcclusion.packOpaqueFaceData(blockDefinition.getTextureIndex(), aoPacked);
         }
 
-        return transparencyType == BlockDefinition.TransparencyType.TRANSPARENT
+        return (layer == MeshLayer.TRANSPARENT || layer == MeshLayer.WATER)
                 ? TransparentFaceData.pack(
                         snapshot,
                         blockDefinition,
@@ -488,6 +498,32 @@ public final class BinaryChunkMeshBuilder {
 
         private int faceCount() {
             return faceCount;
+        }
+
+        private void reset() {
+            faceCount = 0;
+        }
+    }
+
+    private static final class MeshScratch {
+        private final int[] mask = new int[SIZE * SIZE];
+        private final FaceBuffer buffer = new FaceBuffer(Math.max(256, SIZE * SIZE));
+    }
+
+    private enum MeshLayer {
+        OPAQUE,
+        CUTOUT,
+        TRANSPARENT,
+        WATER;
+
+        private boolean accepts(BlockDefinition definition) {
+            return switch (this) {
+                case OPAQUE -> definition.isOpaque();
+                case CUTOUT -> definition.isCutout();
+                case TRANSPARENT -> definition.isTransparent()
+                        && !Blocks.WATER.getStableId().equals(definition.getStableId());
+                case WATER -> Blocks.WATER.getStableId().equals(definition.getStableId());
+            };
         }
     }
 }

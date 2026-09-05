@@ -78,4 +78,30 @@ class NoiseWorldGeneratorTest {
         assertTrue(uniform > 0);
         assertTrue(materialized <= candidates * 0.30, "sparse streaming should remove at least 70% of candidates");
     }
+
+    @Test
+    void bulkRegionSamplingMatchesScalarSamplingAcrossChunkBoundaries() {
+        NoiseWorldGenerator generator = new NoiseWorldGenerator(GenerationConfig.defaults());
+        int originX = -33;
+        int originY = -3;
+        int originZ = 29;
+        int sizeX = 35;
+        int sizeY = 40;
+        int sizeZ = 35;
+        short[] sampled = new short[sizeX * sizeY * sizeZ];
+
+        generator.fillBlockRegion(originX, originY, originZ, sizeX, sizeY, sizeZ, sampled);
+
+        for (int y = 0; y < sizeY; y++) {
+            for (int z = 0; z < sizeZ; z++) {
+                for (int x = 0; x < sizeX; x++) {
+                    assertEquals(
+                            generator.getBlockAtWorld(originX + x, originY + y, originZ + z),
+                            sampled[x + z * sizeX + y * sizeX * sizeZ],
+                            "bulk sample mismatch at " + x + ", " + y + ", " + z
+                    );
+                }
+            }
+        }
+    }
 }

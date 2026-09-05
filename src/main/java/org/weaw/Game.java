@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.engine.graphics.Renderer;
 import org.weaw.engine.graphics.pipeline.RenderStats;
+import org.weaw.engine.graphics.pipeline.resources.GLStateManager;
 import org.weaw.engine.graphics.utils.ChunkLightCacheProfilingSnapshot;
 import org.weaw.engine.graphics.utils.Camera;
 import org.weaw.engine.input.InputAction;
@@ -38,9 +39,7 @@ import org.weaw.runtime.RuntimeProfilingSummaryCollector;
 import org.weaw.server.GameServer;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
-import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
 import static org.lwjgl.opengl.GL11.GL_LINE;
-import static org.lwjgl.opengl.GL11.glPolygonMode;
 
 public class Game {
     private static final Logger LOGGER = LoggerFactory.getLogger(Game.class);
@@ -282,8 +281,8 @@ public class Game {
         handleInputModes();
 
         if (inputManager.isActionPressed(InputAction.TOGGLE_WIREFRAME)) {
-            glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_FILL : GL_LINE);
             wireframe = !wireframe;
+            GLStateManager.setPolygonMode(wireframe ? GL_LINE : GL_FILL);
         }
 
         accumulatePlayerInputFrame();
@@ -568,11 +567,22 @@ public class Game {
                 nanosToMillis(passCpuTimeNs(renderStats, "OpaqueChunkRenderPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "CutoutChunkRenderPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "TransparentChunkRenderPass")),
+                nanosToMillis(passCpuTimeNs(renderStats, "WaterChunkRenderPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "BlockOutlinePass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "AntiAliasingPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "ToneMappingPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "HudPass")),
                 nanosToMillis(passCpuTimeNs(renderStats, "DebugImGuiPass")),
+                nanosToMillis(renderStats.getTotalPassGpuTimeNs()),
+                nanosToMillis(passGpuTimeNs(renderStats, "OpaqueChunkRenderPass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "CutoutChunkRenderPass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "TransparentChunkRenderPass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "WaterChunkRenderPass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "BlockOutlinePass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "AntiAliasingPass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "ToneMappingPass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "HudPass")),
+                nanosToMillis(passGpuTimeNs(renderStats, "DebugImGuiPass")),
                 passResidentMeshCount(renderStats, "OpaqueChunkRenderPass"),
                 passVisibleMeshCount(renderStats, "OpaqueChunkRenderPass"),
                 passDrawCalls(renderStats, "OpaqueChunkRenderPass"),
@@ -654,6 +664,10 @@ public class Game {
                 worldMemorySnapshot.effectiveRenderDistanceChunks(),
                 worldMemorySnapshot.rejectedLoadCount(),
                 worldMemorySnapshot.pressureState().name(),
+                renderer.getContext().getAdaptiveGraphicsQuality().getLevel().name(),
+                renderer.getContext().getGraphicsVendor(),
+                renderer.getContext().getGraphicsRenderer(),
+                renderer.getContext().getGraphicsVersion(),
                 worldUpdatesThisFrame.size(),
                 worldMemorySnapshot.sparseChunkStreamingEnabled(),
                 worldMemorySnapshot.desiredMaterializedChunks(),
@@ -694,6 +708,15 @@ public class Game {
         for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
             if (passName.equals(passStats.getName())) {
                 return passStats.getCpuTimeNs();
+            }
+        }
+        return 0L;
+    }
+
+    private static long passGpuTimeNs(RenderStats renderStats, String passName) {
+        for (RenderStats.PassStats passStats : renderStats.getPassStats()) {
+            if (passName.equals(passStats.getName())) {
+                return passStats.getGpuTimeNs();
             }
         }
         return 0L;

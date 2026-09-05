@@ -10,8 +10,6 @@ import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockRegistry;
 
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Objects;
 
 public class Chunk {
@@ -19,6 +17,7 @@ public class Chunk {
 
     public static final int SIZE = 32;
     public static final int TOTAL_BLOCKS = SIZE * SIZE * SIZE;
+    private static final ThreadLocal<int[]> BLOCK_COUNT_SCRATCH = ThreadLocal.withInitial(() -> new int[0]);
 
     @Getter
     private final Vector3i position;
@@ -33,7 +32,7 @@ public class Chunk {
     private short[] palette;
     private int[] paletteCounts;
     private int paletteSize;
-    private Map<Short, Integer> paletteIndexMap;
+    private int[] paletteIndexByBlockId;
     private int bitsPerBlock;
     private long[] data;
     private int[] lightEmitterBlockIndices;
@@ -66,6 +65,14 @@ public class Chunk {
         int index = getBlockIndex(x, y, z);
         int paletteIndex = readBlockData(index, data, bitsPerBlock);
         return palette[paletteIndex];
+    }
+
+    /** Trusted flat-index lookup for performance-sensitive chunk algorithms. */
+    public short getBlockByIndex(int blockIndex) {
+        if (isUniform) {
+            return uniformBlockId;
+        }
+        return palette[readBlockData(blockIndex, data, bitsPerBlock)];
     }
 
     public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
@@ -143,20 +150,30 @@ public class Chunk {
             return;
         }
 
-        Map<Short, Integer> blockCounts = new HashMap<>();
+        int[] blockCounts = acquireBlockCountScratch(blockCatalog.size());
+        int uniqueBlocks = 0;
         for (short blockId : blocks) {
-            blockCounts.merge(blockId, 1, Integer::sum);
+            int runtimeId = blockId;
+            if (runtimeId < 0 || runtimeId >= blockCounts.length) {
+                throw new IllegalArgumentException("Unknown block id: " + blockId);
+            }
+            if (blockCounts[runtimeId]++ == 0) {
+                uniqueBlocks++;
+            }
         }
 
-        int uniqueBlocks = blockCounts.size();
         initializePaletteStorage(uniqueBlocks);
 
         int paletteIndex = 0;
-        for (Map.Entry<Short, Integer> entry : blockCounts.entrySet()) {
-            short blockId = entry.getKey();
+        for (int runtimeId = 0; runtimeId < blockCounts.length; runtimeId++) {
+            int count = blockCounts[runtimeId];
+            if (count == 0) {
+                continue;
+            }
+            short blockId = (short) runtimeId;
             palette[paletteIndex] = blockId;
-            paletteCounts[paletteIndex] = entry.getValue();
-            paletteIndexMap.put(blockId, paletteIndex);
+            paletteCounts[paletteIndex] = count;
+            paletteIndexByBlockId[runtimeId] = paletteIndex;
             paletteIndex++;
         }
         paletteSize = uniqueBlocks;
@@ -164,7 +181,7 @@ public class Chunk {
         data = createPackedDataArray(bitsPerBlock);
 
         for (int i = 0; i < blocks.length; i++) {
-            int packedPaletteIndex = paletteIndexMap.get(blocks[i]);
+            int packedPaletteIndex = paletteIndexByBlockId[blocks[i]];
             writeBlockData(i, packedPaletteIndex, data, bitsPerBlock);
         }
 
@@ -207,6 +224,14 @@ public class Chunk {
     public short getPackedLight(int x, int y, int z) {
         checkBounds(x, y, z);
         return lighting.getPackedLight(x, y, z);
+    }
+
+    public short getPackedLightByIndex(int blockIndex) {
+        return lighting.getPackedLightAtIndex(blockIndex);
+    }
+
+    public int getDirectSkyLightByIndex(int blockIndex) {
+        return directSkyLight.getAtIndex(blockIndex);
     }
 
     public void setPackedLight(int x, int y, int z, short packedLight) {
@@ -288,6 +313,53 @@ public class Chunk {
         return isUniform;
     }
 
+    public boolean containsTransparencyType(BlockDefinition.TransparencyType transparencyType) {
+        Objects.requireNonNull(transparencyType, "transparencyType");
+        if (isUniform) {
+            BlockDefinition definition = blockCatalog.getBlock(uniformBlockId);
+            return definition != null && definition.getTransparencyType() == transparencyType;
+        }
+        for (int index = 0; index < paletteSize; index++) {
+            if (paletteCounts[index] <= 0) {
+                continue;
+            }
+            BlockDefinition definition = blockCatalog.getBlock(palette[index]);
+            if (definition != null && definition.getTransparencyType() == transparencyType) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean containsBlock(short blockId) {
+        if (isUniform) {
+            return uniformBlockId == blockId;
+        }
+        int runtimeId = blockId;
+        return runtimeId >= 0
+                && runtimeId < paletteIndexByBlockId.length
+                && paletteIndexByBlockId[runtimeId] >= 0;
+    }
+
+    public boolean containsTransparencyTypeExcept(
+            BlockDefinition.TransparencyType transparencyType,
+            short excludedBlockId
+    ) {
+        if (isUniform) {
+            return uniformBlockId != excludedBlockId && containsTransparencyType(transparencyType);
+        }
+        for (int index = 0; index < paletteSize; index++) {
+            if (paletteCounts[index] <= 0 || palette[index] == excludedBlockId) {
+                continue;
+            }
+            BlockDefinition definition = blockCatalog.getBlock(palette[index]);
+            if (definition != null && definition.getTransparencyType() == transparencyType) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Chunk copy() {
         return copy(true);
     }
@@ -302,9 +374,7 @@ public class Chunk {
         bytes += arrayBytes(paletteCounts == null ? 0 : paletteCounts.length, Integer.BYTES);
         bytes += arrayBytes(data == null ? 0 : data.length, Long.BYTES);
         bytes += arrayBytes(lightEmitterBlockIndices == null ? 0 : lightEmitterBlockIndices.length, Integer.BYTES);
-        if (paletteIndexMap != null) {
-            bytes += 48L + (long) paletteIndexMap.size() * 48L;
-        }
+        bytes += arrayBytes(paletteIndexByBlockId == null ? 0 : paletteIndexByBlockId.length, Integer.BYTES);
         return bytes;
     }
 
@@ -325,7 +395,7 @@ public class Chunk {
         copy.palette = Arrays.copyOf(palette, palette.length);
         copy.paletteCounts = Arrays.copyOf(paletteCounts, paletteCounts.length);
         copy.paletteSize = paletteSize;
-        copy.paletteIndexMap = new HashMap<>(paletteIndexMap);
+        copy.paletteIndexByBlockId = Arrays.copyOf(paletteIndexByBlockId, paletteIndexByBlockId.length);
         copy.bitsPerBlock = bitsPerBlock;
         copy.data = Arrays.copyOf(data, data.length);
         copy.lightEmitterBlockIndices = lightEmitterBlockIndices == null
@@ -383,7 +453,7 @@ public class Chunk {
         palette = null;
         paletteCounts = null;
         paletteSize = 0;
-        paletteIndexMap = null;
+        paletteIndexByBlockId = null;
         data = null;
         bitsPerBlock = 0;
         lightEmitterBlockIndices = null;
@@ -397,7 +467,7 @@ public class Chunk {
         initializePaletteStorage(2);
         palette[0] = uniformBlockId;
         paletteCounts[0] = TOTAL_BLOCKS;
-        paletteIndexMap.put(uniformBlockId, 0);
+        paletteIndexByBlockId[uniformBlockId] = 0;
         paletteSize = 1;
         bitsPerBlock = 1;
         data = createPackedDataArray(bitsPerBlock);
@@ -412,12 +482,17 @@ public class Chunk {
         palette = new short[paletteCapacity];
         paletteCounts = new int[paletteCapacity];
         paletteSize = 0;
-        paletteIndexMap = new HashMap<>(paletteCapacity);
+        paletteIndexByBlockId = new int[blockCatalog.size()];
+        Arrays.fill(paletteIndexByBlockId, -1);
     }
 
     private int getOrCreatePaletteIndex(short blockId) {
-        Integer existingIndex = paletteIndexMap.get(blockId);
-        if (existingIndex != null) {
+        int runtimeId = blockId;
+        if (runtimeId < 0 || runtimeId >= paletteIndexByBlockId.length) {
+            throw new IllegalArgumentException("Unknown block id: " + blockId);
+        }
+        int existingIndex = paletteIndexByBlockId[runtimeId];
+        if (existingIndex >= 0) {
             return existingIndex;
         }
 
@@ -425,7 +500,7 @@ public class Chunk {
         int newIndex = paletteSize++;
         palette[newIndex] = blockId;
         paletteCounts[newIndex] = 0;
-        paletteIndexMap.put(blockId, newIndex);
+        paletteIndexByBlockId[runtimeId] = newIndex;
 
         int requiredBits = computeBitsForPaletteSize(paletteSize);
         if (requiredBits != bitsPerBlock) {
@@ -478,7 +553,8 @@ public class Chunk {
 
         short[] compactedPalette = new short[activeEntries];
         int[] compactedCounts = new int[activeEntries];
-        Map<Short, Integer> compactedIndexMap = new HashMap<>(activeEntries);
+        int[] compactedIndexMap = new int[blockCatalog.size()];
+        Arrays.fill(compactedIndexMap, -1);
 
         int nextIndex = 0;
         for (int i = 0; i < paletteSize; i++) {
@@ -489,7 +565,7 @@ public class Chunk {
             remap[i] = nextIndex;
             compactedPalette[nextIndex] = palette[i];
             compactedCounts[nextIndex] = paletteCounts[i];
-            compactedIndexMap.put(palette[i], nextIndex);
+            compactedIndexMap[palette[i]] = nextIndex;
             nextIndex++;
         }
 
@@ -504,7 +580,7 @@ public class Chunk {
         palette = compactedPalette;
         paletteCounts = compactedCounts;
         paletteSize = activeEntries;
-        paletteIndexMap = compactedIndexMap;
+        paletteIndexByBlockId = compactedIndexMap;
         bitsPerBlock = newBits;
         data = newData;
 
@@ -626,6 +702,17 @@ public class Chunk {
     private boolean isLightEmitter(short blockId) {
         BlockDefinition blockDefinition = blockCatalog.getBlock(blockId);
         return blockDefinition != null && blockDefinition.isLightEmitter();
+    }
+
+    private static int[] acquireBlockCountScratch(int requiredLength) {
+        int[] counts = BLOCK_COUNT_SCRATCH.get();
+        if (counts.length < requiredLength) {
+            counts = new int[requiredLength];
+            BLOCK_COUNT_SCRATCH.set(counts);
+        } else {
+            Arrays.fill(counts, 0, requiredLength, 0);
+        }
+        return counts;
     }
 
 

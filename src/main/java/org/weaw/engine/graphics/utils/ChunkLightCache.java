@@ -25,24 +25,24 @@ import java.util.Set;
 
 /** Visibility-driven GPU cache for padded chunk lighting data. */
 public final class ChunkLightCache {
-    private static final int INITIAL_LIGHT_ARENA_CAPACITY_INTS =
-            Integer.getInteger("voxy.chunkLightArenaInitialCapacityInts", 32768);
     private static final int MAX_URGENT_UPLOADS_PER_FRAME = Math.max(1,
-            Integer.getInteger("voxy.chunkLightUrgentUploadsPerFrame", 64));
+            Integer.getInteger("voxy.chunkLightUrgentUploadsPerFrame", 8));
     private static final long URGENT_UPLOAD_BUDGET_NS = Math.max(100_000L,
-            Long.getLong("voxy.chunkLightUrgentUploadBudgetNs", 4_000_000L));
+            Long.getLong("voxy.chunkLightUrgentUploadBudgetNs", 600_000L));
     private static final int MAX_BACKGROUND_UPLOADS_PER_FRAME = Math.max(1,
-            Integer.getInteger("voxy.chunkLightBackgroundUploadsPerFrame", 16));
+            Integer.getInteger("voxy.chunkLightBackgroundUploadsPerFrame", 4));
     private static final long BACKGROUND_UPLOAD_BUDGET_NS = Math.max(100_000L,
-            Long.getLong("voxy.chunkLightBackgroundUploadBudgetNs", 1_500_000L));
+            Long.getLong("voxy.chunkLightBackgroundUploadBudgetNs", 300_000L));
     private static final int PADDED_DIMENSION = Chunk.SIZE + 2;
     private static final int PADDED_VOXELS = PADDED_DIMENSION * PADDED_DIMENSION * PADDED_DIMENSION;
     private static final int PACKED_LIGHT_INTS = (PADDED_VOXELS + 1) / 2;
     private static final int PACKED_DIRECT_SKY_INTS = (PADDED_VOXELS + 7) / 8;
     private static final int PACKED_CHUNK_LIGHT_INTS = PACKED_LIGHT_INTS + PACKED_DIRECT_SKY_INTS;
+    private static final int DEFAULT_INITIAL_LIGHT_ARENA_CHUNKS = 512;
 
     private final ChunkManager chunkManager;
     private final ChunkGpuMemoryBudget gpuMemoryBudget;
+    private final int initialLightArenaCapacityInts;
     private final Map<ChunkPosition, ChunkLightArena.Allocation> allocations =
             new LinkedHashMap<>(128, 0.75f, true);
     private final Set<ChunkPosition> dirtyNotVisible = new LinkedHashSet<>();
@@ -85,15 +85,27 @@ public final class ChunkLightCache {
     }
 
     public ChunkLightCache(ChunkManager chunkManager, ChunkGpuMemoryBudget gpuMemoryBudget) {
+        this(chunkManager, gpuMemoryBudget, DEFAULT_INITIAL_LIGHT_ARENA_CHUNKS);
+    }
+
+    public ChunkLightCache(
+            ChunkManager chunkManager,
+            ChunkGpuMemoryBudget gpuMemoryBudget,
+            int expectedResidentChunks
+    ) {
         this.chunkManager = chunkManager;
         this.gpuMemoryBudget = gpuMemoryBudget;
+        int configuredCapacity = Integer.getInteger("voxy.chunkLightArenaInitialCapacityInts", -1);
+        this.initialLightArenaCapacityInts = configuredCapacity > 0
+                ? configuredCapacity
+                : Math.multiplyExact(PACKED_CHUNK_LIGHT_INTS, Math.max(1, expectedResidentChunks));
     }
 
     public void create() {
         if (lightArena != null) {
             return;
         }
-        lightArena = new ChunkLightArena(INITIAL_LIGHT_ARENA_CAPACITY_INTS, gpuMemoryBudget);
+        lightArena = new ChunkLightArena(initialLightArenaCapacityInts, gpuMemoryBudget);
         stagingBuffer = MemoryUtil.memAllocInt(PACKED_CHUNK_LIGHT_INTS);
         for (int skyLevel = 0; skyLevel <= ChunkLighting.MAX_SKY_LIGHT; skyLevel++) {
             fillUniformSkyFallback(skyLevel);
@@ -828,8 +840,7 @@ public final class ChunkLightCache {
             return centerChunk.getPackedLight(clampLocalCoordinate(localX),
                     clampLocalCoordinate(localY), clampLocalCoordinate(localZ));
         }
-        return chunk.getPackedLight(remapLocalCoordinate(localX), remapLocalCoordinate(localY),
-                remapLocalCoordinate(localZ));
+        return chunk.getPackedLightByIndex(remappedBlockIndex(localX, localY, localZ));
     }
 
     private int sampleDirectSkyLight(Chunk[] neighborhood, int localX, int localY, int localZ) {
@@ -845,20 +856,27 @@ public final class ChunkLightCache {
             return centerChunk.getDirectSkyLight(clampLocalCoordinate(localX),
                     clampLocalCoordinate(localY), clampLocalCoordinate(localZ));
         }
-        return chunk.getDirectSkyLight(remapLocalCoordinate(localX), remapLocalCoordinate(localY),
-                remapLocalCoordinate(localZ));
+        return chunk.getDirectSkyLightByIndex(remappedBlockIndex(localX, localY, localZ));
     }
 
     private static boolean hasRenderableFaces(ChunkMeshData meshData) {
         return meshData.opaque().faceCount() > 0
                 || meshData.cutout().faceCount() > 0
-                || meshData.transparent().faceCount() > 0;
+                || meshData.transparent().faceCount() > 0
+                || meshData.water().faceCount() > 0;
     }
 
     private static int chunkOffset(int localCoordinate) {
         if (localCoordinate < 0) return -1;
         if (localCoordinate >= Chunk.SIZE) return 1;
         return 0;
+    }
+
+    private static int remappedBlockIndex(int localX, int localY, int localZ) {
+        int x = remapLocalCoordinate(localX);
+        int y = remapLocalCoordinate(localY);
+        int z = remapLocalCoordinate(localZ);
+        return x + z * Chunk.SIZE + y * Chunk.SIZE * Chunk.SIZE;
     }
 
     private static int remapLocalCoordinate(int localCoordinate) {
