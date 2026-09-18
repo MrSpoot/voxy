@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.lwjgl.opengl.GL30.GL_RGBA16F;
+import static org.lwjgl.opengl.GL30.GL_MAX_SAMPLES;
+import static org.lwjgl.opengl.GL11.glGetInteger;
 
 /**
  * Manages and executes a sequence of render passes.
@@ -37,6 +39,7 @@ import static org.lwjgl.opengl.GL30.GL_RGBA16F;
 public class RenderPipeline {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RenderPipeline.class);
+    private static final int REQUESTED_MSAA_SAMPLES = 4;
 
     private final RenderContext context;
     private final List<RenderPass> passes = new ArrayList<>();
@@ -177,8 +180,14 @@ public class RenderPipeline {
 
         // Main scene render target (color + depth)
         // Used by: OpaquePass (write), TransparentPass (read depth, write color), PostProcessPass (read)
-        RenderTarget sceneTarget = new RenderTarget("sceneColor", width, height, true, GL_RGBA16F);
+        int sceneSampleCount = Math.max(1, Math.min(REQUESTED_MSAA_SAMPLES, glGetInteger(GL_MAX_SAMPLES)));
+        RenderTarget sceneTarget = new RenderTarget(
+                "sceneColor", width, height, true, GL_RGBA16F, sceneSampleCount);
         context.setRenderTarget("sceneColor", sceneTarget);
+
+        RenderTarget resolvedSceneTarget = new RenderTarget(
+                "resolvedSceneColor", width, height, true, GL_RGBA16F);
+        context.setRenderTarget("resolvedSceneColor", resolvedSceneTarget);
 
         RenderTarget postProcessTarget = new RenderTarget("postProcessColor", width, height, false, GL_RGBA16F);
         context.setRenderTarget("postProcessColor", postProcessTarget);
@@ -186,6 +195,6 @@ public class RenderPipeline {
         RenderTarget antiAliasTarget = new RenderTarget("antiAliasColor", width, height, false, GL_RGBA16F);
         context.setRenderTarget("antiAliasColor", antiAliasTarget);
 
-        LOGGER.info("Created shared render targets");
+        LOGGER.info("Created shared render targets with {}x scene MSAA", sceneSampleCount);
     }
 }

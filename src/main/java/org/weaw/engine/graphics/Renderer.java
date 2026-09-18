@@ -13,6 +13,7 @@ import org.weaw.engine.graphics.pipeline.passes.FogPass;
 import org.weaw.engine.graphics.pipeline.passes.HudPass;
 import org.weaw.engine.graphics.pipeline.passes.OpaqueChunkRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.RemotePlayerRenderPass;
+import org.weaw.engine.graphics.pipeline.passes.SceneResolvePass;
 import org.weaw.engine.graphics.pipeline.passes.SkyBoxPass;
 import org.weaw.engine.graphics.pipeline.passes.ToneMappingPass;
 import org.weaw.engine.graphics.pipeline.passes.TransparentChunkRenderPass;
@@ -94,6 +95,7 @@ public class Renderer {
             pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));
         }
         pipeline.addPass(new BlockOutlinePass());
+        pipeline.addPass(new SceneResolvePass());
         //pipeline.addPass(new FogPass());
         pipeline.addPass(new AntiAliasingPass());
         pipeline.addPass(new ToneMappingPass());

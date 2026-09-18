@@ -9,6 +9,8 @@ import java.nio.IntBuffer;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL30.*;
+import static org.lwjgl.opengl.GL32.GL_TEXTURE_2D_MULTISAMPLE;
+import static org.lwjgl.opengl.GL32.glTexImage2DMultisample;
 
 /**
  * Wrapper for OpenGL framebuffer (FBO) with color and optional depth attachments.
@@ -27,6 +29,8 @@ public class RenderTarget {
     private final String name;
     private final boolean hasDepth;
     private final int colorFormat;
+    @Getter
+    private final int sampleCount;
 
     @Getter
     private int fbo;
@@ -50,15 +54,26 @@ public class RenderTarget {
      * @param colorFormat GL color format (e.g., GL_RGBA8, GL_RGB16F)
      */
     public RenderTarget(String name, int width, int height, boolean hasDepth, int colorFormat) {
+        this(name, width, height, hasDepth, colorFormat, 1);
+    }
+
+    /**
+     * Create a render target with an explicit sample count.
+     */
+    public RenderTarget(String name, int width, int height, boolean hasDepth, int colorFormat, int sampleCount) {
+        if (sampleCount < 1) {
+            throw new IllegalArgumentException("Sample count must be at least 1");
+        }
         this.name = name;
         this.width = width;
         this.height = height;
         this.hasDepth = hasDepth;
         this.colorFormat = colorFormat;
+        this.sampleCount = sampleCount;
 
         createFramebuffer();
-        LOGGER.info("RenderTarget '{}' created: {}x{}, depth={}, format=0x{}",
-                    name, width, height, hasDepth, Integer.toHexString(colorFormat));
+        LOGGER.info("RenderTarget '{}' created: {}x{}, depth={}, format=0x{}, samples={}",
+                    name, width, height, hasDepth, Integer.toHexString(colorFormat), sampleCount);
     }
 
     /**
@@ -133,14 +148,35 @@ public class RenderTarget {
     }
 
     public long estimateColorGpuBytes() {
-        return (long) width * height * estimateBytesPerPixel(colorFormat);
+        return (long) width * height * estimateBytesPerPixel(colorFormat) * sampleCount;
     }
 
     public long estimateDepthGpuBytes() {
         if (!hasDepth) {
             return 0L;
         }
-        return (long) width * height * 4L;
+        return (long) width * height * 4L * sampleCount;
+    }
+
+    /**
+     * Copy this target into a single-sample target, resolving multisampling when present.
+     */
+    public void resolveTo(RenderTarget destination, boolean includeDepth) {
+        if (destination.sampleCount != 1) {
+            throw new IllegalArgumentException("Resolve destination must be single-sampled");
+        }
+        if (width != destination.width || height != destination.height) {
+            throw new IllegalArgumentException("Resolve targets must have matching dimensions");
+        }
+        if (includeDepth && (!hasDepth || !destination.hasDepth)) {
+            throw new IllegalArgumentException("Both resolve targets must have depth attachments");
+        }
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.fbo);
+        int mask = GL_COLOR_BUFFER_BIT | (includeDepth ? GL_DEPTH_BUFFER_BIT : 0);
+        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, mask, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     // ========================================================================
@@ -154,13 +190,18 @@ public class RenderTarget {
 
         // Create color texture
         colorTexture = glGenTextures();
-        glBindTexture(GL_TEXTURE_2D, colorTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, colorFormat, width, height, 0, GL_RGBA, colorDataType(colorFormat), 0);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
+        int textureTarget = sampleCount > 1 ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D;
+        glBindTexture(textureTarget, colorTexture);
+        if (sampleCount > 1) {
+            glTexImage2DMultisample(textureTarget, sampleCount, colorFormat, width, height, true);
+        } else {
+            glTexImage2D(textureTarget, 0, colorFormat, width, height, 0, GL_RGBA, colorDataType(colorFormat), 0);
+            glTexParameteri(textureTarget, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(textureTarget, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(textureTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(textureTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, textureTarget, colorTexture, 0);
 
         // Explicitly tell OpenGL to draw to color attachment 0
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -173,13 +214,17 @@ public class RenderTarget {
         // Create depth texture if needed
         if (hasDepth) {
             depthTexture = glGenTextures();
-            glBindTexture(GL_TEXTURE_2D, depthTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTexture, 0);
+            glBindTexture(textureTarget, depthTexture);
+            if (sampleCount > 1) {
+                glTexImage2DMultisample(textureTarget, sampleCount, GL_DEPTH_COMPONENT24, width, height, true);
+            } else {
+                glTexImage2D(textureTarget, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+                glTexParameteri(textureTarget, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(textureTarget, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glTexParameteri(textureTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(textureTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            }
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, textureTarget, depthTexture, 0);
         }
 
         // Validate FBO
@@ -190,6 +235,7 @@ public class RenderTarget {
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindTexture(textureTarget, 0);
     }
 
     private static int estimateBytesPerPixel(int internalFormat) {

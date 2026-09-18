@@ -14,6 +14,7 @@ import org.weaw.engine.graphics.Renderer;
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.opengl.GL13.GL_MULTISAMPLE;
 import static org.lwjgl.opengl.GL45.GL_LOWER_LEFT;
 import static org.lwjgl.opengl.GL45.GL_ZERO_TO_ONE;
 import static org.lwjgl.opengl.GL45.glClipControl;
@@ -76,8 +77,6 @@ public class Window {
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-        glfwWindowHint(GLFW_SAMPLES, 4);
-
         //TODO Make better code for fullscreen
         if (this.width == 0 && this.height == 0) {
             glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
@@ -137,6 +136,7 @@ public class Window {
         glCullFace(GL_BACK);
 
         glEnable(GL_DEPTH_TEST);
+        glEnable(GL_MULTISAMPLE);
         glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
         glDepthFunc(GL_GREATER);
         glClearDepth(0.0);

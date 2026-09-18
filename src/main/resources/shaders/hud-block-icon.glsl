@@ -63,8 +63,9 @@ flat in float vShade;
 out vec4 fragColor;
 
 void main() {
-    vec2 atlasUv = vec2((vFaceSlot + clamp(vUv.x, 0.001, 0.999)) / 6.0, clamp(vUv.y, 0.001, 0.999));
-    vec4 texel = texture(uBlockTextures, vec3(atlasUv, vTextureLayer));
+    vec2 textureUv = clamp(vUv, vec2(0.001), vec2(0.999));
+    float textureLayer = vTextureLayer * 6.0 + vFaceSlot;
+    vec4 texel = texture(uBlockTextures, vec3(textureUv, textureLayer));
     if (texel.a <= 0.05) {
         discard;
     }

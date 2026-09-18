@@ -40,9 +40,9 @@ public class FogPass implements RenderPass {
     public void execute(RenderContext context) {
         RenderTarget sceneTarget = context.getCurrentColorTarget();
         if (sceneTarget == null) {
-            sceneTarget = context.getRenderTarget("sceneColor");
+            sceneTarget = context.getRenderTarget("resolvedSceneColor");
         }
-        RenderTarget depthTarget = context.getRenderTarget("sceneColor");
+        RenderTarget depthTarget = context.getRenderTarget("resolvedSceneColor");
         RenderTarget outputTarget = context.getRenderTarget("postProcessColor");
         if (sceneTarget == null || depthTarget == null || outputTarget == null) {
             return;

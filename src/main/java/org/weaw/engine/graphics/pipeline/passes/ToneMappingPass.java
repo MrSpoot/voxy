@@ -42,7 +42,7 @@ public class ToneMappingPass implements RenderPass {
     public void execute(RenderContext context) {
         RenderTarget sourceTarget = context.getCurrentColorTarget();
         if (sourceTarget == null) {
-            sourceTarget = context.getRenderTarget("sceneColor");
+            sourceTarget = context.getRenderTarget("resolvedSceneColor");
         }
         if (sourceTarget == null) {
             return;

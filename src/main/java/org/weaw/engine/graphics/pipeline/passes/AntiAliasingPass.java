@@ -35,7 +35,7 @@ public class AntiAliasingPass implements RenderPass {
     public void execute(RenderContext context) {
         RenderTarget sourceTarget = context.getCurrentColorTarget();
         if (sourceTarget == null) {
-            sourceTarget = context.getRenderTarget("sceneColor");
+            sourceTarget = context.getRenderTarget("resolvedSceneColor");
         }
         RenderTarget outputTarget = context.getRenderTarget("antiAliasColor");
         if (sourceTarget == null || outputTarget == null) {

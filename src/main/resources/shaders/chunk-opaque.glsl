@@ -385,10 +385,8 @@ void main() {
         correctedUv.y = 1.0 - correctedUv.y;
     }
 
-    correctedUv = fract(correctedUv);
-
-    vec2 atlasCoord = vec2((faceSlot + correctedUv.x) / 6.0, correctedUv.y);
-    vec4 texel = texture(uBlockTextures, vec3(atlasCoord, float(vTextureIndex)));
+    float textureLayer = float(vTextureIndex * 6) + faceSlot;
+    vec4 texel = texture(uBlockTextures, vec3(correctedUv, textureLayer));
     fragColor = vec4(applyHdrLighting(texel.rgb, vFace, vAo), texel.a);
 }
 //@endfs
