@@ -6,6 +6,7 @@ import org.weaw.game.utils.Blocks;
 import org.weaw.game.utils.FastNoiseLite;
 
 import java.util.Iterator;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -221,6 +222,14 @@ public final class NoiseWorldGenerator implements WorldGenerator {
 
     @Override
     public synchronized void retainChunkClassificationsAround(int centerChunkX, int centerChunkZ, int radius) {
+        retainChunkClassificationsAround(
+                java.util.List.of(new ChunkPosition(centerChunkX, 0, centerChunkZ)),
+                radius
+        );
+    }
+
+    @Override
+    public synchronized void retainChunkClassificationsAround(Collection<ChunkPosition> centers, int radius) {
         int retainedRadius = Math.max(0, radius);
         int retainedRadiusSquared = retainedRadius * retainedRadius;
         Iterator<Map.Entry<ColumnPosition, CompletableFuture<ColumnGenerationData>>> iterator =
@@ -228,9 +237,12 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         while (iterator.hasNext()) {
             Map.Entry<ColumnPosition, CompletableFuture<ColumnGenerationData>> entry = iterator.next();
             ColumnPosition position = entry.getKey();
-            int dx = position.x() - centerChunkX;
-            int dz = position.z() - centerChunkZ;
-            if (dx * dx + dz * dz > retainedRadiusSquared) {
+            boolean retained = centers.stream().anyMatch(center -> {
+                int dx = position.x() - center.x();
+                int dz = position.z() - center.z();
+                return dx * dx + dz * dz <= retainedRadiusSquared;
+            });
+            if (!retained) {
                 entry.getValue().cancel(false);
                 iterator.remove();
             }

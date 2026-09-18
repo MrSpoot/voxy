@@ -128,6 +128,21 @@ public final class ChunkLighting {
         return packed;
     }
 
+    public void replacePackedIntArray(int[] packed) {
+        if (packed.length != packedIntCount()) {
+            throw new IllegalArgumentException("Packed lighting array must contain exactly " + packedIntCount() + " values");
+        }
+        short[] unpacked = new short[Chunk.TOTAL_BLOCKS];
+        for (int index = 0; index < unpacked.length; index += LIGHTS_PER_PACKED_INT) {
+            int pair = packed[index / LIGHTS_PER_PACKED_INT];
+            unpacked[index] = (short) (pair & 0xFFFF);
+            if (index + 1 < unpacked.length) {
+                unpacked[index + 1] = (short) ((pair >>> 16) & 0xFFFF);
+            }
+        }
+        replaceWithOwnedData(unpacked);
+    }
+
     public boolean isCompact() {
         return data == null;
     }

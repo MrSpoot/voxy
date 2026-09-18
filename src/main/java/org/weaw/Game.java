@@ -37,6 +37,21 @@ import org.weaw.runtime.RuntimeFrameProfile;
 import org.weaw.runtime.RuntimeProfilingCsvWriter;
 import org.weaw.runtime.RuntimeProfilingSummaryCollector;
 import org.weaw.server.GameServer;
+import org.weaw.server.MultiplayerGameServer;
+import org.weaw.server.DedicatedServerApplication;
+import org.weaw.network.client.NetworkClientSession;
+import org.weaw.network.NetworkDebugSnapshot;
+import org.weaw.network.transport.ClientTransport;
+import org.weaw.network.transport.CompositeServerTransport;
+import org.weaw.network.transport.LocalTransportPair;
+import org.weaw.network.transport.ServerTransport;
+import org.weaw.network.transport.TcpClientTransport;
+import org.weaw.network.transport.TcpServerTransport;
+import org.weaw.runtime.NetworkMode;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
 import static org.lwjgl.opengl.GL11.GL_LINE;
@@ -73,6 +88,8 @@ public class Game {
     private GameplaySession gameplaySession;
     private CreativeInventoryState creativeInventoryState;
     private GameServer gameServer;
+    private MultiplayerGameServer multiplayerServer;
+    private NetworkClientSession networkSession;
     private BenchmarkController benchmarkController;
     private JfrProfileRecorder jfrProfileRecorder;
     private RuntimeProfilingCsvWriter runtimeProfilingCsvWriter;
@@ -115,6 +132,12 @@ public class Game {
         BlockRegistry.initialize();
         blockCatalog = BlockRegistry.getDefaultCatalog();
 
+        if (launchOptions.benchmarkEnabled()) {
+            initializeBenchmarkSession();
+        } else {
+            initializeNetworkSession();
+        }
+
         window = new Window(
                 "Voxy",
                 launchOptions.benchmarkEnabled() ? launchOptions.benchmark().windowWidth() : 1920,
@@ -124,17 +147,7 @@ public class Game {
 
         inputManager = new InputManager(window.getId());
         inputManager.create();
-
-        world = createTestWorld();
-        applyRuntimeIsolationOptions();
-        gameplaySession = new GameplaySession(world, new GameplaySettings());
         creativeInventoryState = new CreativeInventoryState(blockCatalog, gameplaySession.getHotbar());
-        gameServer = new GameServer(world, gameplaySession);
-        worldStreamingScheduler = new FixedRateUpdateScheduler(
-                WORLD_STREAMING_UPDATES_PER_SECOND,
-                MAX_WORLD_STREAMING_UPDATES_PER_FRAME
-        );
-        configureSession();
 
         renderer = new Renderer(
                 window,
@@ -142,7 +155,8 @@ public class Game {
                 inputManager,
                 blockCatalog.getRegisteredBlocks().values(),
                 launchOptions.transparentChunksEnabled(),
-                creativeInventoryState
+                creativeInventoryState,
+                networkSession == null ? null : networkSession.getRemotePlayers()
         );
         renderer.create();
         boolean voxelLightDataEnabled = launchOptions.dynamicLightingEnabled() && launchOptions.lightUploadEnabled();
@@ -158,6 +172,70 @@ public class Game {
         startRuntimeProfilingIfNeeded();
 
         lastTime = System.nanoTime() / 1_000_000_000.0; // secondes
+    }
+
+    private void initializeBenchmarkSession() {
+        world = createTestWorld();
+        applyRuntimeIsolationOptions(world);
+        gameplaySession = new GameplaySession(world, new GameplaySettings());
+        gameServer = new GameServer(world, gameplaySession);
+        worldStreamingScheduler = new FixedRateUpdateScheduler(
+                WORLD_STREAMING_UPDATES_PER_SECOND,
+                MAX_WORLD_STREAMING_UPDATES_PER_FRAME
+        );
+        configureSession();
+    }
+
+    private void initializeNetworkSession() {
+        try {
+            ClientTransport clientTransport;
+            NetworkMode mode = launchOptions.network().mode();
+            if (mode == NetworkMode.CONNECT) {
+                clientTransport = new TcpClientTransport(
+                        launchOptions.network().host(),
+                        launchOptions.network().port()
+                );
+            } else {
+                LocalTransportPair local = new LocalTransportPair();
+                List<ServerTransport> serverTransports = new ArrayList<>();
+                serverTransports.add(local.server());
+                if (mode == NetworkMode.HOST) {
+                    serverTransports.add(new TcpServerTransport(launchOptions.network().port()));
+                }
+                ServerTransport serverTransport = serverTransports.size() == 1
+                        ? serverTransports.getFirst()
+                        : new CompositeServerTransport(serverTransports);
+                World serverWorld = createTestWorld();
+                applyRuntimeIsolationOptions(serverWorld);
+                multiplayerServer = new MultiplayerGameServer(
+                        serverWorld,
+                        launchOptions.network().worldSeed(),
+                        serverTransport,
+                        launchOptions.network().maxPlayers()
+                );
+                multiplayerServer.start();
+                clientTransport = local.client();
+                if (mode == NetworkMode.HOST) {
+                    LOGGER.info("Hosting Voxy on port {}", launchOptions.network().port());
+                }
+            }
+
+            networkSession = new NetworkClientSession(
+                    clientTransport,
+                    blockCatalog,
+                    launchOptions.network().playerName(),
+                    launchOptions.network().viewDistance()
+            );
+            networkSession.connect();
+            world = networkSession.getClientWorld().world();
+            gameplaySession = networkSession.getGameplay();
+        } catch (IOException exception) {
+            if (multiplayerServer != null) {
+                multiplayerServer.close();
+                multiplayerServer = null;
+            }
+            throw new IllegalStateException("Unable to initialize multiplayer session", exception);
+        }
     }
 
     private void loop() {
@@ -235,6 +313,15 @@ public class Game {
             }
         });
         safeCleanup("Game Server", () -> {
+            if (networkSession != null) {
+                networkSession.close();
+                networkSession = null;
+                world = null;
+            }
+            if (multiplayerServer != null) {
+                multiplayerServer.close();
+                multiplayerServer = null;
+            }
             if (gameServer != null) {
                 gameServer.close();
                 gameServer = null;
@@ -256,15 +343,22 @@ public class Game {
     }
 
     public static void main(String[] args) {
-        new Game(LaunchOptions.from(args)).run();
+        LaunchOptions options = LaunchOptions.from(args);
+        if (options.network().mode() == NetworkMode.DEDICATED) {
+            DedicatedServerApplication.run(options);
+            return;
+        }
+        new Game(options).run();
     }
 
     private World createTestWorld() {
         GenerationConfig config = GenerationConfig.defaults();
-        int renderDistance = WorldSettings.DEFAULT_RENDER_DISTANCE_CHUNKS;
+        int renderDistance = launchOptions.network().viewDistance();
         if (launchOptions.benchmarkEnabled()) {
             config = config.withSeed(launchOptions.benchmark().seed());
             renderDistance = launchOptions.benchmark().renderDistanceChunks();
+        } else {
+            config = config.withSeed(launchOptions.network().worldSeed());
         }
         WorldSettings settings = new WorldSettings(
                 renderDistance,
@@ -322,15 +416,22 @@ public class Game {
         if (creativeInventoryState.isOpen() || inventoryTransition) {
             inputManager.getMouseScroll();
             clearConsumedPlayerInput();
-            simulationTicks = gameServer.update(deltaTime, PlayerInput.disabled());
+            simulationTicks = networkSession.update(deltaTime, PlayerInput.disabled());
         } else {
             accumulatePlayerInputFrame();
-            simulationTicks = gameServer.update(deltaTime, samplePlayerInput());
+            simulationTicks = networkSession.update(deltaTime, samplePlayerInput());
         }
         if (simulationTicks > 0) {
             clearConsumedPlayerInput();
         }
-        updateWorldStreaming(deltaTime);
+        if (!networkSession.isOpen()) {
+            LOGGER.error("Disconnected from server: {}", networkSession.closeReason());
+            window.close();
+        }
+        renderer.getContext().setNetworkDebugSnapshot(NetworkDebugSnapshot.from(
+                networkSession.getNetworkStats(),
+                multiplayerServer == null ? null : multiplayerServer.getNetworkStats()
+        ));
         updateRenderInteractionTarget();
     }
 
@@ -387,7 +488,7 @@ public class Game {
     private void handleHotbarKeys() {
         for (int index = 0; index < HOTBAR_ACTIONS.length; index++) {
             if (inputManager.isActionPressed(HOTBAR_ACTIONS[index])) {
-                gameplaySession.getHotbar().select(index);
+                networkSession.selectHotbarSlot(index);
                 return;
             }
         }
@@ -415,7 +516,10 @@ public class Game {
     }
 
     private void render(float deltaTime) {
-        syncCameraToPlayer(gameServer.getInterpolationAlpha());
+        float interpolationAlpha = launchOptions.benchmarkEnabled()
+                ? gameServer.getInterpolationAlpha()
+                : networkSession.interpolationAlpha();
+        syncCameraToPlayer(interpolationAlpha);
         camera.setAspectRatio(window.aspectRatio());
         renderer.getContext().setFrameDeltaSeconds(Math.max(0.0f, deltaTime));
         renderer.render(camera);
@@ -544,10 +648,10 @@ public class Game {
         );
     }
 
-    private void applyRuntimeIsolationOptions() {
-        world.setDynamicLightingEnabled(launchOptions.dynamicLightingEnabled());
-        world.setRemeshEnabled(launchOptions.remeshEnabled());
-        world.setUnloadsEnabled(launchOptions.unloadsEnabled());
+    private void applyRuntimeIsolationOptions(World targetWorld) {
+        targetWorld.setDynamicLightingEnabled(launchOptions.dynamicLightingEnabled());
+        targetWorld.setRemeshEnabled(launchOptions.remeshEnabled());
+        targetWorld.setUnloadsEnabled(launchOptions.unloadsEnabled());
         ChunkMesher.setAmbientOcclusionEnabled(launchOptions.ambientOcclusionEnabled());
         ChunkMesher.setTransparentChunksEnabled(launchOptions.transparentChunksEnabled());
 

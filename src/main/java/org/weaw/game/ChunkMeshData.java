@@ -8,6 +8,10 @@ public record ChunkMeshData(
 ) {
     private static final LayerMeshData EMPTY_LAYER = new LayerMeshData(new int[0], 0);
 
+    public static ChunkMeshData empty() {
+        return new ChunkMeshData(EMPTY_LAYER, EMPTY_LAYER, EMPTY_LAYER, EMPTY_LAYER);
+    }
+
     public ChunkMeshData(LayerMeshData opaque, LayerMeshData cutout, LayerMeshData transparent) {
         this(opaque, cutout, transparent, EMPTY_LAYER);
     }

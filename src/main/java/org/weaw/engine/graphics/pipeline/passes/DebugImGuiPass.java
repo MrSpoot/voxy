@@ -296,6 +296,41 @@ public class DebugImGuiPass implements RenderPass {
         ImGui.text(window.isCursorLocked()
                 ? "Mouse: locked (" + inputManager.getBindingLabel(InputAction.TOGGLE_MOUSE_LOCK) + " to unlock UI)"
                 : "Mouse: unlocked (" + inputManager.getBindingLabel(InputAction.TOGGLE_MOUSE_LOCK) + " to relock)");
+        if (context.getNetworkDebugSnapshot() != null) {
+            var network = context.getNetworkDebugSnapshot();
+            ImGui.separator();
+            ImGui.text(String.format(
+                    "Network: in=%d | predicted=%d | meshes=%d | remotes=%d",
+                    network.inboundBacklog(),
+                    network.pendingPredictions(),
+                    network.pendingMeshes(),
+                    network.remotePlayers()
+            ));
+            ImGui.text(String.format(
+                    "Correction: %.3f blocks | reconciliations=%d",
+                    network.lastCorrectionDistance(),
+                    network.reconciliations()
+            ));
+            ImGui.text(String.format(
+                    "World packets: chunks=%d | lights=%d",
+                    network.receivedChunks(),
+                    network.receivedLights()
+            ));
+            if (network.connectedPlayers() > 0) {
+                ImGui.text(String.format(
+                        "Host: players=%d | out=%d | blocks=%d | lights=%d",
+                        network.connectedPlayers(),
+                        network.maxOutboundBacklog(),
+                        network.pendingBlockUpdates(),
+                        network.pendingLightUpdates()
+                ));
+                ImGui.text(String.format(
+                        "Throttled: world=%d | snapshots=%d",
+                        network.deferredWorldMessages(),
+                        network.skippedSnapshots()
+                ));
+            }
+        }
         ImGui.end();
     }
 

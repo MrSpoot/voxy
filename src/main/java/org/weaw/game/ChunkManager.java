@@ -249,6 +249,22 @@ public class ChunkManager {
         refreshResidentEstimate(new ChunkPosition(chunkX, chunkY, chunkZ));
     }
 
+    public synchronized boolean replaceChunkLighting(
+            ChunkPosition position,
+            int[] packedLight,
+            byte[] packedDirectSkyLight
+    ) {
+        Chunk chunk = chunks.get(position);
+        if (chunk == null) {
+            return false;
+        }
+        chunk.getLighting().replacePackedIntArray(packedLight);
+        chunk.replacePackedDirectSkyLight(packedDirectSkyLight);
+        refreshResidentEstimate(position);
+        recordChunkLightDelta(ChunkUploadChangeType.UPDATED, position, LIGHT_BOUNDARY_ALL, true);
+        return true;
+    }
+
     public synchronized boolean tryMarkChunkQueued(ChunkPosition position) {
         if (chunks.containsKey(position) || queuedChunks.contains(position)) {
             return false;

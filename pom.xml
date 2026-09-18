@@ -242,6 +242,70 @@
                 <version>${maven.shade.plugin.version}</version>
                 <executions>
                     <execution>
+                        <id>shade-dedicated-server</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>server</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>org.lwjgl:*</exclude>
+                                    <exclude>io.github.spair:*</exclude>
+                                </excludes>
+                            </artifactSet>
+                            <filters>
+                                <filter>
+                                    <artifact>weaw:voxy</artifact>
+                                    <excludes>
+                                        <exclude>org/weaw/Game*.class</exclude>
+                                        <exclude>org/weaw/engine/**</exclude>
+                                        <exclude>org/weaw/gameplay/CreativeInventoryState*.class</exclude>
+                                        <exclude>org/weaw/network/client/**</exclude>
+                                        <exclude>org/weaw/network/NetworkDebugSnapshot*.class</exclude>
+                                        <exclude>org/weaw/network/transport/ClientTransport*.class</exclude>
+                                        <exclude>org/weaw/network/transport/TcpClientTransport*.class</exclude>
+                                        <exclude>org/weaw/network/transport/LocalTransportPair*.class</exclude>
+                                        <exclude>org/weaw/network/transport/CompositeServerTransport*.class</exclude>
+                                        <exclude>org/weaw/runtime/BenchmarkController*.class</exclude>
+                                        <exclude>org/weaw/runtime/BenchmarkPhase*.class</exclude>
+                                        <exclude>org/weaw/runtime/FixedRateUpdateScheduler*.class</exclude>
+                                        <exclude>org/weaw/runtime/FrameEventAccumulator*.class</exclude>
+                                        <exclude>org/weaw/runtime/JfrProfileRecorder*.class</exclude>
+                                        <exclude>org/weaw/runtime/RuntimeFrameProfile*.class</exclude>
+                                        <exclude>org/weaw/runtime/RuntimeProfilingCsvWriter*.class</exclude>
+                                        <exclude>org/weaw/runtime/RuntimeProfilingSummaryCollector*.class</exclude>
+                                        <exclude>textures/**</exclude>
+                                        <exclude>shaders/**</exclude>
+                                    </excludes>
+                                </filter>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>org.weaw.server.DedicatedServerApplication</mainClass>
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>shade-game-client</id>
                         <phase>package</phase>
                         <goals>
                             <goal>shade</goal>

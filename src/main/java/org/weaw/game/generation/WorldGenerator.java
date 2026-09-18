@@ -4,6 +4,8 @@ import org.weaw.game.Chunk;
 import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.WorldBlockProvider;
 
+import java.util.Collection;
+
 public interface WorldGenerator extends WorldBlockProvider {
     void generateChunkData(Chunk chunk);
 
@@ -26,6 +28,12 @@ public interface WorldGenerator extends WorldBlockProvider {
     }
 
     default void retainChunkClassificationsAround(int centerChunkX, int centerChunkZ, int radius) {
+    }
+
+    default void retainChunkClassificationsAround(Collection<ChunkPosition> centers, int radius) {
+        for (ChunkPosition center : centers) {
+            retainChunkClassificationsAround(center.x(), center.z(), radius);
+        }
     }
 
     default ChunkClassificationCacheStats getChunkClassificationCacheStats() {

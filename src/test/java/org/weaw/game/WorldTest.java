@@ -102,6 +102,20 @@ class WorldTest {
     }
 
     @Test
+    void sessionEditSurvivesChunkUnloadAndRegeneration() {
+        ChunkManager.ChunkPosition position = new ChunkManager.ChunkPosition(0, 0, 0);
+        try (World world = new World(new FlatGenerator(Blocks.AIR.getId()), new WorldSettings(2))) {
+            assertTrue(world.trySetBlockAtWorld(3, 4, 5, Blocks.STONE));
+            world.getChunkManager().unloadChunk(position);
+
+            assertTrue(world.trySetBlockAtWorld(6, 4, 5, Blocks.SAND));
+
+            assertEquals(Blocks.STONE.getId(), world.getBlockAtWorld(3, 4, 5));
+            assertEquals(Blocks.SAND.getId(), world.getBlockAtWorld(6, 4, 5));
+        }
+    }
+
+    @Test
     void interactionLightingRunsBeforeOlderGenerationLighting() {
         try (World world = new World(
                 new FlatGenerator(Blocks.AIR.getId()),

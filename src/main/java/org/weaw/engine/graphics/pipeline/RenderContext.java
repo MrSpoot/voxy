@@ -13,6 +13,8 @@ import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.World;
 import org.weaw.game.WorldSettings;
 import org.weaw.gameplay.CreativeInventoryState;
+import org.weaw.network.client.RemotePlayerStore;
+import org.weaw.network.NetworkDebugSnapshot;
 
 import java.util.HashSet;
 import java.util.HashMap;
@@ -77,6 +79,8 @@ public class RenderContext {
     private int blockOutlinePlacementY;
     private int blockOutlinePlacementZ;
     private CreativeInventoryState creativeInventoryState;
+    private RemotePlayerStore remotePlayerStore;
+    private NetworkDebugSnapshot networkDebugSnapshot;
     private boolean lightDebugVisualizationEnabled;
     private boolean voxelLightDataEnabled = true;
     private World world;

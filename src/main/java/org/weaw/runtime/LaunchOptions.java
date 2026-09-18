@@ -11,6 +11,7 @@ import java.util.Map;
 
 public record LaunchOptions(
         BenchmarkOptions benchmark,
+        NetworkOptions network,
         boolean jfrEnabled,
         Path jfrOutputPath,
         boolean runtimeStatsEnabled,
@@ -30,6 +31,7 @@ public record LaunchOptions(
 
     public static LaunchOptions from(String[] args) {
         Map<String, String> cliOptions = parseCliOptions(args);
+        NetworkOptions network = parseNetworkOptions(cliOptions);
         boolean benchmarkEnabled = hasFlag(cliOptions, "benchmark")
                 || Boolean.getBoolean("voxy.benchmark");
 
@@ -86,6 +88,7 @@ public record LaunchOptions(
 
         return new LaunchOptions(
                 benchmark,
+                network,
                 jfrEnabled,
                 Paths.get(readString(cliOptions, "jfr-output", "voxy.jfr.output", "target/profile.jfr")),
                 benchmarkEnabled
@@ -124,6 +127,72 @@ public record LaunchOptions(
 
     public boolean benchmarkEnabled() {
         return benchmark.enabled();
+    }
+
+    private static NetworkOptions parseNetworkOptions(Map<String, String> options) {
+        boolean hostMode = hasFlag(options, "host");
+        boolean dedicatedMode = hasFlag(options, "dedicated");
+        String connectValue = options.get("connect");
+        boolean connectMode = connectValue != null && !connectValue.isBlank() && !"false".equalsIgnoreCase(connectValue);
+        int selectedModes = (hostMode ? 1 : 0) + (dedicatedMode ? 1 : 0) + (connectMode ? 1 : 0);
+        if (selectedModes > 1) {
+            throw new IllegalArgumentException("Choose only one of --host, --connect or --dedicated");
+        }
+
+        int defaultPort = org.weaw.network.protocol.Protocol.DEFAULT_PORT;
+        int port = parseInt(options, "port", "voxy.network.port", defaultPort);
+        String host = "127.0.0.1";
+        if (connectMode) {
+            String value = connectValue.trim();
+            int separator = value.lastIndexOf(':');
+            if (separator > 0 && separator < value.length() - 1 && value.indexOf(':') == separator) {
+                host = value.substring(0, separator);
+                try {
+                    port = Integer.parseInt(value.substring(separator + 1));
+                } catch (NumberFormatException exception) {
+                    throw new IllegalArgumentException("Invalid --connect port: " + value, exception);
+                }
+            } else {
+                host = value;
+            }
+        }
+        if (port < 1 || port > 65535) {
+            throw new IllegalArgumentException("Network port must be in range [1, 65535]");
+        }
+
+        NetworkMode mode = dedicatedMode ? NetworkMode.DEDICATED
+                : hostMode ? NetworkMode.HOST
+                : connectMode ? NetworkMode.CONNECT
+                : NetworkMode.SOLO;
+        String defaultName = System.getProperty("user.name", "Player")
+                .replaceAll("[^A-Za-z0-9_-]", "_");
+        if (defaultName.isBlank()) {
+            defaultName = "Player";
+        }
+        if (defaultName.length() > 24) {
+            defaultName = defaultName.substring(0, 24);
+        }
+        String playerName = readString(options, "name", "voxy.player.name", defaultName);
+        int maxPlayers = parsePositiveInt(
+                options,
+                "max-players",
+                "voxy.network.maxPlayers",
+                org.weaw.network.protocol.Protocol.DEFAULT_MAX_PLAYERS
+        );
+        maxPlayers = Math.min(maxPlayers, org.weaw.network.protocol.Protocol.MAX_PLAYERS);
+        long worldSeed = parseLong(
+                options,
+                "seed",
+                "voxy.world.seed",
+                org.weaw.game.generation.GenerationConfig.defaults().seed()
+        );
+        int viewDistance = parseInt(
+                options,
+                "view-distance",
+                "voxy.network.viewDistance",
+                org.weaw.network.protocol.Protocol.DEFAULT_VIEW_DISTANCE
+        );
+        return new NetworkOptions(mode, host, port, playerName, maxPlayers, worldSeed, viewDistance);
     }
 
     private static Map<String, String> parseCliOptions(String[] args) {

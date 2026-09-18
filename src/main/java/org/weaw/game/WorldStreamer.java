@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.Collection;
 
 public class WorldStreamer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(WorldStreamer.class);
@@ -63,6 +64,7 @@ public class WorldStreamer implements AutoCloseable {
     private final Set<ChunkPosition> dirtyChunkPositions = new LinkedHashSet<>();
     private final Set<ChunkPosition> desiredChunkPositions = new HashSet<>();
     private volatile boolean remeshEnabled = !Boolean.getBoolean("voxy.disableRemesh");
+    private volatile boolean meshGenerationEnabled = true;
     private volatile boolean unloadsEnabled = !Boolean.getBoolean("voxy.disableUnloads");
     private final AtomicLong asyncChunkGenerationCpuTimeNs = new AtomicLong();
     private final AtomicLong asyncChunkMeshCpuTimeNs = new AtomicLong();
@@ -82,10 +84,10 @@ public class WorldStreamer implements AutoCloseable {
     private int memoryLimitedRenderRadius = WorldSettings.MAX_RENDER_DISTANCE_CHUNKS;
     private int activeHorizontalUnloadRadius = -1;
     private List<ChunkOffset> sortedDesiredOffsets = List.of();
-    private ChunkPosition cachedPlayerChunk;
+    private Set<ChunkPosition> cachedPlayerChunks = Set.of();
     private List<ChunkPosition> cachedDesiredPositions = List.of();
     private List<ChunkPosition> pendingUnloadPositions = List.of();
-    private ChunkPosition pendingUnloadPlayerChunk;
+    private Set<ChunkPosition> pendingUnloadPlayerChunks = Set.of();
     private int desiredSubmissionCursor;
     private int unloadCursor;
     private long nextBuildToken = 1L;
@@ -297,9 +299,15 @@ public class WorldStreamer implements AutoCloseable {
     }
 
     public void update(Vector3f playerPosition) {
+        update(List.of(playerPosition));
+    }
+
+    public void update(Collection<Vector3f> playerPositions) {
         long deadlineNs = System.nanoTime() + maxUpdateBudgetNs;
         FrameProfilingAccumulator frameProfiling = new FrameProfilingAccumulator();
-        ChunkPosition playerChunk = toChunkPosition(playerPosition);
+        Set<ChunkPosition> playerChunks = playerPositions.stream()
+                .map(this::toChunkPosition)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         int requestedRenderRadius = settings.getRenderDistanceChunks();
         if (requestedRenderRadius != requestedHorizontalRenderRadius) {
             requestedHorizontalRenderRadius = requestedRenderRadius;
@@ -320,22 +328,18 @@ public class WorldStreamer implements AutoCloseable {
             sortedDesiredOffsets = createSortedDesiredOffsets(activeHorizontalRenderRadius);
         }
 
-        if (renderRadiusChanged || !playerChunk.equals(cachedPlayerChunk)) {
+        if (renderRadiusChanged || !playerChunks.equals(cachedPlayerChunks)) {
             if (sparseChunkStreamingEnabled) {
-                worldGenerator.retainChunkClassificationsAround(
-                        playerChunk.x(),
-                        playerChunk.z(),
-                        activeHorizontalUnloadRadius
-                );
+                worldGenerator.retainChunkClassificationsAround(playerChunks, activeHorizontalUnloadRadius);
             }
-            cachedDesiredPositions = translateDesiredOffsets(playerChunk);
+            cachedDesiredPositions = translateDesiredOffsets(playerChunks);
             synchronized (taskLock) {
                 desiredChunkPositions.clear();
                 desiredChunkPositions.addAll(cachedDesiredPositions);
             }
-            cachedPlayerChunk = playerChunk;
+            cachedPlayerChunks = Set.copyOf(playerChunks);
             desiredSubmissionCursor = 0;
-            pendingUnloadPlayerChunk = playerChunk;
+            pendingUnloadPlayerChunks = Set.copyOf(playerChunks);
             pendingUnloadPositions = chunkManager.snapshotLoadedChunkPositions();
             unloadCursor = 0;
             cancelObsoleteLoadTasks();
@@ -465,6 +469,13 @@ public class WorldStreamer implements AutoCloseable {
         }
     }
 
+    public void setMeshGenerationEnabled(boolean meshGenerationEnabled) {
+        this.meshGenerationEnabled = meshGenerationEnabled;
+        if (!meshGenerationEnabled) {
+            setRemeshEnabled(false);
+        }
+    }
+
     public void setUnloadsEnabled(boolean unloadsEnabled) {
         this.unloadsEnabled = unloadsEnabled;
     }
@@ -509,7 +520,7 @@ public class WorldStreamer implements AutoCloseable {
             frameProfiling.chunkUnloadCpuTimeNs += System.nanoTime() - startNs;
             return;
         }
-        if (pendingUnloadPositions.isEmpty() || pendingUnloadPlayerChunk == null) {
+        if (pendingUnloadPositions.isEmpty()) {
             frameProfiling.chunkUnloadCpuTimeNs += System.nanoTime() - startNs;
             return;
         }
@@ -520,10 +531,17 @@ public class WorldStreamer implements AutoCloseable {
 
         while (unloadCursor < pendingUnloadPositions.size()) {
             ChunkPosition position = pendingUnloadPositions.get(unloadCursor++);
-            int dx = position.x() - pendingUnloadPlayerChunk.x();
-            int dz = position.z() - pendingUnloadPlayerChunk.z();
+            boolean withinAnyPlayer = false;
+            for (ChunkPosition playerChunk : pendingUnloadPlayerChunks) {
+                int dx = position.x() - playerChunk.x();
+                int dz = position.z() - playerChunk.z();
+                if (dx * dx + dz * dz <= unloadRadiusSquared) {
+                    withinAnyPlayer = true;
+                    break;
+                }
+            }
 
-            boolean outsideCylinder = (dx * dx + dz * dz) > unloadRadiusSquared
+            boolean outsideCylinder = !withinAnyPlayer
                     || position.y() < minUnloadY
                     || position.y() > maxUnloadY;
 
@@ -542,7 +560,7 @@ public class WorldStreamer implements AutoCloseable {
 
         if (unloadCursor >= pendingUnloadPositions.size()) {
             pendingUnloadPositions = List.of();
-            pendingUnloadPlayerChunk = null;
+            pendingUnloadPlayerChunks = Set.of();
             unloadCursor = 0;
         }
         frameProfiling.chunkUnloadCpuTimeNs += System.nanoTime() - startNs;
@@ -720,27 +738,31 @@ public class WorldStreamer implements AutoCloseable {
                 throwIfTaskCancelled(task);
             }
 
-            long meshStartNs = System.nanoTime();
-            ChunkMeshingResult meshingResult;
-            try {
-                meshingResult = ChunkMesher.buildMeshDataProfiled(
-                        chunk,
-                        blockProvider,
-                        task::isCancellationRequested
-                );
-            } finally {
-                asyncChunkMeshCpuTimeNs.addAndGet(System.nanoTime() - meshStartNs);
-            }
-            ChunkMeshingMetrics meshingMetrics = meshingResult.metrics();
-            asyncMeshingSnapshotCpuTimeNs.addAndGet(meshingMetrics.snapshotCpuTimeNs());
-            asyncMeshingFaceClassificationCpuTimeNs.addAndGet(meshingMetrics.faceClassificationCpuTimeNs());
-            asyncMeshingGreedyMergeCpuTimeNs.addAndGet(meshingMetrics.greedyMergeCpuTimeNs());
-            asyncMeshingOutputBuildCpuTimeNs.addAndGet(meshingMetrics.outputBuildCpuTimeNs());
-            asyncMeshingAmbientOcclusionFaces.addAndGet(meshingMetrics.ambientOcclusionFaceCount());
-            asyncMeshingSampledBlocks.addAndGet(meshingMetrics.sampledBlockCount());
-            asyncChunksMeshed.incrementAndGet();
-            if (task.type().isRemesh()) {
-                asyncChunksRemeshed.incrementAndGet();
+            ChunkMeshData meshData = ChunkMeshData.empty();
+            if (meshGenerationEnabled) {
+                long meshStartNs = System.nanoTime();
+                ChunkMeshingResult meshingResult;
+                try {
+                    meshingResult = ChunkMesher.buildMeshDataProfiled(
+                            chunk,
+                            blockProvider,
+                            task::isCancellationRequested
+                    );
+                } finally {
+                    asyncChunkMeshCpuTimeNs.addAndGet(System.nanoTime() - meshStartNs);
+                }
+                ChunkMeshingMetrics meshingMetrics = meshingResult.metrics();
+                asyncMeshingSnapshotCpuTimeNs.addAndGet(meshingMetrics.snapshotCpuTimeNs());
+                asyncMeshingFaceClassificationCpuTimeNs.addAndGet(meshingMetrics.faceClassificationCpuTimeNs());
+                asyncMeshingGreedyMergeCpuTimeNs.addAndGet(meshingMetrics.greedyMergeCpuTimeNs());
+                asyncMeshingOutputBuildCpuTimeNs.addAndGet(meshingMetrics.outputBuildCpuTimeNs());
+                asyncMeshingAmbientOcclusionFaces.addAndGet(meshingMetrics.ambientOcclusionFaceCount());
+                asyncMeshingSampledBlocks.addAndGet(meshingMetrics.sampledBlockCount());
+                asyncChunksMeshed.incrementAndGet();
+                if (task.type().isRemesh()) {
+                    asyncChunksRemeshed.incrementAndGet();
+                }
+                meshData = meshingResult.meshData();
             }
             throwIfTaskCancelled(task);
             CompletedChunk completedChunk = new CompletedChunk(
@@ -748,7 +770,7 @@ public class WorldStreamer implements AutoCloseable {
                     task.token(),
                     task.type(),
                     chunk,
-                    meshingResult.meshData()
+                    meshData
             );
             if (task.type() == ChunkTaskType.INTERACTION_REMESH) {
                 completedInteractionChunks.offer(completedChunk);
@@ -877,26 +899,39 @@ public class WorldStreamer implements AutoCloseable {
         return List.copyOf(offsets);
     }
 
-    private List<ChunkPosition> translateDesiredOffsets(ChunkPosition playerChunk) {
-        List<ChunkPosition> positions = new ArrayList<>(sortedDesiredOffsets.size());
+    private List<ChunkPosition> translateDesiredOffsets(Set<ChunkPosition> playerChunks) {
+        if (playerChunks.isEmpty()) {
+            desiredMaterializedChunkCount = 0;
+            virtualEmptyChunkCount = 0;
+            virtualUniformChunkCount = 0;
+            interactionBubbleChunkCount = 0;
+            return List.of();
+        }
+        Set<ChunkPosition> candidates = new HashSet<>(sortedDesiredOffsets.size() * playerChunks.size());
+        for (ChunkPosition playerChunk : playerChunks) {
+            for (ChunkOffset offset : sortedDesiredOffsets) {
+                candidates.add(new ChunkPosition(
+                        playerChunk.x() + offset.x(),
+                        offset.y(),
+                        playerChunk.z() + offset.z()
+                ));
+            }
+        }
+        List<ChunkPosition> positions = new ArrayList<>(candidates.size());
         int materializedCount = 0;
         int emptyCount = 0;
         int uniformCount = 0;
         int bubbleCount = 0;
 
-        for (ChunkOffset offset : sortedDesiredOffsets) {
-            ChunkPosition position = new ChunkPosition(
-                    playerChunk.x() + offset.x(),
-                    offset.y(),
-                    playerChunk.z() + offset.z()
-            );
+        for (ChunkPosition position : candidates) {
             if (!sparseChunkStreamingEnabled) {
                 positions.add(position);
                 materializedCount++;
                 continue;
             }
 
-            boolean interactionBubble = isInInteractionBubble(position, playerChunk);
+            boolean interactionBubble = playerChunks.stream()
+                    .anyMatch(playerChunk -> isInInteractionBubble(position, playerChunk));
             ChunkGenerationHint hint = worldGenerator.classifyChunk(position);
             if (interactionBubble || hint.requiresMaterialization()) {
                 positions.add(position);
@@ -912,9 +947,14 @@ public class WorldStreamer implements AutoCloseable {
         }
 
         positions.sort(
-                Comparator.comparingInt((ChunkPosition position) -> isInInteractionBubble(position, playerChunk) ? 0 : 1)
-                        .thenComparingInt(position -> horizontalDistanceFromPlayer(position, playerChunk))
-                        .thenComparingInt(position -> Math.abs(position.y() - playerChunk.y()))
+                Comparator.comparingInt((ChunkPosition position) -> playerChunks.stream()
+                                .anyMatch(playerChunk -> isInInteractionBubble(position, playerChunk)) ? 0 : 1)
+                        .thenComparingInt(position -> playerChunks.stream()
+                                .mapToInt(playerChunk -> horizontalDistanceFromPlayer(position, playerChunk))
+                                .min().orElse(Integer.MAX_VALUE))
+                        .thenComparingInt(position -> playerChunks.stream()
+                                .mapToInt(playerChunk -> Math.abs(position.y() - playerChunk.y()))
+                                .min().orElse(Integer.MAX_VALUE))
         );
         desiredMaterializedChunkCount = materializedCount;
         virtualEmptyChunkCount = emptyCount;

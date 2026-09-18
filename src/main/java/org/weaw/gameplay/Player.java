@@ -1,6 +1,7 @@
 package org.weaw.gameplay;
 
 import org.joml.Vector3f;
+import org.weaw.network.protocol.NetworkPlayerState;
 
 public class Player {
     private final Vector3f position = new Vector3f();
@@ -32,6 +33,26 @@ public class Player {
     public void setPose(Vector3f position, float yaw, float pitch) {
         setPosition(position);
         setRotation(yaw, pitch);
+    }
+
+    public NetworkPlayerState snapshot(long playerId, String name) {
+        return new NetworkPlayerState(
+                playerId,
+                name,
+                position,
+                yaw,
+                pitch,
+                verticalVelocity,
+                grounded,
+                noclip
+        );
+    }
+
+    public void apply(NetworkPlayerState state) {
+        setPose(state.position(), state.yaw(), state.pitch());
+        verticalVelocity = state.verticalVelocity();
+        grounded = state.grounded();
+        noclip = state.noclip();
     }
 
     public void beginSimulationTick() {

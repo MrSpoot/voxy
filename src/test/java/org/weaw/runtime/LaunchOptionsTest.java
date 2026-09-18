@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class LaunchOptionsTest {
     private static final long MIB = 1024L * 1024L;
@@ -52,5 +53,30 @@ class LaunchOptionsTest {
         assertEquals(45, options.benchmark().loadingTimeoutSeconds());
         assertEquals(20, options.benchmark().durationSeconds());
         assertEquals(7, options.benchmark().settleSeconds());
+    }
+
+    @Test
+    void parsesHostAndDirectConnectionModes() {
+        LaunchOptions host = LaunchOptions.from(new String[]{
+                "--host", "--port=25570", "--name=Alice", "--view-distance=16"
+        });
+        LaunchOptions client = LaunchOptions.from(new String[]{"--connect=192.168.1.20:25571", "--name=Bob"});
+
+        assertEquals(NetworkMode.HOST, host.network().mode());
+        assertEquals(25570, host.network().port());
+        assertEquals("Alice", host.network().playerName());
+        assertEquals(16, host.network().viewDistance());
+        assertEquals(NetworkMode.CONNECT, client.network().mode());
+        assertEquals("192.168.1.20", client.network().host());
+        assertEquals(25571, client.network().port());
+        assertEquals(12, client.network().viewDistance());
+    }
+
+    @Test
+    void rejectsConflictingNetworkModes() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> LaunchOptions.from(new String[]{"--host", "--connect=localhost"})
+        );
     }
 }

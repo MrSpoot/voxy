@@ -10,17 +10,26 @@ import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockRegistry;
 
 import java.util.Objects;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Collection;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 
 public class World implements AutoCloseable, WorldBlockProvider {
     private final ChunkManager chunkManager;
     private final BlockCatalog blockCatalog;
     private final WorldStreamer worldStreamer;
     private final WorldGenerator worldGenerator;
+    private final WorldGenerator baseWorldGenerator;
+    private final Map<ChunkPosition, Map<Integer, Short>> sessionEdits = new ConcurrentHashMap<>();
     private final WorldSettings settings;
     private final WorldLightingSystem lightingSystem;
     private volatile boolean dynamicLightingEnabled = !Boolean.getBoolean("voxy.disableDynamicLighting");
     private long synchronizedLightingUploadsVersion;
     private volatile WorldProfilingSnapshot lastProfilingSnapshot = WorldProfilingSnapshot.empty();
+    private final ConcurrentLinkedQueue<WorldBlockChange> blockChanges = new ConcurrentLinkedQueue<>();
 
     public World() {
         this(new NoiseWorldGenerator(GenerationConfig.defaults()));
@@ -37,9 +46,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
     public World(WorldGenerator worldGenerator, WorldSettings settings, BlockCatalog blockCatalog) {
         this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
         this.chunkManager = new ChunkManager(blockCatalog);
-        this.worldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
+        this.baseWorldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
+        this.worldGenerator = new SessionWorldGenerator(baseWorldGenerator);
         this.settings = Objects.requireNonNull(settings, "settings");
-        this.worldStreamer = new WorldStreamer(chunkManager, this, worldGenerator, settings);
+        this.worldStreamer = new WorldStreamer(chunkManager, this, this.worldGenerator, settings);
         this.lightingSystem = new WorldLightingSystem(
                 blockCatalog,
                 this,
@@ -61,10 +71,14 @@ public class World implements AutoCloseable, WorldBlockProvider {
     }
 
     public void update(Vector3f playerPosition) {
+        update(List.of(playerPosition));
+    }
+
+    public void update(Collection<Vector3f> playerPositions) {
         long worldUpdateStartNs = System.nanoTime();
 
         long worldStreamerStartNs = System.nanoTime();
-        worldStreamer.update(playerPosition);
+        worldStreamer.update(playerPositions);
         long worldStreamerCpuTimeNs = System.nanoTime() - worldStreamerStartNs;
 
         LightingCollectionProfilingSnapshot lightingCollectionSnapshot = LightingCollectionProfilingSnapshot.empty();
@@ -156,6 +170,10 @@ public class World implements AutoCloseable, WorldBlockProvider {
         worldStreamer.setRemeshEnabled(remeshEnabled);
     }
 
+    public void setMeshGenerationEnabled(boolean meshGenerationEnabled) {
+        worldStreamer.setMeshGenerationEnabled(meshGenerationEnabled);
+    }
+
     public void setUnloadsEnabled(boolean unloadsEnabled) {
         worldStreamer.setUnloadsEnabled(unloadsEnabled);
     }
@@ -214,6 +232,8 @@ public class World implements AutoCloseable, WorldBlockProvider {
             lightingSystem.ensureInitialized(editedChunk);
         }
         chunkManager.setBlockAtWorld(worldX, worldY, worldZ, block);
+        rememberSessionEdit(worldX, worldY, worldZ, block.getId());
+        blockChanges.offer(new WorldBlockChange(worldX, worldY, worldZ, block.getId()));
         if (dynamicLightingEnabled) {
             lightingSystem.enqueueBlockChange(worldX, worldY, worldZ);
         }
@@ -239,6 +259,15 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
         setBlockAtWorld(worldX, worldY, worldZ, block);
         return true;
+    }
+
+    public List<WorldBlockChange> drainBlockChanges() {
+        List<WorldBlockChange> changes = new ArrayList<>();
+        WorldBlockChange change;
+        while ((change = blockChanges.poll()) != null) {
+            changes.add(change);
+        }
+        return List.copyOf(changes);
     }
 
     public boolean isSolidBlockAtWorld(int worldX, int worldY, int worldZ) {
@@ -284,6 +313,149 @@ public class World implements AutoCloseable, WorldBlockProvider {
     @Override
     public void close() {
         worldStreamer.close();
+    }
+
+    public record WorldBlockChange(int x, int y, int z, short blockId) {
+        public ChunkPosition chunkPosition() {
+            return new ChunkPosition(
+                    Math.floorDiv(x, Chunk.SIZE),
+                    Math.floorDiv(y, Chunk.SIZE),
+                    Math.floorDiv(z, Chunk.SIZE)
+            );
+        }
+    }
+
+    private void rememberSessionEdit(int worldX, int worldY, int worldZ, short blockId) {
+        ChunkPosition position = toChunkPosition(worldX, worldY, worldZ);
+        int localX = Math.floorMod(worldX, Chunk.SIZE);
+        int localY = Math.floorMod(worldY, Chunk.SIZE);
+        int localZ = Math.floorMod(worldZ, Chunk.SIZE);
+        int index = localX + localZ * Chunk.SIZE + localY * Chunk.SIZE * Chunk.SIZE;
+        short generated = baseWorldGenerator.getBlockAtWorld(worldX, worldY, worldZ);
+        if (generated == blockId) {
+            Map<Integer, Short> edits = sessionEdits.get(position);
+            if (edits != null) {
+                edits.remove(index);
+                if (edits.isEmpty()) {
+                    sessionEdits.remove(position, edits);
+                }
+            }
+            return;
+        }
+        sessionEdits.computeIfAbsent(position, ignored -> new ConcurrentHashMap<>()).put(index, blockId);
+    }
+
+    private final class SessionWorldGenerator implements WorldGenerator {
+        private final WorldGenerator delegate;
+
+        private SessionWorldGenerator(WorldGenerator delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void generateChunkData(Chunk chunk) {
+            delegate.generateChunkData(chunk);
+            Map<Integer, Short> edits = sessionEdits.get(ChunkPosition.fromChunk(chunk));
+            if (edits == null || edits.isEmpty()) {
+                return;
+            }
+            short[] blocks = chunk.snapshotBlocks();
+            edits.forEach((index, blockId) -> blocks[index] = blockId);
+            chunk.setAllBlocks(blocks);
+        }
+
+        @Override
+        public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
+            ChunkPosition position = toChunkPosition(worldX, worldY, worldZ);
+            Map<Integer, Short> edits = sessionEdits.get(position);
+            if (edits != null) {
+                int index = Math.floorMod(worldX, Chunk.SIZE)
+                        + Math.floorMod(worldZ, Chunk.SIZE) * Chunk.SIZE
+                        + Math.floorMod(worldY, Chunk.SIZE) * Chunk.SIZE * Chunk.SIZE;
+                Short edited = edits.get(index);
+                if (edited != null) {
+                    return edited;
+                }
+            }
+            return delegate.getBlockAtWorld(worldX, worldY, worldZ);
+        }
+
+        @Override
+        public void fillBlockRegion(
+                int originX,
+                int originY,
+                int originZ,
+                int sizeX,
+                int sizeY,
+                int sizeZ,
+                short[] destination
+        ) {
+            delegate.fillBlockRegion(originX, originY, originZ, sizeX, sizeY, sizeZ, destination);
+            int maxX = originX + sizeX;
+            int maxY = originY + sizeY;
+            int maxZ = originZ + sizeZ;
+            for (Map.Entry<ChunkPosition, Map<Integer, Short>> chunkEntry : sessionEdits.entrySet()) {
+                ChunkPosition position = chunkEntry.getKey();
+                int chunkOriginX = position.x() * Chunk.SIZE;
+                int chunkOriginY = position.y() * Chunk.SIZE;
+                int chunkOriginZ = position.z() * Chunk.SIZE;
+                if (chunkOriginX >= maxX || chunkOriginX + Chunk.SIZE <= originX
+                        || chunkOriginY >= maxY || chunkOriginY + Chunk.SIZE <= originY
+                        || chunkOriginZ >= maxZ || chunkOriginZ + Chunk.SIZE <= originZ) {
+                    continue;
+                }
+                chunkEntry.getValue().forEach((index, blockId) -> {
+                    int localY = index / (Chunk.SIZE * Chunk.SIZE);
+                    int remainder = index - localY * Chunk.SIZE * Chunk.SIZE;
+                    int localZ = remainder / Chunk.SIZE;
+                    int localX = remainder - localZ * Chunk.SIZE;
+                    int worldX = chunkOriginX + localX;
+                    int worldY = chunkOriginY + localY;
+                    int worldZ = chunkOriginZ + localZ;
+                    if (worldX >= originX && worldX < maxX
+                            && worldY >= originY && worldY < maxY
+                            && worldZ >= originZ && worldZ < maxZ) {
+                        int destinationIndex = worldX - originX
+                                + (worldZ - originZ) * sizeX
+                                + (worldY - originY) * sizeX * sizeZ;
+                        destination[destinationIndex] = blockId;
+                    }
+                });
+            }
+        }
+
+        @Override
+        public int getSurfaceHeight(int worldX, int worldZ) {
+            return delegate.getSurfaceHeight(worldX, worldZ);
+        }
+
+        @Override
+        public int getSkyLightScanStartY(int worldX, int worldZ, int maxWorldY) {
+            return delegate.getSkyLightScanStartY(worldX, worldZ, maxWorldY);
+        }
+
+        @Override
+        public org.weaw.game.generation.ChunkGenerationHint classifyChunk(ChunkPosition position) {
+            Map<Integer, Short> edits = sessionEdits.get(position);
+            return edits == null || edits.isEmpty()
+                    ? delegate.classifyChunk(position)
+                    : org.weaw.game.generation.ChunkGenerationHint.materialized();
+        }
+
+        @Override
+        public void retainChunkClassificationsAround(int centerChunkX, int centerChunkZ, int radius) {
+            delegate.retainChunkClassificationsAround(centerChunkX, centerChunkZ, radius);
+        }
+
+        @Override
+        public void retainChunkClassificationsAround(Collection<ChunkPosition> centers, int radius) {
+            delegate.retainChunkClassificationsAround(centers, radius);
+        }
+
+        @Override
+        public org.weaw.game.generation.ChunkClassificationCacheStats getChunkClassificationCacheStats() {
+            return delegate.getChunkClassificationCacheStats();
+        }
     }
 
     private static ChunkPosition toChunkPosition(int worldX, int worldY, int worldZ) {

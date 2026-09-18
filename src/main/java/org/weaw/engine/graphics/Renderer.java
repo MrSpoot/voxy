@@ -12,6 +12,7 @@ import org.weaw.engine.graphics.pipeline.passes.DebugImGuiPass;
 import org.weaw.engine.graphics.pipeline.passes.FogPass;
 import org.weaw.engine.graphics.pipeline.passes.HudPass;
 import org.weaw.engine.graphics.pipeline.passes.OpaqueChunkRenderPass;
+import org.weaw.engine.graphics.pipeline.passes.RemotePlayerRenderPass;
 import org.weaw.engine.graphics.pipeline.passes.SkyBoxPass;
 import org.weaw.engine.graphics.pipeline.passes.ToneMappingPass;
 import org.weaw.engine.graphics.pipeline.passes.TransparentChunkRenderPass;
@@ -23,6 +24,7 @@ import org.weaw.engine.window.Window;
 import org.weaw.game.World;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.gameplay.CreativeInventoryState;
+import org.weaw.network.client.RemotePlayerStore;
 
 import java.util.Collection;
 
@@ -40,6 +42,7 @@ public class Renderer {
     private final Collection<BlockDefinition> blockDefinitions;
     private final boolean transparentChunksEnabled;
     private final CreativeInventoryState creativeInventoryState;
+    private final RemotePlayerStore remotePlayerStore;
     // Multi-pass rendering pipeline
     private RenderPipeline pipeline;
     private RenderContext context;
@@ -50,7 +53,8 @@ public class Renderer {
             InputManager inputManager,
             Collection<BlockDefinition> blockDefinitions,
             boolean transparentChunksEnabled,
-            CreativeInventoryState creativeInventoryState
+            CreativeInventoryState creativeInventoryState,
+            RemotePlayerStore remotePlayerStore
     ) {
         this.window = window;
         this.world = world;
@@ -58,6 +62,7 @@ public class Renderer {
         this.blockDefinitions = blockDefinitions;
         this.transparentChunksEnabled = transparentChunksEnabled;
         this.creativeInventoryState = creativeInventoryState;
+        this.remotePlayerStore = remotePlayerStore;
     }
 
     public void create() {
@@ -71,6 +76,7 @@ public class Renderer {
         context.setWorldSettings(world.getSettings());
         context.setWorld(world);
         context.setCreativeInventoryState(creativeInventoryState);
+        context.setRemotePlayerStore(remotePlayerStore);
         BlockTextureManager blockTextureManager = new BlockTextureManager(blockDefinitions);
         blockTextureManager.create();
         context.setBlockTextureManager(blockTextureManager);
@@ -82,6 +88,7 @@ public class Renderer {
         pipeline.addPass(new CloudRenderPass());
         pipeline.addPass(new OpaqueChunkRenderPass(world.getChunkManager()));
         pipeline.addPass(new CutoutChunkRenderPass(world.getChunkManager()));
+        pipeline.addPass(new RemotePlayerRenderPass());
         if (transparentChunksEnabled) {
             pipeline.addPass(new WaterChunkRenderPass(world.getChunkManager()));
             pipeline.addPass(new TransparentChunkRenderPass(world.getChunkManager()));

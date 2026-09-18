@@ -193,6 +193,18 @@ public class Chunk {
         rebuildLightEmitterIndex(blocks);
     }
 
+    public short[] snapshotBlocks() {
+        short[] blocks = new short[TOTAL_BLOCKS];
+        if (isUniform) {
+            Arrays.fill(blocks, uniformBlockId);
+            return blocks;
+        }
+        for (int index = 0; index < TOTAL_BLOCKS; index++) {
+            blocks[index] = palette[readBlockData(index, data, bitsPerBlock)];
+        }
+        return blocks;
+    }
+
 
 
     public void fillChunk(BlockDefinition block) {
@@ -232,6 +244,18 @@ public class Chunk {
 
     public int getDirectSkyLightByIndex(int blockIndex) {
         return directSkyLight.getAtIndex(blockIndex);
+    }
+
+    public byte[] snapshotPackedDirectSkyLight() {
+        return directSkyLight.packToByteArray();
+    }
+
+    public void replacePackedDirectSkyLight(byte[] packedDirectSkyLight) {
+        directSkyLight.replacePackedByteArray(packedDirectSkyLight);
+    }
+
+    public static int packedDirectSkyByteCount() {
+        return ChunkSkyLight.packedByteCount();
     }
 
     public void setPackedLight(int x, int y, int z, short packedLight) {

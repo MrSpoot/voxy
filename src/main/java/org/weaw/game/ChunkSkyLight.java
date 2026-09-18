@@ -5,6 +5,7 @@ import java.util.Arrays;
 /** Compact storage for the direct (vertical) skylight sources of a chunk. */
 final class ChunkSkyLight {
     private static final int LEVEL_MASK = 0xF;
+    private static final int LEVELS_PER_PACKED_BYTE = 2;
 
     private byte uniformLevel;
     private byte[] packedLevels;
@@ -65,6 +66,43 @@ final class ChunkSkyLight {
             packedLevels[index >>> 1] = (byte) ((levels[index] & LEVEL_MASK)
                     | ((levels[index + 1] & LEVEL_MASK) << 4));
         }
+    }
+
+    byte[] packToByteArray() {
+        if (packedLevels != null) {
+            return Arrays.copyOf(packedLevels, packedLevels.length);
+        }
+        byte[] packed = new byte[packedByteCount()];
+        int level = uniformLevel & LEVEL_MASK;
+        if (level != 0) {
+            Arrays.fill(packed, (byte) (level | level << 4));
+        }
+        return packed;
+    }
+
+    void replacePackedByteArray(byte[] packed) {
+        if (packed.length != packedByteCount()) {
+            throw new IllegalArgumentException(
+                    "Packed direct skylight array must contain exactly " + packedByteCount() + " values"
+            );
+        }
+        int firstPair = packed[0] & 0xFF;
+        int firstLevel = firstPair & LEVEL_MASK;
+        boolean uniform = (firstPair >>> 4) == firstLevel;
+        for (int index = 1; uniform && index < packed.length; index++) {
+            uniform = (packed[index] & 0xFF) == firstPair;
+        }
+        if (uniform) {
+            uniformLevel = (byte) firstLevel;
+            packedLevels = null;
+            return;
+        }
+        uniformLevel = 0;
+        packedLevels = Arrays.copyOf(packed, packed.length);
+    }
+
+    static int packedByteCount() {
+        return (Chunk.TOTAL_BLOCKS + LEVELS_PER_PACKED_BYTE - 1) / LEVELS_PER_PACKED_BYTE;
     }
 
     void clear() {
