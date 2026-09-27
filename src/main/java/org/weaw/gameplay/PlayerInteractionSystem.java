@@ -19,27 +19,54 @@ public class PlayerInteractionSystem {
 
     public void update(Player player, World world, PlayerInput input) {
         hotbar.cycle(input.scrollDelta());
+        BlockAction action = resolveAction(player, world, input);
+        if (action != null) {
+            applyAction(world, action);
+        }
+    }
+
+    public BlockAction resolveAction(Player player, World world, PlayerInput input) {
         targetedBlock = raycastBlock(player, world);
         if (!input.breakBlock()
                 && !input.placeBlock()) {
-            return;
+            return null;
         }
 
         if (targetedBlock == null) {
-            return;
+            return null;
         }
 
         if (input.breakBlock()) {
-            world.trySetBlockAtWorld(targetedBlock.blockX(), targetedBlock.blockY(), targetedBlock.blockZ(), Blocks.AIR);
-            return;
+            int x = targetedBlock.blockX();
+            int y = targetedBlock.blockY();
+            int z = targetedBlock.blockZ();
+            return new BlockAction(
+                    BlockAction.Type.BREAK,
+                    x, y, z,
+                    world.getBlockAtWorld(x, y, z),
+                    Blocks.AIR.getId()
+            );
         }
 
         BlockDefinition selectedBlock = hotbar.getSelectedBlock();
-        if (input.placeBlock()
-                && selectedBlock != null
+        if (selectedBlock != null
                 && !wouldOverlapPlayer(player, targetedBlock.placeX(), targetedBlock.placeY(), targetedBlock.placeZ())) {
-            world.trySetBlockAtWorld(targetedBlock.placeX(), targetedBlock.placeY(), targetedBlock.placeZ(), selectedBlock);
+            int x = targetedBlock.placeX();
+            int y = targetedBlock.placeY();
+            int z = targetedBlock.placeZ();
+            return new BlockAction(
+                    BlockAction.Type.PLACE,
+                    x, y, z,
+                    world.getBlockAtWorld(x, y, z),
+                    selectedBlock.getId()
+            );
         }
+        return null;
+    }
+
+    public boolean applyAction(World world, BlockAction action) {
+        BlockDefinition replacement = world.getBlockCatalog().getBlock(action.replacementBlockId());
+        return replacement != null && world.trySetBlockAtWorld(action.x(), action.y(), action.z(), replacement);
     }
 
     public BlockDefinition getSelectedBlock() {

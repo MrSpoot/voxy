@@ -11,6 +11,7 @@ import org.weaw.game.WorldSettings;
 import org.weaw.game.generation.WorldGenerator;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
+import org.weaw.gameplay.BlockAction;
 import org.weaw.gameplay.PlayerInput;
 import org.weaw.network.protocol.CatalogFingerprint;
 import org.weaw.network.protocol.ClientMessage;
@@ -57,7 +58,7 @@ class MultiplayerGameServerTest {
                     true, true, false, false, false, false, false,
                     false, false, true, false, false, 0.0f, 0.0f, 0
             );
-            assertTrue(pair.client().send(new ClientMessage.PlayerCommand(7L, 1L, input, 0)));
+            assertTrue(pair.client().send(new ClientMessage.PlayerCommand(7L, 1L, input, 0, null)));
             server.tickOnce();
             server.tickOnce();
 
@@ -102,8 +103,8 @@ class MultiplayerGameServerTest {
                     "Alice",
                     2
             ));
-            pair.client().send(new ClientMessage.PlayerCommand(0L, 0L, PlayerInput.disabled(), 4));
-            pair.client().send(new ClientMessage.PlayerCommand(1L, 1L, PlayerInput.disabled(), 6));
+            pair.client().send(new ClientMessage.PlayerCommand(0L, 0L, PlayerInput.disabled(), 4, null));
+            pair.client().send(new ClientMessage.PlayerCommand(1L, 1L, PlayerInput.disabled(), 6, null));
 
             server.tickOnce();
 
@@ -111,6 +112,80 @@ class MultiplayerGameServerTest {
             assertNotNull(snapshot);
             assertEquals(0L, snapshot.acknowledgedSequence());
             assertEquals(4, snapshot.selectedHotbarSlot());
+        }
+    }
+
+    @Test
+    void acceptsAValidatedBlockPredictionAndReturnsItsRevision() {
+        LocalTransportPair pair = new LocalTransportPair();
+        World world = createSmallWorld();
+        try (MultiplayerGameServer server = new MultiplayerGameServer(world, 1L, pair.server(), 1)) {
+            connect(pair, server);
+            assertTrue(world.trySetBlockAtWorld(16, 11, 46, Blocks.STONE));
+            PlayerInput breakInput = breakInput();
+            BlockAction action = new BlockAction(
+                    BlockAction.Type.BREAK, 16, 11, 46,
+                    Blocks.STONE.getId(), Blocks.AIR.getId()
+            );
+            pair.client().send(new ClientMessage.PlayerCommand(0L, 0L, breakInput, 0, action));
+
+            server.tickOnce();
+
+            ServerMessage.BlockActionResult result = pollUntil(pair, ServerMessage.BlockActionResult.class);
+            assertNotNull(result);
+            assertTrue(result.accepted());
+            assertEquals(Blocks.AIR.getId(), result.authoritativeBlockId());
+            assertTrue(result.revision() >= 2L);
+            assertEquals(Blocks.AIR.getId(), world.getBlockAtWorld(16, 11, 46));
+        }
+    }
+
+    @Test
+    void rejectsAStaleBlockPredictionWithoutChangingTheWorld() {
+        LocalTransportPair pair = new LocalTransportPair();
+        World world = createSmallWorld();
+        try (MultiplayerGameServer server = new MultiplayerGameServer(world, 1L, pair.server(), 1)) {
+            connect(pair, server);
+            assertTrue(world.trySetBlockAtWorld(16, 11, 46, Blocks.STONE));
+            BlockAction stale = new BlockAction(
+                    BlockAction.Type.BREAK, 16, 11, 46,
+                    Blocks.DIRT.getId(), Blocks.AIR.getId()
+            );
+            pair.client().send(new ClientMessage.PlayerCommand(
+                    0L, 0L, breakInput(), 0, stale
+            ));
+
+            server.tickOnce();
+
+            ServerMessage.BlockActionResult result = pollUntil(pair, ServerMessage.BlockActionResult.class);
+            assertNotNull(result);
+            org.junit.jupiter.api.Assertions.assertFalse(result.accepted());
+            assertEquals(Blocks.STONE.getId(), result.authoritativeBlockId());
+            assertEquals(Blocks.STONE.getId(), world.getBlockAtWorld(16, 11, 46));
+        }
+    }
+
+    @Test
+    void acceptsAValidatedPlacementPrediction() {
+        LocalTransportPair pair = new LocalTransportPair();
+        World world = createSmallWorld();
+        try (MultiplayerGameServer server = new MultiplayerGameServer(world, 1L, pair.server(), 1)) {
+            connect(pair, server);
+            assertTrue(world.trySetBlockAtWorld(16, 11, 45, Blocks.STONE));
+            BlockAction placement = new BlockAction(
+                    BlockAction.Type.PLACE, 16, 11, 46,
+                    Blocks.AIR.getId(), Blocks.GRASS_BLOCK.getId()
+            );
+            pair.client().send(new ClientMessage.PlayerCommand(
+                    0L, 0L, placeInput(), 0, placement
+            ));
+
+            server.tickOnce();
+
+            ServerMessage.BlockActionResult result = pollUntil(pair, ServerMessage.BlockActionResult.class);
+            assertNotNull(result);
+            assertTrue(result.accepted());
+            assertEquals(Blocks.GRASS_BLOCK.getId(), world.getBlockAtWorld(16, 11, 46));
         }
     }
 
@@ -133,7 +208,7 @@ class MultiplayerGameServerTest {
                     true, true, false, false, false, false, false,
                     false, false, true, false, false, 0.0f, 0.0f, 0
             );
-            pair.client().send(new ClientMessage.PlayerCommand(0L, 0L, moveOnce, 0));
+            pair.client().send(new ClientMessage.PlayerCommand(0L, 0L, moveOnce, 0, null));
             server.tickOnce();
             server.tickOnce();
             ServerMessage.StateSnapshot afterCommand = pollUntil(pair, ServerMessage.StateSnapshot.class);
@@ -217,6 +292,31 @@ class MultiplayerGameServerTest {
         );
         world.setDynamicLightingEnabled(false);
         return world;
+    }
+
+    private static void connect(LocalTransportPair pair, MultiplayerGameServer server) {
+        pair.client().send(new ClientMessage.Hello(
+                Protocol.VERSION,
+                CatalogFingerprint.compute(BlockRegistry.getDefaultCatalog()),
+                "Alice",
+                2
+        ));
+        server.tickOnce();
+        assertNotNull(pollUntil(pair, ServerMessage.Welcome.class));
+    }
+
+    private static PlayerInput breakInput() {
+        return new PlayerInput(
+                true, false, false, false, false, false, false,
+                false, false, true, true, false, 0.0f, 0.0f, 0
+        );
+    }
+
+    private static PlayerInput placeInput() {
+        return new PlayerInput(
+                true, false, false, false, false, false, false,
+                false, false, true, false, true, 0.0f, 0.0f, 0
+        );
     }
 
     private static <T extends ServerMessage> T pollUntil(LocalTransportPair pair, Class<T> type) {

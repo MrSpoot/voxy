@@ -9,6 +9,7 @@ import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.World;
 import org.weaw.game.World.WorldBlockChange;
 import org.weaw.game.utils.BlockDefinition;
+import org.weaw.gameplay.BlockAction;
 import org.weaw.gameplay.GameplaySession;
 import org.weaw.gameplay.GameplaySettings;
 import org.weaw.gameplay.PlayerHotbar;
@@ -22,7 +23,6 @@ import org.weaw.network.transport.ServerEvent;
 import org.weaw.network.transport.ServerTransport;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -42,6 +42,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
     private static final int MAX_CHUNKS_SENT_PER_TICK = 1;
     private static final int MAX_LIGHT_UPDATES_SENT_PER_TICK = 1;
     private static final int MAX_BLOCK_UPDATES_SENT_PER_TICK = 4;
+    private static final int MAX_ACTION_RESULTS_SENT_PER_TICK = 4;
     private static final int OUTBOUND_STREAMING_WATERMARK = 4;
     private static final int OUTBOUND_SNAPSHOT_WATERMARK = 8;
     private static final int OUTBOUND_STALL_WATERMARK = OUTBOUND_SNAPSHOT_WATERMARK;
@@ -87,10 +88,15 @@ public final class MultiplayerGameServer implements AutoCloseable {
 
     public void tickOnce() {
         drainNetworkEvents();
+        publishBlockChanges();
         for (ServerPlayerSession player : playersByConnection.values()) {
-            PlayerInput input = player.consumeInput();
+            ClientMessage.PlayerCommand command = player.consumeCommand();
+            PlayerInput input = command == null ? PlayerInput.disabled() : command.input();
             player.gameplay.beginSimulationTick();
-            player.gameplay.update(1.0f / GameServer.DEFAULT_TICKS_PER_SECOND, input);
+            player.gameplay.updateMovement(1.0f / GameServer.DEFAULT_TICKS_PER_SECOND, input);
+            if (command != null) {
+                processBlockAction(player, command);
+            }
         }
 
         List<Vector3f> positions = playersByConnection.values().stream()
@@ -266,22 +272,81 @@ public final class MultiplayerGameServer implements AutoCloseable {
         }
     }
 
-    private void publishBlockChanges() {
+    private Map<BlockPosition, ServerMessage.BlockUpdate> publishBlockChanges() {
+        Map<BlockPosition, ServerMessage.BlockUpdate> published = new HashMap<>();
         for (WorldBlockChange change : world.drainBlockChanges()) {
             ChunkPosition position = change.chunkPosition();
             long revision = chunkRevisions.merge(position, 1L, Long::sum);
             ServerMessage.BlockUpdate message = new ServerMessage.BlockUpdate(
                     change.x(), change.y(), change.z(), change.blockId(), revision
             );
+            BlockPosition blockPosition = new BlockPosition(change.x(), change.y(), change.z());
+            published.put(blockPosition, message);
             for (ServerPlayerSession player : playersByConnection.values()) {
                 if (player.subscribedChunks.contains(position)) {
                     player.pendingBlockUpdates.put(
-                            new BlockPosition(change.x(), change.y(), change.z()),
+                            blockPosition,
                             message
                     );
                 }
             }
         }
+        return published;
+    }
+
+    private void processBlockAction(ServerPlayerSession player, ClientMessage.PlayerCommand command) {
+        BlockAction requested = command.blockAction();
+        BlockAction authoritative = player.gameplay.resolveBlockAction(command.input());
+        if (requested == null) {
+            return;
+        }
+        if (!isPlausiblyNearby(player, requested)) {
+            transport.disconnect(player.connectionId, "Invalid block action coordinates");
+            return;
+        }
+        if (!requested.equals(authoritative) || !player.gameplay.applyBlockAction(requested)) {
+            queueBlockActionResult(player, command.sequence(), false, requested, null);
+            return;
+        }
+
+        ServerMessage.BlockUpdate update = publishBlockChanges().get(
+                new BlockPosition(requested.x(), requested.y(), requested.z())
+        );
+        if (update == null) {
+            queueBlockActionResult(player, command.sequence(), false, requested, null);
+            return;
+        }
+        queueBlockActionResult(player, command.sequence(), true, requested, update);
+    }
+
+    private void queueBlockActionResult(
+            ServerPlayerSession player,
+            long sequence,
+            boolean accepted,
+            BlockAction requested,
+            ServerMessage.BlockUpdate acceptedUpdate
+    ) {
+        ChunkPosition position = new BlockPosition(requested.x(), requested.y(), requested.z()).chunkPosition();
+        short blockId = acceptedUpdate == null
+                ? world.getBlockAtWorld(requested.x(), requested.y(), requested.z())
+                : acceptedUpdate.blockId();
+        long revision = acceptedUpdate == null
+                ? chunkRevisions.getOrDefault(position, 1L)
+                : acceptedUpdate.revision();
+        player.pendingActionResults.addLast(new ServerMessage.BlockActionResult(
+                sequence,
+                accepted,
+                requested.x(), requested.y(), requested.z(),
+                blockId,
+                revision
+        ));
+    }
+
+    private static boolean isPlausiblyNearby(ServerPlayerSession player, BlockAction action) {
+        Vector3f position = player.gameplay.getPlayer().getPosition();
+        return Math.abs(action.x() + 0.5d - position.x) <= 16.0d
+                && Math.abs(action.y() + 0.5d - position.y) <= 16.0d
+                && Math.abs(action.z() + 0.5d - position.z) <= 16.0d;
     }
 
     private void publishLightChanges() {
@@ -305,6 +370,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
     private void updateChunkSubscriptions() {
         Map<ChunkPosition, ChunkManager.ChunkUpload> loaded = world.getChunkManager().snapshotChunkUploads();
         for (ServerPlayerSession player : playersByConnection.values()) {
+            flushPendingActionResults(player);
             flushPendingBlockUpdates(player);
             Vector3f location = player.gameplay.getPlayer().getPosition();
             int centerX = Math.floorDiv((int) Math.floor(location.x), Chunk.SIZE);
@@ -394,6 +460,19 @@ public final class MultiplayerGameServer implements AutoCloseable {
                 return;
             }
             iterator.remove();
+            sent++;
+        }
+    }
+
+    private void flushPendingActionResults(ServerPlayerSession player) {
+        int sent = 0;
+        while (!player.pendingActionResults.isEmpty() && sent < MAX_ACTION_RESULTS_SENT_PER_TICK) {
+            ServerMessage.BlockActionResult result = player.pendingActionResults.peekFirst();
+            if (!transport.send(player.connectionId, result)) {
+                deferredWorldMessages++;
+                return;
+            }
+            player.pendingActionResults.removeFirst();
             sent++;
         }
     }
@@ -533,6 +612,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
         private final ArrayDeque<ClientMessage.PlayerCommand> commands = new ArrayDeque<>();
         private final Set<ChunkPosition> subscribedChunks = new HashSet<>();
         private final Map<BlockPosition, ServerMessage.BlockUpdate> pendingBlockUpdates = new LinkedHashMap<>();
+        private final ArrayDeque<ServerMessage.BlockActionResult> pendingActionResults = new ArrayDeque<>();
         private final Set<ChunkPosition> pendingLightChunks = new LinkedHashSet<>();
         private long lastReceivedSequence = -1L;
         private long lastProcessedSequence = -1L;
@@ -567,9 +647,9 @@ public final class MultiplayerGameServer implements AutoCloseable {
             commands.addLast(command);
         }
 
-        private PlayerInput consumeInput() {
+        private ClientMessage.PlayerCommand consumeCommand() {
             if (commands.isEmpty()) {
-                return PlayerInput.disabled();
+                return null;
             }
             ClientMessage.PlayerCommand command = commands.removeFirst();
             gameplay.getHotbar().select(Math.clamp(
@@ -585,11 +665,24 @@ public final class MultiplayerGameServer implements AutoCloseable {
                     Math.clamp(input.scrollDelta(), -PlayerHotbar.SLOT_COUNT, PlayerHotbar.SLOT_COUNT)
             );
             lastProcessedSequence = command.sequence();
-            return sanitized;
+            return new ClientMessage.PlayerCommand(
+                    command.sequence(),
+                    command.clientTick(),
+                    sanitized,
+                    Math.clamp(command.selectedHotbarSlot(), 0, PlayerHotbar.SLOT_COUNT - 1),
+                    command.blockAction()
+            );
         }
     }
 
     private record BlockPosition(int x, int y, int z) {
+        private ChunkPosition chunkPosition() {
+            return new ChunkPosition(
+                    Math.floorDiv(x, Chunk.SIZE),
+                    Math.floorDiv(y, Chunk.SIZE),
+                    Math.floorDiv(z, Chunk.SIZE)
+            );
+        }
     }
 
     public record ServerNetworkStats(

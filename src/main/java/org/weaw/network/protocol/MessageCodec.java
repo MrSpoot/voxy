@@ -4,6 +4,7 @@ import org.joml.Vector3f;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
 import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.gameplay.BlockAction;
 import org.weaw.gameplay.PlayerInput;
 
 import java.io.ByteArrayInputStream;
@@ -33,6 +34,7 @@ public final class MessageCodec {
     private static final int SERVER_LIGHT = 69;
     private static final int SERVER_PLAYER_LEFT = 70;
     private static final int SERVER_REJECTED = 71;
+    private static final int SERVER_BLOCK_ACTION_RESULT = 72;
 
     private MessageCodec() {
     }
@@ -76,6 +78,7 @@ public final class MessageCodec {
                 output.writeLong(command.clientTick());
                 writePlayerInput(output, command.input());
                 output.writeByte(command.selectedHotbarSlot());
+                writeBlockAction(output, command.blockAction());
             }
             case ClientMessage.SetHotbarSlot set -> {
                 output.writeByte(CLIENT_SET_HOTBAR);
@@ -105,7 +108,8 @@ public final class MessageCodec {
                     input.readLong(),
                     input.readLong(),
                     readPlayerInput(input),
-                    input.readUnsignedByte()
+                    input.readUnsignedByte(),
+                    readBlockAction(input)
             );
             case CLIENT_SET_HOTBAR -> new ClientMessage.SetHotbarSlot(
                     input.readLong(),
@@ -172,6 +176,16 @@ public final class MessageCodec {
                 output.writeShort(block.blockId());
                 output.writeLong(block.revision());
             }
+            case ServerMessage.BlockActionResult result -> {
+                output.writeByte(SERVER_BLOCK_ACTION_RESULT);
+                output.writeLong(result.sequence());
+                output.writeBoolean(result.accepted());
+                output.writeInt(result.x());
+                output.writeInt(result.y());
+                output.writeInt(result.z());
+                output.writeShort(result.authoritativeBlockId());
+                output.writeLong(result.revision());
+            }
             case ServerMessage.ChunkLightUpdate light -> {
                 output.writeByte(SERVER_LIGHT);
                 writeChunkPosition(output, light.position());
@@ -218,6 +232,11 @@ public final class MessageCodec {
             case SERVER_CHUNK_UNLOAD -> new ServerMessage.ChunkUnload(readChunkPosition(input));
             case SERVER_BLOCK -> new ServerMessage.BlockUpdate(
                     input.readInt(), input.readInt(), input.readInt(), input.readShort(), input.readLong()
+            );
+            case SERVER_BLOCK_ACTION_RESULT -> new ServerMessage.BlockActionResult(
+                    input.readLong(), input.readBoolean(),
+                    input.readInt(), input.readInt(), input.readInt(),
+                    input.readShort(), input.readLong()
             );
             case SERVER_LIGHT -> {
                 ChunkPosition position = readChunkPosition(input);
@@ -327,6 +346,35 @@ public final class MessageCodec {
                 flag(flags, 4), flag(flags, 5), flag(flags, 6), flag(flags, 7),
                 flag(flags, 8), flag(flags, 9), flag(flags, 10), flag(flags, 11),
                 mouseDeltaX, mouseDeltaY, scrollDelta
+        );
+    }
+
+    private static void writeBlockAction(DataOutputStream output, BlockAction action) throws IOException {
+        output.writeBoolean(action != null);
+        if (action == null) {
+            return;
+        }
+        output.writeByte(action.type().ordinal());
+        output.writeInt(action.x());
+        output.writeInt(action.y());
+        output.writeInt(action.z());
+        output.writeShort(action.expectedBlockId());
+        output.writeShort(action.replacementBlockId());
+    }
+
+    private static BlockAction readBlockAction(DataInputStream input) throws IOException {
+        if (!input.readBoolean()) {
+            return null;
+        }
+        int typeOrdinal = input.readUnsignedByte();
+        BlockAction.Type[] types = BlockAction.Type.values();
+        if (typeOrdinal >= types.length) {
+            throw new IOException("Invalid block action type: " + typeOrdinal);
+        }
+        return new BlockAction(
+                types[typeOrdinal],
+                input.readInt(), input.readInt(), input.readInt(),
+                input.readShort(), input.readShort()
         );
     }
 

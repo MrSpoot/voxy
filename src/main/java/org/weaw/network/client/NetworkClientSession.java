@@ -2,6 +2,7 @@ package org.weaw.network.client;
 
 import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockDefinition;
+import org.weaw.gameplay.BlockAction;
 import org.weaw.gameplay.GameplaySession;
 import org.weaw.gameplay.GameplaySettings;
 import org.weaw.gameplay.PlayerHotbar;
@@ -140,13 +141,22 @@ public final class NetworkClientSession implements AutoCloseable {
                             PlayerHotbar.SLOT_COUNT
                     );
             PlayerInput commandInput = withoutHotbarScroll(tickInput);
+            NetworkPlayerState beforePrediction = gameplay.getPlayer().snapshot(welcome.playerId(), playerName);
+            gameplay.getHotbar().select(commandHotbarSlot);
+            PlayerInput movementInput = predictionInput(commandInput);
+            gameplay.beginSimulationTick();
+            gameplay.updateMovement(fixedDelta, movementInput);
+            BlockAction blockAction = gameplay.resolveBlockAction(commandInput);
             ClientMessage.PlayerCommand command = new ClientMessage.PlayerCommand(
                     sequence,
                     clientTick++,
                     commandInput,
-                    commandHotbarSlot
+                    commandHotbarSlot,
+                    blockAction
             );
             if (!transport.send(command)) {
+                gameplay.getPlayer().apply(beforePrediction);
+                gameplay.getHotbar().select(desiredHotbarSlot);
                 break;
             }
             nextSequence++;
@@ -154,13 +164,14 @@ public final class NetworkClientSession implements AutoCloseable {
                 desiredHotbarSlot = commandHotbarSlot;
                 hotbarSelectionDirty = true;
             }
-            gameplay.getHotbar().select(desiredHotbarSlot);
             if (hotbarSelectionDirty) {
                 pendingHotbarSelectionSequence = sequence;
                 hotbarSelectionDirty = false;
             }
-            predict(command);
-            pendingPredictions.addLast(new PendingPrediction(sequence, predictionInput(commandInput)));
+            if (blockAction != null) {
+                clientWorld.predictBlock(sequence, blockAction);
+            }
+            pendingPredictions.addLast(new PendingPrediction(sequence, movementInput, blockAction));
             while (pendingPredictions.size() > MAX_PENDING_PREDICTIONS) {
                 pendingPredictions.removeFirst();
             }
@@ -280,6 +291,7 @@ public final class NetworkClientSession implements AutoCloseable {
             }
             case ServerMessage.ChunkUnload ignored -> applyWorldMessage(message);
             case ServerMessage.BlockUpdate ignored -> applyWorldMessage(message);
+            case ServerMessage.BlockActionResult ignored -> applyWorldMessage(message);
             case ServerMessage.ChunkLightUpdate ignored -> {
                 receivedLightUpdates++;
                 applyWorldMessage(message);
@@ -318,10 +330,17 @@ public final class NetworkClientSession implements AutoCloseable {
                     && pendingPredictions.getFirst().sequence <= snapshot.acknowledgedSequence()) {
                 pendingPredictions.removeFirst();
             }
-            gameplay.getPlayer().apply(authoritative);
-            for (PendingPrediction prediction : pendingPredictions) {
-                gameplay.beginSimulationTick();
-                gameplay.update(1.0f / GameServer.DEFAULT_TICKS_PER_SECOND, prediction.input);
+            try (ClientWorld.PredictionReplay replay = clientWorld.beginPredictionReplay(
+                    snapshot.acknowledgedSequence()
+            )) {
+                gameplay.getPlayer().apply(authoritative);
+                for (PendingPrediction prediction : pendingPredictions) {
+                    gameplay.beginSimulationTick();
+                    gameplay.updateMovement(1.0f / GameServer.DEFAULT_TICKS_PER_SECOND, prediction.input);
+                    if (prediction.blockAction != null) {
+                        replay.apply(prediction.sequence);
+                    }
+                }
             }
             Vector3f correctedPosition = gameplay.getPlayer().getPosition();
             lastCorrectionDistance = predictedPosition.distance(correctedPosition);
@@ -360,11 +379,6 @@ public final class NetworkClientSession implements AutoCloseable {
             desiredHotbarSlot = authoritativeSelectedSlot;
         }
         gameplay.getHotbar().select(desiredHotbarSlot);
-    }
-
-    private void predict(ClientMessage.PlayerCommand command) {
-        gameplay.beginSimulationTick();
-        gameplay.update(1.0f / GameServer.DEFAULT_TICKS_PER_SECOND, predictionInput(command.input()));
     }
 
     private static PlayerInput predictionInput(PlayerInput input) {
@@ -411,6 +425,7 @@ public final class NetworkClientSession implements AutoCloseable {
         return message instanceof ServerMessage.ChunkSnapshot
                 || message instanceof ServerMessage.ChunkUnload
                 || message instanceof ServerMessage.BlockUpdate
+                || message instanceof ServerMessage.BlockActionResult
                 || message instanceof ServerMessage.ChunkLightUpdate;
     }
 
@@ -461,7 +476,7 @@ public final class NetworkClientSession implements AutoCloseable {
         }
     }
 
-    private record PendingPrediction(long sequence, PlayerInput input) {
+    private record PendingPrediction(long sequence, PlayerInput input, BlockAction blockAction) {
     }
 
     public record ClientNetworkStats(

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
 import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.gameplay.BlockAction;
 import org.weaw.gameplay.PlayerInput;
 
 import java.io.IOException;
@@ -22,9 +23,21 @@ class MessageCodecTest {
                 true, true, false, true, false, false, false, true,
                 true, true, true, false, 12.5f, -7.25f, -2
         );
-        ClientMessage.PlayerCommand original = new ClientMessage.PlayerCommand(42L, 17L, input, 8);
+        BlockAction action = new BlockAction(BlockAction.Type.BREAK, 3, 4, 5, (short) 2, (short) 0);
+        ClientMessage.PlayerCommand original = new ClientMessage.PlayerCommand(42L, 17L, input, 8, action);
 
         ClientMessage decoded = MessageCodec.decodeClient(MessageCodec.encodeClient(original));
+
+        assertEquals(original, decoded);
+    }
+
+    @Test
+    void roundTripsBlockActionResult() throws IOException {
+        ServerMessage.BlockActionResult original = new ServerMessage.BlockActionResult(
+                42L, false, 3, 4, 5, (short) 2, 9L
+        );
+
+        ServerMessage decoded = MessageCodec.decodeServer(MessageCodec.encodeServer(original));
 
         assertEquals(original, decoded);
     }

@@ -1,6 +1,6 @@
 # Multiplayer
 
-Voxy uses a server-authoritative multiplayer model (protocol version 3). Normal solo games also run through the same in-process protocol, which keeps solo and multiplayer gameplay behavior aligned.
+Voxy uses a server-authoritative multiplayer model (protocol version 4). Normal solo games also run through the same in-process protocol, which keeps solo and multiplayer gameplay behavior aligned.
 
 ## Launch modes
 
@@ -46,9 +46,9 @@ The default network view distance is 12 chunks and can be configured from 2 to 3
 ## Current behavior
 
 - The server simulates players, collision, block placement/destruction, hotbars, chunk streaming and lighting at 30 ticks per second.
-- Player snapshots are sent at 15 Hz. The local player uses prediction/reconciliation; remote players use interpolation.
+- Player snapshots are sent at 15 Hz. The local player uses movement and block-action prediction with authoritative reconciliation; remote players use interpolation.
 - Chunk data is compressed and streamed according to each player's view distance. Mesh generation happens on clients only.
-- Block edits remain authoritative and survive chunk unload/reload for the lifetime of the server process.
+- Block placement and destruction are applied immediately by the client, then confirmed or rolled back from the server's authoritative result. Confirmed edits survive chunk unload/reload for the lifetime of the server process.
 - Connections are rejected when the protocol version or ordered block catalogue differs.
 
 This first version intentionally has no account authentication, encryption, matchmaking, chat, NAT traversal, disk persistence or reconnect-to-the-same-player state. A reconnect is treated as a new arrival, and the world is reset when the dedicated server process stops.

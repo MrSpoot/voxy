@@ -216,7 +216,18 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     @Override
     public int getSkyLightScanStartY(int worldX, int worldZ, int maxWorldY) {
-        return worldGenerator.getSkyLightScanStartY(worldX, worldZ, maxWorldY);
+        int generatedScanStart = worldGenerator.getSkyLightScanStartY(worldX, worldZ, maxWorldY);
+        for (int worldY = maxWorldY; worldY > generatedScanStart; worldY--) {
+            int loadedBlockId = chunkManager.getLoadedBlockAtWorld(worldX, worldY, worldZ);
+            if (loadedBlockId < 0) {
+                continue;
+            }
+            BlockDefinition loadedBlock = blockCatalog.getBlock((short) loadedBlockId);
+            if (loadedBlock != null && !loadedBlock.isAir()) {
+                return worldY;
+            }
+        }
+        return generatedScanStart;
     }
 
     public void setBlockAtWorld(int worldX, int worldY, int worldZ, BlockDefinition block) {

@@ -12,6 +12,7 @@ public sealed interface ServerMessage permits
         ServerMessage.ChunkSnapshot,
         ServerMessage.ChunkUnload,
         ServerMessage.BlockUpdate,
+        ServerMessage.BlockActionResult,
         ServerMessage.ChunkLightUpdate,
         ServerMessage.PlayerLeft,
         ServerMessage.Rejected {
@@ -98,6 +99,17 @@ public sealed interface ServerMessage permits
                     Math.floorDiv(z, Chunk.SIZE)
             );
         }
+    }
+
+    record BlockActionResult(
+            long sequence,
+            boolean accepted,
+            int x,
+            int y,
+            int z,
+            short authoritativeBlockId,
+            long revision
+    ) implements ServerMessage {
     }
 
     record ChunkLightUpdate(

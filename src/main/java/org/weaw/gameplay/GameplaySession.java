@@ -23,10 +23,22 @@ public class GameplaySession {
     }
 
     public void update(float deltaTime, PlayerInput input) {
-        playerController.update(player, world, deltaTime, input);
+        updateMovement(deltaTime, input);
         if (input.controlsEnabled()) {
             playerInteractionSystem.update(player, world, input);
         }
+    }
+
+    public void updateMovement(float deltaTime, PlayerInput input) {
+        playerController.update(player, world, deltaTime, input);
+    }
+
+    public BlockAction resolveBlockAction(PlayerInput input) {
+        return input.controlsEnabled() ? playerInteractionSystem.resolveAction(player, world, input) : null;
+    }
+
+    public boolean applyBlockAction(BlockAction action) {
+        return playerInteractionSystem.applyAction(world, action);
     }
 
     public void beginSimulationTick() {

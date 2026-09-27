@@ -1,5 +1,6 @@
 package org.weaw.network.protocol;
 
+import org.weaw.gameplay.BlockAction;
 import org.weaw.gameplay.PlayerInput;
 
 public sealed interface ClientMessage permits
@@ -16,7 +17,8 @@ public sealed interface ClientMessage permits
             long sequence,
             long clientTick,
             PlayerInput input,
-            int selectedHotbarSlot
+            int selectedHotbarSlot,
+            BlockAction blockAction
     ) implements ClientMessage {
     }
 
