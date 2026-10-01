@@ -102,7 +102,9 @@ public final class HudPass implements RenderPass {
             renderCrosshair(width, height);
         }
 
-        CreativeInventoryLayout layout = CreativeInventoryLayout.forViewport(width, height, inventory.isOpen());
+        CreativeInventoryLayout layout = CreativeInventoryLayout.forViewport(
+                width, height, context.getUiScale(), inventory.isOpen()
+        );
         int rectangleCount = buildRectangles(inventory, layout);
         renderRectangles(width, height, rectangleCount);
         int iconCount = buildIcons(inventory, layout);

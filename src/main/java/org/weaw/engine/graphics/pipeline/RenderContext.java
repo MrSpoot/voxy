@@ -13,8 +13,10 @@ import org.weaw.game.ChunkManager.ChunkPosition;
 import org.weaw.game.World;
 import org.weaw.game.WorldSettings;
 import org.weaw.gameplay.CreativeInventoryState;
+import org.weaw.client.ui.GameUiState;
 import org.weaw.network.client.RemotePlayerStore;
 import org.weaw.network.NetworkDebugSnapshot;
+import org.weaw.persistence.AntiAliasingMode;
 
 import java.util.HashSet;
 import java.util.HashMap;
@@ -44,6 +46,7 @@ public class RenderContext {
     private int viewportWidth;
     private int viewportHeight;
     private float frameDeltaSeconds = 1.0f / 60.0f;
+    private float uiScale = 1.0f;
     private String graphicsVendor = "unknown";
     private String graphicsRenderer = "unknown";
     private String graphicsVersion = "unknown";
@@ -58,6 +61,7 @@ public class RenderContext {
     private final WaterSettings waterSettings = new WaterSettings();
     private final AdaptiveGraphicsQuality adaptiveGraphicsQuality = new AdaptiveGraphicsQuality();
     private final FogSettings fogSettings = new FogSettings();
+    private AntiAliasingMode antiAliasingMode = AntiAliasingMode.FXAA;
     private WorldSettings worldSettings = new WorldSettings();
     private String currentColorTargetName;
     private BlockTextureManager blockTextureManager;
@@ -79,6 +83,7 @@ public class RenderContext {
     private int blockOutlinePlacementY;
     private int blockOutlinePlacementZ;
     private CreativeInventoryState creativeInventoryState;
+    private GameUiState gameUiState;
     private RemotePlayerStore remotePlayerStore;
     private NetworkDebugSnapshot networkDebugSnapshot;
     private boolean lightDebugVisualizationEnabled;

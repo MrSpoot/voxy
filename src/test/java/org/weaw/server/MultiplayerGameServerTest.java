@@ -2,6 +2,7 @@ package org.weaw.server;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
 import org.weaw.game.World;
@@ -21,15 +22,32 @@ import org.weaw.network.client.NetworkClientSession;
 import org.weaw.network.transport.LocalTransportPair;
 import org.weaw.network.transport.TcpClientTransport;
 import org.weaw.network.transport.TcpServerTransport;
+import org.weaw.persistence.PlayerSaveState;
+import org.weaw.persistence.StorageOptions;
+import org.weaw.persistence.WorldManifest;
+import org.weaw.persistence.WorldRepository;
+import org.weaw.persistence.WorldSaveSession;
+import org.weaw.game.generation.GenerationConfig;
+import org.weaw.game.generation.NoiseWorldGenerator;
+import org.weaw.gameplay.GameplaySession;
+import org.weaw.gameplay.GameplaySettings;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MultiplayerGameServerTest {
+    @TempDir
+    Path temporaryDirectory;
+
     @BeforeAll
     static void initializeBlocks() {
         BlockRegistry.initialize();
@@ -285,10 +303,101 @@ class MultiplayerGameServerTest {
         }
     }
 
+    @Test
+    void acceptsDistinctProfileUuidsAndRejectsAProfileAlreadyConnected() throws Exception {
+        World world = createSmallWorld();
+        TcpServerTransport transport = new TcpServerTransport(0);
+        MultiplayerGameServer server = new MultiplayerGameServer(world, 4321L, transport, 3);
+        UUID aliceId = UUID.randomUUID();
+        UUID bobId = UUID.randomUUID();
+        server.start();
+        try (NetworkClientSession alice = new NetworkClientSession(
+                new TcpClientTransport("127.0.0.1", transport.localPort()),
+                BlockRegistry.getDefaultCatalog(), aliceId, "Alice", 2
+        ); NetworkClientSession bob = new NetworkClientSession(
+                new TcpClientTransport("127.0.0.1", transport.localPort()),
+                BlockRegistry.getDefaultCatalog(), bobId, "Bob", 2
+        )) {
+            alice.connect();
+            bob.connect();
+            assertEquals(2, server.getPlayerCount());
+
+            try (NetworkClientSession duplicateAlice = new NetworkClientSession(
+                    new TcpClientTransport("127.0.0.1", transport.localPort()),
+                    BlockRegistry.getDefaultCatalog(), aliceId, "Alice_Clone", 2
+            )) {
+                IOException rejection = assertThrows(IOException.class, duplicateAlice::connect);
+                assertEquals("Player profile is already connected or invalid", rejection.getMessage());
+            }
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    void restoresPlayerStateByStableProfileUuid() {
+        UUID profileId = UUID.randomUUID();
+        StorageOptions storage = new StorageOptions(
+                temporaryDirectory, "persistent", "Persistent", "default", "Alice",
+                60, 2, 2, false, false
+        );
+        GenerationConfig generation = GenerationConfig.defaults().withSeed(4567L);
+        WorldSaveSession firstSave = new WorldRepository(temporaryDirectory).openOrCreate(
+                storage, generation, new WorldHeightRange(0, 0), BlockRegistry.getDefaultCatalog()
+        );
+        World firstWorld = persistentWorld(firstSave);
+        GameplaySession savedGameplay = new GameplaySession(firstWorld, new GameplaySettings());
+        savedGameplay.setPlayerPose(new org.joml.Vector3f(7.0f, 8.0f, 9.0f), 33.0f, -4.0f);
+        savedGameplay.getPlayer().setNoclip(true);
+        savedGameplay.getHotbar().select(5);
+        firstSave.saveNow(firstWorld, List.of(PlayerSaveState.capture(profileId, "Alice", savedGameplay)));
+        firstSave.close();
+        firstWorld.close();
+
+        WorldSaveSession reopened = new WorldRepository(temporaryDirectory).openOrCreate(
+                storage, generation, new WorldHeightRange(0, 0), BlockRegistry.getDefaultCatalog()
+        );
+        World restoredWorld = persistentWorld(reopened);
+        LocalTransportPair pair = new LocalTransportPair();
+        try (MultiplayerGameServer server = new MultiplayerGameServer(
+                restoredWorld, 4567L, pair.server(), 1, reopened
+        )) {
+            pair.client().send(new ClientMessage.Hello(
+                    Protocol.VERSION,
+                    CatalogFingerprint.compute(BlockRegistry.getDefaultCatalog()),
+                    profileId,
+                    "Alice",
+                    2
+            ));
+            server.tickOnce();
+
+            ServerMessage.StateSnapshot snapshot = pollUntil(pair, ServerMessage.StateSnapshot.class);
+            assertNotNull(snapshot);
+            assertEquals(new org.joml.Vector3f(7.0f, 8.0f, 9.0f), snapshot.players().getFirst().position());
+            assertTrue(snapshot.players().getFirst().noclip());
+            assertEquals(5, snapshot.selectedHotbarSlot());
+        }
+    }
+
     private static World createSmallWorld() {
         World world = new World(
                 new FlatGenerator(Blocks.AIR.getId()),
                 new WorldSettings(2, new WorldHeightRange(0, 0), WorldMemoryBudget.balanced(), false)
+        );
+        world.setDynamicLightingEnabled(false);
+        return world;
+    }
+
+    private static World persistentWorld(WorldSaveSession save) {
+        WorldManifest manifest = save.manifest();
+        World world = new World(
+                new NoiseWorldGenerator(manifest.generationConfig()),
+                new WorldSettings(
+                        manifest.simulationDistanceChunks(), manifest.defaultRenderDistanceChunks(),
+                        manifest.heightRange(), WorldMemoryBudget.balanced(), false
+                ),
+                BlockRegistry.getDefaultCatalog(),
+                save.consumeInitialEdits()
         );
         world.setDynamicLightingEnabled(false);
         return world;

@@ -39,12 +39,11 @@ import static org.lwjgl.opengl.GL11.glGetInteger;
 public class RenderPipeline {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RenderPipeline.class);
-    private static final int REQUESTED_MSAA_SAMPLES = 4;
-
     private final RenderContext context;
     private final List<RenderPass> passes = new ArrayList<>();
     private final GpuPassProfiler gpuPassProfiler = new GpuPassProfiler();
     private final AdaptiveQualityController adaptiveQualityController = new AdaptiveQualityController();
+    private int sceneSampleCount;
 
     /**
      * Create a new render pipeline.
@@ -88,6 +87,7 @@ public class RenderPipeline {
      * Execute all render passes in order.
      */
     public void execute() {
+        ensureSceneSampleCount();
         context.getRenderStats().beginFrame(context.getRenderTargets());
         gpuPassProfiler.collectAvailable(context.getRenderStats());
         adaptiveQualityController.update(
@@ -180,7 +180,7 @@ public class RenderPipeline {
 
         // Main scene render target (color + depth)
         // Used by: OpaquePass (write), TransparentPass (read depth, write color), PostProcessPass (read)
-        int sceneSampleCount = Math.max(1, Math.min(REQUESTED_MSAA_SAMPLES, glGetInteger(GL_MAX_SAMPLES)));
+        sceneSampleCount = supportedSampleCount(context.getAntiAliasingMode().sampleCount());
         RenderTarget sceneTarget = new RenderTarget(
                 "sceneColor", width, height, true, GL_RGBA16F, sceneSampleCount);
         context.setRenderTarget("sceneColor", sceneTarget);
@@ -196,5 +196,31 @@ public class RenderPipeline {
         context.setRenderTarget("antiAliasColor", antiAliasTarget);
 
         LOGGER.info("Created shared render targets with {}x scene MSAA", sceneSampleCount);
+    }
+
+    private void ensureSceneSampleCount() {
+        int requested = supportedSampleCount(context.getAntiAliasingMode().sampleCount());
+        if (requested == sceneSampleCount) {
+            return;
+        }
+        RenderTarget previous = context.getRenderTarget("sceneColor");
+        RenderTarget replacement = new RenderTarget(
+                "sceneColor",
+                context.getViewportWidth(),
+                context.getViewportHeight(),
+                true,
+                GL_RGBA16F,
+                requested
+        );
+        context.setRenderTarget("sceneColor", replacement);
+        if (previous != null) {
+            previous.cleanup();
+        }
+        sceneSampleCount = requested;
+        LOGGER.info("Changed scene MSAA to {}x", sceneSampleCount);
+    }
+
+    private static int supportedSampleCount(int requested) {
+        return Math.max(1, Math.min(requested, glGetInteger(GL_MAX_SAMPLES)));
     }
 }

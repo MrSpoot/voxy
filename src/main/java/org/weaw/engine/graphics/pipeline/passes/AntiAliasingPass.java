@@ -33,6 +33,9 @@ public class AntiAliasingPass implements RenderPass {
 
     @Override
     public void execute(RenderContext context) {
+        if (!context.getAntiAliasingMode().usesFxaa()) {
+            return;
+        }
         RenderTarget sourceTarget = context.getCurrentColorTarget();
         if (sourceTarget == null) {
             sourceTarget = context.getRenderTarget("resolvedSceneColor");

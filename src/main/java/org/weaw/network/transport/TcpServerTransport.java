@@ -9,6 +9,8 @@ import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
@@ -30,7 +32,12 @@ public final class TcpServerTransport implements ServerTransport {
     private final AtomicBoolean open = new AtomicBoolean(true);
 
     public TcpServerTransport(int port) throws IOException {
-        serverSocket = new ServerSocket(port);
+        this(port, null);
+    }
+
+    public TcpServerTransport(int port, InetAddress bindAddress) throws IOException {
+        serverSocket = new ServerSocket();
+        serverSocket.bind(new InetSocketAddress(bindAddress, port));
         Thread.ofVirtual().name("voxy-server-network-accept").start(this::acceptLoop);
     }
 

@@ -12,10 +12,12 @@ public class GameplaySession {
     private final PlayerController playerController;
     private final PlayerInteractionSystem playerInteractionSystem;
     private final PlayerHotbar hotbar;
+    private final GameplaySettings settings;
 
     public GameplaySession(World world, GameplaySettings settings) {
         this.world = Objects.requireNonNull(world, "world");
         GameplaySettings gameplaySettings = Objects.requireNonNull(settings, "settings");
+        this.settings = gameplaySettings;
         this.player = new Player();
         this.playerController = new PlayerController(gameplaySettings);
         this.hotbar = new PlayerHotbar(world.getBlockCatalog());
@@ -63,6 +65,10 @@ public class GameplaySession {
 
     public PlayerHotbar getHotbar() {
         return hotbar;
+    }
+
+    public GameplaySettings getSettings() {
+        return settings;
     }
 
     public void setPlayerPosition(Vector3f position) {

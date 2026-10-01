@@ -9,7 +9,8 @@ public record NetworkOptions(
         String playerName,
         int maxPlayers,
         long worldSeed,
-        int viewDistance
+        int viewDistance,
+        boolean lanVisible
 ) {
     public NetworkOptions {
         if (port < 1 || port > 65535) {
@@ -17,5 +18,17 @@ public record NetworkOptions(
         }
         maxPlayers = Math.clamp(maxPlayers, 1, Protocol.MAX_PLAYERS);
         viewDistance = Math.clamp(viewDistance, Protocol.MIN_VIEW_DISTANCE, Protocol.MAX_VIEW_DISTANCE);
+    }
+
+    public NetworkOptions(
+            NetworkMode mode,
+            String host,
+            int port,
+            String playerName,
+            int maxPlayers,
+            long worldSeed,
+            int viewDistance
+    ) {
+        this(mode, host, port, playerName, maxPlayers, worldSeed, viewDistance, true);
     }
 }

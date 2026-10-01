@@ -308,7 +308,7 @@ public class WorldStreamer implements AutoCloseable {
         Set<ChunkPosition> playerChunks = playerPositions.stream()
                 .map(this::toChunkPosition)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        int requestedRenderRadius = settings.getRenderDistanceChunks();
+        int requestedRenderRadius = settings.getSimulationDistanceChunks();
         if (requestedRenderRadius != requestedHorizontalRenderRadius) {
             requestedHorizontalRenderRadius = requestedRenderRadius;
             memoryLimitedRenderRadius = limitRadiusByChunkCount(requestedRenderRadius, memoryBudget.maxLoadedChunks());

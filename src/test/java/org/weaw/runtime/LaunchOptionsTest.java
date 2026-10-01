@@ -79,4 +79,39 @@ class LaunchOptionsTest {
                 () -> LaunchOptions.from(new String[]{"--host", "--connect=localhost"})
         );
     }
+
+    @Test
+    void parsesPersistentWorldAndProfileOptions() {
+        LaunchOptions options = LaunchOptions.from(new String[]{
+                "--data-dir=target/test-data",
+                "--world=survival",
+                "--world-name=Survival One",
+                "--profile=alice",
+                "--name=Alice",
+                "--autosave-seconds=15",
+                "--simulation-distance=10",
+                "--default-render-distance=14",
+                "--seed=42",
+                "--world-min-chunk-y=-3"
+        });
+
+        assertEquals("survival", options.storage().worldKey());
+        assertEquals("Survival One", options.storage().worldName());
+        assertEquals("alice", options.storage().profileKey());
+        assertEquals("Alice", options.storage().requestedPlayerName());
+        assertEquals(15, options.storage().autosaveSeconds());
+        assertEquals(10, options.storage().simulationDistanceChunks());
+        assertEquals(14, options.storage().defaultRenderDistanceChunks());
+        assertTrue(options.storage().seedExplicit());
+        assertTrue(options.storage().heightExplicit());
+    }
+
+    @Test
+    void opensMenuOnlyWhenNoExplicitSessionWasRequested() {
+        assertTrue(LaunchOptions.from(new String[0]).interactiveMenuRequested());
+        assertFalse(LaunchOptions.from(new String[]{"--solo"}).interactiveMenuRequested());
+        assertFalse(LaunchOptions.from(new String[]{"--world=alpha"}).interactiveMenuRequested());
+        assertFalse(LaunchOptions.from(new String[]{"--connect=localhost"}).interactiveMenuRequested());
+        assertFalse(LaunchOptions.from(new String[]{"--dedicated"}).interactiveMenuRequested());
+    }
 }

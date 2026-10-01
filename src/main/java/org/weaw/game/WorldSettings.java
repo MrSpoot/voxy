@@ -6,6 +6,7 @@ public class WorldSettings {
     public static final int DEFAULT_RENDER_DISTANCE_CHUNKS = 32;
 
     private final float[] renderDistanceChunks;
+    private final int simulationDistanceChunks;
     private final WorldHeightRange heightRange;
     private final WorldMemoryBudget memoryBudget;
     private final boolean sparseChunkStreamingEnabled;
@@ -37,7 +38,18 @@ public class WorldSettings {
             WorldMemoryBudget memoryBudget,
             boolean sparseChunkStreamingEnabled
     ) {
-        this.renderDistanceChunks = new float[]{clamp(renderDistanceChunks)};
+        this(renderDistanceChunks, renderDistanceChunks, heightRange, memoryBudget, sparseChunkStreamingEnabled);
+    }
+
+    public WorldSettings(
+            int simulationDistanceChunks,
+            int defaultRenderDistanceChunks,
+            WorldHeightRange heightRange,
+            WorldMemoryBudget memoryBudget,
+            boolean sparseChunkStreamingEnabled
+    ) {
+        this.simulationDistanceChunks = clamp(simulationDistanceChunks);
+        this.renderDistanceChunks = new float[]{clamp(defaultRenderDistanceChunks)};
         this.heightRange = java.util.Objects.requireNonNull(heightRange, "heightRange");
         this.memoryBudget = java.util.Objects.requireNonNull(memoryBudget, "memoryBudget");
         this.sparseChunkStreamingEnabled = sparseChunkStreamingEnabled;
@@ -48,6 +60,10 @@ public class WorldSettings {
         int clampedDistance = clamp(roundedDistance);
         renderDistanceChunks[0] = clampedDistance;
         return clampedDistance;
+    }
+
+    public int getSimulationDistanceChunks() {
+        return simulationDistanceChunks;
     }
 
     public float[] renderDistanceChunksRef() {

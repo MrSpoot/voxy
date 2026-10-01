@@ -12,6 +12,8 @@ import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
 import org.weaw.engine.ui.CreativeInventoryLayout;
 import org.weaw.engine.window.Window;
+import org.weaw.client.ClientApplication;
+import org.weaw.client.ui.GameUiState;
 import org.weaw.game.World;
 import org.weaw.game.ChunkMesher;
 import org.weaw.game.WorldProfilingSnapshot;
@@ -48,10 +50,20 @@ import org.weaw.network.transport.ServerTransport;
 import org.weaw.network.transport.TcpClientTransport;
 import org.weaw.network.transport.TcpServerTransport;
 import org.weaw.runtime.NetworkMode;
+import org.weaw.persistence.PlayerProfile;
+import org.weaw.persistence.PlayerProfileRepository;
+import org.weaw.persistence.ClientSettings;
+import org.weaw.persistence.ClientSettingsRepository;
+import org.weaw.persistence.WorldManifest;
+import org.weaw.persistence.WorldRepository;
+import org.weaw.persistence.WorldSaveSession;
+import org.weaw.persistence.WorldSaveException;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.lwjgl.opengl.GL11.GL_FILL;
 import static org.lwjgl.opengl.GL11.GL_LINE;
@@ -77,6 +89,7 @@ public class Game {
     };
 
     private final LaunchOptions launchOptions;
+    private final GameUiState gameUiState = new GameUiState();
 
     private Window window;
     private InputManager inputManager;
@@ -90,6 +103,9 @@ public class Game {
     private GameServer gameServer;
     private MultiplayerGameServer multiplayerServer;
     private NetworkClientSession networkSession;
+    private PlayerProfile playerProfile;
+    private ClientSettings clientSettings;
+    private WorldSaveSession worldSaveSession;
     private BenchmarkController benchmarkController;
     private JfrProfileRecorder jfrProfileRecorder;
     private RuntimeProfilingCsvWriter runtimeProfilingCsvWriter;
@@ -106,7 +122,14 @@ public class Game {
     private boolean pendingBreakBlock;
     private boolean pendingPlaceBlock;
     private boolean cursorLockedBeforeInventory;
+    private boolean cursorLockedBeforePause;
     private boolean suppressQuitUntilReleased;
+    private boolean returnToTitleRequested;
+    private boolean sessionStopRequested;
+    private boolean ownsWindow;
+    private volatile boolean preparationCancelled;
+    private volatile LoadProgress loadProgress = new LoadProgress(LoadStage.STARTING, 0.0f);
+    private volatile boolean prepared;
 
     private boolean wireframe = false;
 
@@ -128,25 +151,63 @@ public class Game {
     }
 
     public void init(){
-        LOGGER.info("Initializing");
-        BlockRegistry.initialize();
-        blockCatalog = BlockRegistry.getDefaultCatalog();
-
-        if (launchOptions.benchmarkEnabled()) {
-            initializeBenchmarkSession();
-        } else {
-            initializeNetworkSession();
-        }
-
+        prepare();
         window = new Window(
                 "Voxy",
-                launchOptions.benchmarkEnabled() ? launchOptions.benchmark().windowWidth() : 1920,
-                launchOptions.benchmarkEnabled() ? launchOptions.benchmark().windowHeight() : 1080
+                launchOptions.benchmarkEnabled() ? launchOptions.benchmark().windowWidth() : clientSettings.windowWidth(),
+                launchOptions.benchmarkEnabled() ? launchOptions.benchmark().windowHeight() : clientSettings.windowHeight(),
+                !launchOptions.benchmarkEnabled() && clientSettings.fullscreen()
         );
         window.create();
+        ownsWindow = true;
+        attach(window);
+    }
 
+    /** Performs all blocking, non-OpenGL session preparation. Safe to call on a worker thread. */
+    public void prepare() {
+        if (prepared) {
+            return;
+        }
+        try {
+            LOGGER.info("Initializing");
+            updateLoadProgress(LoadStage.REGISTRY, 0.08f);
+            BlockRegistry.initialize();
+            blockCatalog = BlockRegistry.getDefaultCatalog();
+            checkPreparationCancelled();
+            updateLoadProgress(LoadStage.SETTINGS, 0.16f);
+            try {
+                clientSettings = new ClientSettingsRepository(launchOptions.storage().dataDirectory()).load();
+            } catch (RuntimeException exception) {
+                LOGGER.warn("Unable to load client settings, using defaults: {}", exception.getMessage());
+                clientSettings = ClientSettings.defaults();
+            }
+
+            if (launchOptions.benchmarkEnabled()) {
+                initializeBenchmarkSession();
+            } else {
+                initializeNetworkSession();
+            }
+            checkPreparationCancelled();
+            prepared = true;
+            checkPreparationCancelled();
+            updateLoadProgress(LoadStage.READY, 1.0f);
+        } catch (RuntimeException | Error exception) {
+            cleanup();
+            throw exception;
+        }
+    }
+
+    private void attach(Window targetWindow) {
+        window = targetWindow;
+        sessionStopRequested = false;
+        returnToTitleRequested = false;
+        window.setVsync(clientSettings.vsync());
+        window.setCursorLocked(true);
+        gameUiState.initializeSettings(clientSettings);
         inputManager = new InputManager(window.getId());
+        applyClientBindings();
         inputManager.create();
+        gameplaySession.getSettings().setMouseSensitivity(clientSettings.mouseSensitivity());
         creativeInventoryState = new CreativeInventoryState(blockCatalog, gameplaySession.getHotbar());
 
         renderer = new Renderer(
@@ -159,14 +220,17 @@ public class Game {
                 networkSession == null ? null : networkSession.getRemotePlayers()
         );
         renderer.create();
+        renderer.getContext().setGameUiState(gameUiState);
         boolean voxelLightDataEnabled = launchOptions.dynamicLightingEnabled() && launchOptions.lightUploadEnabled();
         renderer.getContext().setVoxelLightDataEnabled(voxelLightDataEnabled);
         renderer.getContext().getLightingSettings().setBlockLightEnabled(voxelLightDataEnabled);
+        renderer.applyGraphicsPreferences(clientSettings.graphicsPreferences());
+        renderer.getContext().setUiScale(clientSettings.uiScale());
 
         // Connect renderer to window for resize notifications
         window.setRenderer(renderer);
 
-        camera = new Camera(90f,window.aspectRatio());
+        camera = new Camera(clientSettings.fieldOfView(), window.aspectRatio());
         syncCameraToPlayer(1.0f);
         startProfilingIfNeeded();
         startRuntimeProfilingIfNeeded();
@@ -174,7 +238,48 @@ public class Game {
         lastTime = System.nanoTime() / 1_000_000_000.0; // secondes
     }
 
+    /** Runs a prepared session inside an application-owned window. */
+    public SessionOutcome run(Window sharedWindow) {
+        try {
+            prepare();
+            ownsWindow = false;
+            attach(sharedWindow);
+            loop();
+            return returnToTitleRequested ? SessionOutcome.RETURN_TO_TITLE : SessionOutcome.EXIT_APPLICATION;
+        } finally {
+            cleanup();
+        }
+    }
+
+    public LoadProgress loadProgress() {
+        return loadProgress;
+    }
+
+    public void cancelPreparation() {
+        preparationCancelled = true;
+        if (prepared && window == null) {
+            cleanup();
+        }
+    }
+
+    private void applyClientBindings() {
+        for (var entry : clientSettings.bindings().entrySet()) {
+            try {
+                InputAction action = InputAction.fromId(entry.getKey());
+                ClientSettings.BindingSetting binding = entry.getValue();
+                if ("mouse".equalsIgnoreCase(binding.type())) {
+                    inputManager.bindMouseButton(action, binding.code());
+                } else if ("key".equalsIgnoreCase(binding.type())) {
+                    inputManager.bindKey(action, binding.code());
+                }
+            } catch (IllegalArgumentException exception) {
+                LOGGER.warn("Ignoring invalid input binding {}", entry.getKey());
+            }
+        }
+    }
+
     private void initializeBenchmarkSession() {
+        updateLoadProgress(LoadStage.WORLD, 0.42f);
         world = createTestWorld();
         applyRuntimeIsolationOptions(world);
         gameplaySession = new GameplaySession(world, new GameplaySettings());
@@ -187,33 +292,47 @@ public class Game {
     }
 
     private void initializeNetworkSession() {
+        ClientTransport clientTransport = null;
         try {
-            ClientTransport clientTransport;
+            updateLoadProgress(LoadStage.PROFILE, 0.26f);
+            playerProfile = new PlayerProfileRepository(launchOptions.storage().dataDirectory()).openOrCreate(
+                    launchOptions.storage().profileKey(),
+                    launchOptions.storage().requestedPlayerName()
+            );
             NetworkMode mode = launchOptions.network().mode();
+            checkPreparationCancelled();
             if (mode == NetworkMode.CONNECT) {
+                updateLoadProgress(LoadStage.CONNECTING, 0.48f);
                 clientTransport = new TcpClientTransport(
                         launchOptions.network().host(),
                         launchOptions.network().port()
                 );
             } else {
+                updateLoadProgress(LoadStage.WORLD, 0.38f);
                 LocalTransportPair local = new LocalTransportPair();
                 List<ServerTransport> serverTransports = new ArrayList<>();
                 serverTransports.add(local.server());
                 if (mode == NetworkMode.HOST) {
-                    serverTransports.add(new TcpServerTransport(launchOptions.network().port()));
+                    serverTransports.add(new TcpServerTransport(
+                            launchOptions.network().port(),
+                            launchOptions.network().lanVisible() ? null : java.net.InetAddress.getLoopbackAddress()
+                    ));
                 }
                 ServerTransport serverTransport = serverTransports.size() == 1
                         ? serverTransports.getFirst()
                         : new CompositeServerTransport(serverTransports);
-                World serverWorld = createTestWorld();
+                World serverWorld = createPersistentWorld();
+                checkPreparationCancelled();
                 applyRuntimeIsolationOptions(serverWorld);
                 multiplayerServer = new MultiplayerGameServer(
                         serverWorld,
-                        launchOptions.network().worldSeed(),
+                        worldSaveSession.manifest().seed(),
                         serverTransport,
-                        launchOptions.network().maxPlayers()
+                        launchOptions.network().maxPlayers(),
+                        worldSaveSession
                 );
                 multiplayerServer.start();
+                updateLoadProgress(LoadStage.SERVER, 0.62f);
                 clientTransport = local.client();
                 if (mode == NetworkMode.HOST) {
                     LOGGER.info("Hosting Voxy on port {}", launchOptions.network().port());
@@ -223,25 +342,65 @@ public class Game {
             networkSession = new NetworkClientSession(
                     clientTransport,
                     blockCatalog,
-                    launchOptions.network().playerName(),
-                    launchOptions.network().viewDistance()
+                    playerProfile.id(),
+                    playerProfile.displayName(),
+                    launchOptions.storage().defaultRenderDistanceChunks()
             );
+            checkPreparationCancelled();
+            updateLoadProgress(LoadStage.HANDSHAKE, 0.78f);
             networkSession.connect();
+            checkPreparationCancelled();
             world = networkSession.getClientWorld().world();
             gameplaySession = networkSession.getGameplay();
-        } catch (IOException exception) {
+            updateLoadProgress(LoadStage.WORLD, 0.92f);
+        } catch (IOException | RuntimeException exception) {
             if (multiplayerServer != null) {
                 multiplayerServer.close();
                 multiplayerServer = null;
+                worldSaveSession = null;
+            }
+            if (networkSession != null) {
+                networkSession.close();
+                networkSession = null;
+            } else if (clientTransport != null) {
+                clientTransport.close();
+            }
+            if (exception instanceof CancellationException cancellationException) {
+                throw cancellationException;
             }
             throw new IllegalStateException("Unable to initialize multiplayer session", exception);
         }
     }
 
+    private World createPersistentWorld() {
+        WorldRepository repository = new WorldRepository(launchOptions.storage().dataDirectory());
+        GenerationConfig requestedGeneration = launchOptions.generationConfig();
+        worldSaveSession = repository.openOrCreate(
+                launchOptions.storage(),
+                requestedGeneration,
+                launchOptions.worldHeightRange(),
+                blockCatalog
+        );
+        WorldManifest manifest = worldSaveSession.manifest();
+        WorldSettings settings = new WorldSettings(
+                manifest.simulationDistanceChunks(),
+                manifest.defaultRenderDistanceChunks(),
+                manifest.heightRange(),
+                launchOptions.worldMemoryBudget(),
+                launchOptions.sparseChunkStreamingEnabled()
+        );
+        return new World(
+                new NoiseWorldGenerator(manifest.generationConfig()),
+                settings,
+                blockCatalog,
+                worldSaveSession.consumeInitialEdits()
+        );
+    }
+
     private void loop() {
         LOGGER.info("Starting game loop");
 
-        while (!window.shouldClose()) {
+        while (!window.shouldClose() && !sessionStopRequested) {
             worldUpdatesThisFrame.reset();
             long frameStartNs = System.nanoTime();
             double now = System.nanoTime() / 1_000_000_000.0;
@@ -267,6 +426,7 @@ public class Game {
                     System.nanoTime() - frameStartNs
             );
             writeRuntimeProfilingFrame(deltaTime);
+            limitFrameRate(frameStartNs);
 //            long end = System.nanoTime();
 //            if((end - start) / 1_000_000.0 > 10.0){
 //                LOGGER.warn("Game loop took too long: {} ms",(end - start) / 1_000_000.0);
@@ -307,6 +467,9 @@ public class Game {
             runtimeProfilingSummaryCollector = null;
         });
         safeCleanup("Renderer", () -> {
+            if (window != null) {
+                window.setRenderer(null);
+            }
             if (renderer != null) {
                 renderer.cleanup();
                 renderer = null;
@@ -321,11 +484,16 @@ public class Game {
             if (multiplayerServer != null) {
                 multiplayerServer.close();
                 multiplayerServer = null;
+                worldSaveSession = null;
             }
             if (gameServer != null) {
                 gameServer.close();
                 gameServer = null;
                 world = null;
+            }
+            if (worldSaveSession != null) {
+                worldSaveSession.close();
+                worldSaveSession = null;
             }
         });
         safeCleanup("Input Manager", () -> {
@@ -336,19 +504,36 @@ public class Game {
         });
         safeCleanup("Window", () -> {
             if (window != null) {
-                window.cleanup();
+                window.setCursorLocked(false);
+                if (ownsWindow) {
+                    window.cleanup();
+                }
                 window = null;
             }
         });
+        prepared = false;
+        ownsWindow = false;
     }
 
     public static void main(String[] args) {
-        LaunchOptions options = LaunchOptions.from(args);
-        if (options.network().mode() == NetworkMode.DEDICATED) {
-            DedicatedServerApplication.run(options);
-            return;
+        try {
+            LaunchOptions options = LaunchOptions.from(args);
+            if (options.network().mode() == NetworkMode.DEDICATED) {
+                DedicatedServerApplication.run(options);
+                return;
+            }
+            if (!options.interactiveMenuRequested()) {
+                new Game(options).run();
+                return;
+            }
+            new ClientApplication(options).run();
+        } catch (WorldSaveException exception) {
+            LOGGER.error(
+                    "Unable to open persistent data ({} at {}): {}",
+                    exception.kind(), exception.path(), exception.getMessage()
+            );
+            throw exception;
         }
-        new Game(options).run();
     }
 
     private World createTestWorld() {
@@ -381,12 +566,14 @@ public class Game {
 
         if (launchOptions.benchmarkEnabled()) {
             if (inputManager.isActionDown(InputAction.QUIT)) {
-                window.close();
+                window.requestClose();
                 return;
             }
             updateBenchmark(deltaTime);
             return;
         }
+
+        processGameUiCommands();
 
         boolean inventoryTransition = handleCreativeInventoryInput();
         if (suppressQuitUntilReleased && !inputManager.isActionDown(InputAction.QUIT)) {
@@ -395,14 +582,27 @@ public class Game {
         if (!creativeInventoryState.isOpen()
                 && !inventoryTransition
                 && !suppressQuitUntilReleased
-                && inputManager.isActionDown(InputAction.QUIT)) {
-            window.close();
+                && inputManager.isActionPressed(InputAction.QUIT)) {
+            setPaused(!gameUiState.isPaused());
+            return;
+        }
+
+        if (gameUiState.isPaused()) {
+            inputManager.getMouseScroll();
+            clearConsumedPlayerInput();
+            if (launchOptions.network().mode() != NetworkMode.SOLO) {
+                networkSession.update(deltaTime, PlayerInput.disabled());
+            }
+            updateNetworkDebugSnapshot();
             return;
         }
 
         if (!creativeInventoryState.isOpen() && !inventoryTransition) {
             handleInputModes();
             handleHotbarKeys();
+            if (inputManager.isActionPressed(InputAction.TOGGLE_DEBUG)) {
+                gameUiState.toggleDebugVisible();
+            }
         }
 
         if (!creativeInventoryState.isOpen()
@@ -426,13 +626,157 @@ public class Game {
         }
         if (!networkSession.isOpen()) {
             LOGGER.error("Disconnected from server: {}", networkSession.closeReason());
-            window.close();
+            returnToTitleRequested = true;
+            sessionStopRequested = true;
         }
+        updateNetworkDebugSnapshot();
+        updateRenderInteractionTarget();
+    }
+
+    private void processGameUiCommands() {
+        ClientSettings preview = gameUiState.consumeSettingsPreview();
+        if (preview != null) {
+            applyRuntimeSettings(preview);
+        }
+        ClientSettings cancelled = gameUiState.consumeSettingsCancel();
+        if (cancelled != null) {
+            applyRuntimeSettings(cancelled);
+        }
+        ClientSettings applied = gameUiState.consumeSettingsApply();
+        if (applied != null) {
+            ClientSettings previous = clientSettings;
+            try {
+                window.applyDisplayMode(applied.windowWidth(), applied.windowHeight(), applied.fullscreen());
+                applyRuntimeSettings(applied);
+                new ClientSettingsRepository(launchOptions.storage().dataDirectory()).save(applied);
+                clientSettings = applied;
+                gameUiState.settingsApplied(applied);
+                gameUiState.setStatusMessage("Paramètres enregistrés / Settings saved");
+            } catch (RuntimeException exception) {
+                try {
+                    window.applyDisplayMode(previous.windowWidth(), previous.windowHeight(), previous.fullscreen());
+                } catch (RuntimeException restoreException) {
+                    exception.addSuppressed(restoreException);
+                }
+                applyRuntimeSettings(previous);
+                gameUiState.setStatusMessage("Erreur paramètres / Settings error: " + exception.getMessage());
+            }
+        }
+        if (gameUiState.consumeResumeRequest()) {
+            setPaused(false);
+        }
+        if (gameUiState.consumeSaveRequest()) {
+            if (multiplayerServer != null) {
+                multiplayerServer.requestSave();
+                gameUiState.setStatusMessage("Sauvegarde lancée / Saving…");
+            } else {
+                gameUiState.setStatusMessage("Sauvegarde gérée par le serveur / Server-managed save");
+            }
+        }
+        if (gameUiState.consumeReturnToTitleRequest()) {
+            if (multiplayerServer != null) {
+                multiplayerServer.requestSave();
+            }
+            returnToTitleRequested = true;
+            sessionStopRequested = true;
+        }
+    }
+
+    private void applyRuntimeSettings(ClientSettings settings) {
+        window.setVsync(settings.vsync());
+        if (camera != null) {
+            camera.setFov(settings.fieldOfView());
+        }
+        world.getSettings().renderDistanceChunksRef()[0] = settings.renderDistanceChunks();
+        gameplaySession.getSettings().setMouseSensitivity(settings.mouseSensitivity());
+        renderer.applyGraphicsPreferences(settings.graphicsPreferences());
+        renderer.getContext().setUiScale(settings.uiScale());
+        for (InputAction action : InputAction.values()) {
+            ClientSettings.BindingSetting stored = settings.bindings().get(action.getId());
+            if (stored == null) {
+                inputManager.resetBinding(action);
+            } else if ("mouse".equalsIgnoreCase(stored.type())) {
+                inputManager.bindMouseButton(action, stored.code());
+            } else {
+                inputManager.bindKey(action, stored.code());
+            }
+        }
+        if (networkSession != null) {
+            networkSession.requestViewDistance(settings.renderDistanceChunks());
+        }
+    }
+
+    private void limitFrameRate(long frameStartNs) {
+        ClientSettings effective = gameUiState.getSettingsDraft() == null
+                ? clientSettings
+                : gameUiState.getSettingsDraft();
+        if (launchOptions.benchmarkEnabled() || effective == null || effective.frameRateLimit() <= 0) {
+            return;
+        }
+        long targetNs = 1_000_000_000L / effective.frameRateLimit();
+        long remaining = targetNs - (System.nanoTime() - frameStartNs);
+        if (remaining > 0L) {
+            LockSupport.parkNanos(remaining);
+        }
+    }
+
+    private void updateLoadProgress(LoadStage stage, float fraction) {
+        loadProgress = new LoadProgress(stage, fraction);
+    }
+
+    private void checkPreparationCancelled() {
+        if (preparationCancelled || Thread.currentThread().isInterrupted()) {
+            throw new CancellationException("Game session loading cancelled");
+        }
+    }
+
+    public enum SessionOutcome {
+        RETURN_TO_TITLE,
+        EXIT_APPLICATION
+    }
+
+    public enum LoadStage {
+        STARTING,
+        REGISTRY,
+        SETTINGS,
+        PROFILE,
+        CONNECTING,
+        WORLD,
+        SERVER,
+        HANDSHAKE,
+        READY
+    }
+
+    public record LoadProgress(LoadStage stage, float fraction) {
+    }
+
+    private void setPaused(boolean paused) {
+        if (gameUiState.isPaused() == paused) {
+            return;
+        }
+        if (paused) {
+            cursorLockedBeforePause = window.isCursorLocked();
+            window.setCursorLocked(false);
+        } else {
+            if (gameUiState.isSettingsOpen() && gameUiState.getSettingsSnapshot() != null) {
+                applyRuntimeSettings(gameUiState.getSettingsSnapshot());
+                gameUiState.initializeSettings(clientSettings);
+                gameUiState.setSettingsOpen(false);
+            }
+            window.setCursorLocked(cursorLockedBeforePause);
+            inputManager.resetMouseDelta();
+        }
+        gameUiState.setPaused(paused);
+        if (multiplayerServer != null && launchOptions.network().mode() == NetworkMode.SOLO) {
+            multiplayerServer.setPaused(paused);
+        }
+    }
+
+    private void updateNetworkDebugSnapshot() {
         renderer.getContext().setNetworkDebugSnapshot(NetworkDebugSnapshot.from(
                 networkSession.getNetworkStats(),
                 multiplayerServer == null ? null : multiplayerServer.getNetworkStats()
         ));
-        updateRenderInteractionTarget();
     }
 
     private boolean handleCreativeInventoryInput() {
@@ -468,6 +812,9 @@ public class Game {
         CreativeInventoryLayout layout = CreativeInventoryLayout.forViewport(
                 window.getWidth(),
                 window.getHeight(),
+                gameUiState.getSettingsDraft() == null
+                        ? clientSettings.uiScale()
+                        : gameUiState.getSettingsDraft().uiScale(),
                 true
         );
         float mouseX = (float) inputManager.getMouseX()
@@ -511,7 +858,7 @@ public class Game {
                     benchmarkController.loadingConverged(),
                     String.format(java.util.Locale.ROOT, "%.2f", benchmarkController.loadingDurationSeconds())
             );
-            window.close();
+            window.requestClose();
         }
     }
 

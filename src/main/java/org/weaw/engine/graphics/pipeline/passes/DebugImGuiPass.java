@@ -3,9 +3,11 @@ package org.weaw.engine.graphics.pipeline.passes;
 import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.flag.ImGuiCond;
+import imgui.flag.ImGuiWindowFlags;
 import imgui.gl3.ImGuiImplGl3;
 import imgui.glfw.ImGuiImplGlfw;
 import imgui.type.ImBoolean;
+import imgui.type.ImInt;
 import org.weaw.engine.graphics.pipeline.CloudSettings;
 import org.weaw.engine.graphics.pipeline.ColorGradingSettings;
 import org.weaw.engine.graphics.pipeline.FogSettings;
@@ -15,9 +17,19 @@ import org.weaw.engine.graphics.pipeline.RenderContext;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.RenderStats;
 import org.weaw.engine.graphics.pipeline.WaterSettings;
+import org.weaw.client.ui.GameUiState;
+import org.weaw.client.ui.UiFonts;
 import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputManager;
+import org.weaw.engine.ui.ResponsiveImGuiStyle;
 import org.weaw.engine.window.Window;
+import org.weaw.engine.window.DisplayResolution;
+import org.weaw.engine.window.DisplayResolutionCatalog;
+import org.weaw.persistence.AntiAliasingMode;
+import org.weaw.persistence.ClientSettings;
+import org.weaw.persistence.GraphicsPreferences;
+import org.weaw.persistence.GraphicsPreset;
+import org.weaw.client.ui.ResponsiveUiLayout;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
 import org.weaw.game.World;
@@ -30,6 +42,8 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.List;
+import java.util.LinkedHashMap;
 
 import static org.lwjgl.opengl.GL11.GL_RENDERER;
 import static org.lwjgl.opengl.GL11.GL_VENDOR;
@@ -50,6 +64,7 @@ public class DebugImGuiPass implements RenderPass {
 
     private ImGuiImplGlfw imGuiGlfw;
     private ImGuiImplGl3 imGuiGl3;
+    private UiFonts.InstalledFont installedFont;
     private double lastFrameTime;
     private double statsAccumulator;
     private int framesAccumulated;
@@ -63,8 +78,8 @@ public class DebugImGuiPass implements RenderPass {
     private int maxTextureUnits;
     private int maxShaderStorageBindings;
     private double lastStatsRefreshTime;
-    private boolean showOverviewWindow = true;
-    private boolean showParametersWindow = true;
+    private boolean showOverviewWindow = false;
+    private boolean showParametersWindow = false;
     private boolean showFrameWindow = false;
     private boolean showGpuWindow = false;
     private boolean showArenaWindow = false;
@@ -73,7 +88,7 @@ public class DebugImGuiPass implements RenderPass {
     private boolean showLightingWindow = false;
     private boolean showCloudWindow = false;
     private boolean showWaterWindow = false;
-    private boolean showLightDebugWindow = true;
+    private boolean showLightDebugWindow = false;
     private boolean showColorGradingWindow = false;
     private boolean showFogWindow = false;
     private boolean showJvmWindow = false;
@@ -84,6 +99,10 @@ public class DebugImGuiPass implements RenderPass {
     private int lastLayoutHeight = -1;
     private final Map<String, ChunkProfilingHistory> chunkProfilingHistories = new HashMap<>();
     private DisplaySnapshot displaySnapshot = DisplaySnapshot.empty();
+    private float pauseUiScale = 1.0f;
+    private ResponsiveImGuiStyle responsiveStyle;
+    private InputAction bindingCaptureAction;
+    private int bindingCaptureFrame;
     private WindowRect overviewRect = WindowRect.of(10.0f, 35.0f, 320.0f, 120.0f);
     private WindowRect parametersRect = WindowRect.of(10.0f, 170.0f, 320.0f, 120.0f);
     private WindowRect frameRect = WindowRect.of(10.0f, 170.0f, 360.0f, 145.0f);
@@ -114,9 +133,11 @@ public class DebugImGuiPass implements RenderPass {
     @Override
     public void create() {
         ImGui.createContext();
+        responsiveStyle = ResponsiveImGuiStyle.capture(ImGui.getStyle());
 
         ImGuiIO io = ImGui.getIO();
         io.setIniFilename(null);
+        installedFont = UiFonts.installPixelFont(io, 20.0f);
 
         imGuiGlfw = new ImGuiImplGlfw();
         imGuiGlfw.init(window.getId(), true);
@@ -138,7 +159,9 @@ public class DebugImGuiPass implements RenderPass {
 
     @Override
     public void execute(RenderContext context) {
-        if (context.getCreativeInventoryState() != null && context.getCreativeInventoryState().isOpen()) {
+        GameUiState gameUi = context.getGameUiState();
+        boolean paused = gameUi != null && gameUi.isPaused();
+        if (!paused && context.getCreativeInventoryState() != null && context.getCreativeInventoryState().isOpen()) {
             return;
         }
         updateFrameStats();
@@ -150,27 +173,333 @@ public class DebugImGuiPass implements RenderPass {
         imGuiGl3.newFrame();
         ImGui.newFrame();
 
-        renderMainMenuBar();
-        renderOverviewWindow(context);
-        renderParametersWindow(context);
-        renderFrameWindow();
-        renderGpuWindow(context);
-        renderArenaWindow(context);
-        renderChunkProfilingWindow(context);
-        renderResourcesWindow();
-        renderLightingWindow(context);
-        renderCloudWindow(context);
-        renderWaterWindow(context);
-        renderLightDebugWindow(context);
-        renderColorGradingWindow(context);
-        renderFogWindow(context);
-        renderJvmWindow(context);
-        renderDeviceWindow();
-        renderPassBreakdownWindow();
+        float targetUiScale = 1.0f;
+        if (paused && gameUi.getSettingsDraft() != null) {
+            ResponsiveUiLayout layout = ResponsiveUiLayout.fit(
+                    window.getLogicalWidth(), window.getLogicalHeight(),
+                    gameUi.isSettingsOpen() ? 780.0f : 440.0f,
+                    gameUi.isSettingsOpen() ? 650.0f : 350.0f,
+                    gameUi.getSettingsDraft().uiScale(), 12.0f
+            );
+            targetUiScale = layout.scale();
+        }
+        ImGui.getStyle().setFontScaleMain(targetUiScale);
+        pauseUiScale = targetUiScale;
+        responsiveStyle.pushScaled(targetUiScale);
+        try {
+            if (gameUi == null || gameUi.isDebugVisible()) {
+                renderMainMenuBar();
+                renderOverviewWindow(context);
+                renderParametersWindow(context);
+                renderFrameWindow();
+                renderGpuWindow(context);
+                renderArenaWindow(context);
+                renderChunkProfilingWindow(context);
+                renderResourcesWindow();
+                renderLightingWindow(context);
+                renderCloudWindow(context);
+                renderWaterWindow(context);
+                renderLightDebugWindow(context);
+                renderColorGradingWindow(context);
+                renderFogWindow(context);
+                renderJvmWindow(context);
+                renderDeviceWindow();
+                renderPassBreakdownWindow();
+            }
+            if (paused) {
+                renderPauseMenu(gameUi);
+            }
+        } finally {
+            responsiveStyle.popScaled();
+        }
 
         ImGui.render();
         imGuiGl3.renderDrawData(ImGui.getDrawData());
         layoutRefreshPending = false;
+    }
+
+    private void renderPauseMenu(GameUiState gameUi) {
+        ClientSettings draft = gameUi.getSettingsDraft();
+        if (draft == null) return;
+        float desiredWidth = gameUi.isSettingsOpen() ? 780.0f : 440.0f;
+        float desiredHeight = gameUi.isSettingsOpen() ? 650.0f : 350.0f;
+        ResponsiveUiLayout layout = ResponsiveUiLayout.fit(
+                window.getLogicalWidth(), window.getLogicalHeight(),
+                desiredWidth, desiredHeight, draft.uiScale(), 12.0f
+        );
+        ImGui.setNextWindowPos(layout.x(), layout.y(), ImGuiCond.Always);
+        ImGui.setNextWindowSize(layout.width(), layout.height(), ImGuiCond.Always);
+        int flags = ImGuiWindowFlags.NoDecoration
+                | ImGuiWindowFlags.NoMove
+                | ImGuiWindowFlags.NoResize
+                | ImGuiWindowFlags.NoSavedSettings;
+        if (!ImGui.begin("Voxy pause", flags)) {
+            ImGui.end();
+            return;
+        }
+
+        ImGui.setWindowFontScale(1.35f);
+        centeredText("VOXY");
+        ImGui.setWindowFontScale(1.0f);
+        centeredText("Jeu en pause / Game paused");
+        ImGui.spacing();
+
+        if (gameUi.isSettingsOpen()) {
+            if (ImGui.beginTabBar("pause-settings-tabs")) {
+                if (ImGui.beginTabItem("Graphismes / Graphics")) {
+                    renderInGameGraphicsSettings(gameUi, draft);
+                    ImGui.endTabItem();
+                }
+                if (ImGui.beginTabItem("Contrôles / Controls")) {
+                    float[] sensitivity = {draft.mouseSensitivity()};
+                    if (ImGui.sliderFloat("Sensibilité / Sensitivity", sensitivity, 0.01f, 1.0f)) {
+                        preview(gameUi, draft.withRuntimePreferences(
+                                draft.locale(), draft.uiScale(), draft.vsync(), draft.frameRateLimit(),
+                                draft.fieldOfView(), draft.renderDistanceChunks(), draft.graphicsPreferences(),
+                                sensitivity[0], draft.bindings()
+                        ));
+                    }
+                    if (ImGui.beginChild("pause-bindings", 0.0f, scaled(235.0f), true)) {
+                        for (InputAction action : InputAction.values()) {
+                            ImGui.text(action.getDisplayName());
+                            ImGui.sameLine(scaled(280.0f));
+                            ClientSettings.BindingSetting binding = effectiveBinding(draft, action);
+                            String label = bindingCaptureAction == action
+                                    ? "...##pause-bind-" + action.getId()
+                                    : bindingLabel(binding) + "##pause-bind-" + action.getId();
+                            if (ImGui.button(label, scaled(150.0f), scaled(28.0f))) {
+                                bindingCaptureAction = action;
+                                bindingCaptureFrame = ImGui.getFrameCount();
+                            }
+                        }
+                        ImGui.endChild();
+                    }
+                    if (ImGui.button("Réinitialiser / Reset bindings")) {
+                        preview(gameUi, draft.withRuntimePreferences(
+                                draft.locale(), draft.uiScale(), draft.vsync(), draft.frameRateLimit(),
+                                draft.fieldOfView(), draft.renderDistanceChunks(), draft.graphicsPreferences(),
+                                draft.mouseSensitivity(), Map.of()
+                        ));
+                    }
+                    ImGui.endTabItem();
+                }
+                if (ImGui.beginTabItem("Jeu / Game")) {
+                    ImInt language = new ImInt("en".equals(draft.locale()) ? 1 : 0);
+                    if (ImGui.combo("Langue / Language", language, new String[]{"Français", "English"})) {
+                        preview(gameUi, draft.withRuntimePreferences(
+                                language.get() == 0 ? "fr" : "en", draft.uiScale(), draft.vsync(),
+                                draft.frameRateLimit(), draft.fieldOfView(), draft.renderDistanceChunks(),
+                                draft.graphicsPreferences(), draft.mouseSensitivity(), draft.bindings()
+                        ));
+                    }
+                    ImGui.endTabItem();
+                }
+                ImGui.endTabBar();
+            }
+            ImGui.spacing();
+            captureBindingInput(gameUi);
+            if (ImGui.button("Appliquer / Apply", scaled(180.0f), scaled(40.0f))) {
+                gameUi.requestSettingsApply(gameUi.getSettingsDraft());
+            }
+            ImGui.sameLine();
+            if (ImGui.button("Annuler / Cancel", scaled(180.0f), scaled(40.0f))) {
+                gameUi.requestSettingsCancel();
+                gameUi.setSettingsOpen(false);
+            }
+            ImGui.sameLine();
+            if (ImGui.button("Défauts / Defaults", scaled(180.0f), scaled(40.0f))) {
+                ClientSettings defaults = ClientSettings.defaults();
+                preview(gameUi, draft.withRuntimePreferences(
+                        defaults.locale(), defaults.uiScale(), defaults.vsync(), defaults.frameRateLimit(),
+                        defaults.fieldOfView(), defaults.renderDistanceChunks(), defaults.graphicsPreferences(),
+                        defaults.mouseSensitivity(), defaults.bindings()
+                ));
+            }
+        } else {
+            if (fullWidthButton("Reprendre / Resume", layout.width() - scaled(32.0f))) {
+                gameUi.requestResume();
+            }
+            if (fullWidthButton("Options", layout.width() - scaled(32.0f))) {
+                gameUi.setSettingsOpen(true);
+            }
+            if (fullWidthButton("Sauvegarder / Save", layout.width() - scaled(32.0f))) {
+                gameUi.requestSave();
+            }
+            if (fullWidthButton("Quitter vers le menu / Save & Quit", layout.width() - scaled(32.0f))) {
+                gameUi.requestReturnToTitle();
+            }
+            if (gameUi.getStatusMessage() != null) {
+                ImGui.spacing();
+                centeredText(gameUi.getStatusMessage());
+            }
+        }
+        ImGui.end();
+    }
+
+    private void renderInGameGraphicsSettings(GameUiState gameUi, ClientSettings draft) {
+        List<DisplayResolution> resolutions = DisplayResolutionCatalog.standardsFor(
+                window.nativeDisplayResolution().width(), window.nativeDisplayResolution().height()
+        );
+        String[] labels = resolutions.stream().map(DisplayResolution::label).toArray(String[]::new);
+        ImInt resolution = new ImInt(DisplayResolutionCatalog.nearestIndex(
+                resolutions, draft.windowWidth(), draft.windowHeight()
+        ));
+        if (ImGui.combo("Résolution", resolution, labels)) {
+            DisplayResolution selected = resolutions.get(resolution.get());
+            preview(gameUi, draft.withDisplayMode(selected.width(), selected.height(), draft.fullscreen()));
+        }
+        ImBoolean fullscreen = new ImBoolean(draft.fullscreen());
+        if (ImGui.checkbox("Plein écran / Fullscreen", fullscreen)) {
+            preview(gameUi, draft.withDisplayMode(draft.windowWidth(), draft.windowHeight(), fullscreen.get()));
+        }
+        ImBoolean vsync = new ImBoolean(draft.vsync());
+        if (ImGui.checkbox("Synchronisation verticale / VSync", vsync)) {
+            preview(gameUi, draft.withRuntimePreferences(
+                    draft.locale(), draft.uiScale(), vsync.get(), draft.frameRateLimit(), draft.fieldOfView(),
+                    draft.renderDistanceChunks(), draft.graphicsPreferences(), draft.mouseSensitivity(), draft.bindings()
+            ));
+        }
+        int[] frameRate = {draft.frameRateLimit()};
+        if (ImGui.sliderInt("Limite FPS / FPS limit (0 = max)", frameRate, 0, 360)) {
+            preview(gameUi, draft.withRuntimePreferences(
+                    draft.locale(), draft.uiScale(), draft.vsync(), frameRate[0], draft.fieldOfView(),
+                    draft.renderDistanceChunks(), draft.graphicsPreferences(), draft.mouseSensitivity(), draft.bindings()
+            ));
+        }
+        float[] uiScale = {draft.uiScale()};
+        if (ImGui.sliderFloat("Échelle interface / UI scale", uiScale, 0.75f, 2.0f)) {
+            preview(gameUi, draft.withRuntimePreferences(
+                    draft.locale(), uiScale[0], draft.vsync(), draft.frameRateLimit(), draft.fieldOfView(),
+                    draft.renderDistanceChunks(), draft.graphicsPreferences(), draft.mouseSensitivity(), draft.bindings()
+            ));
+        }
+        float[] fov = {draft.fieldOfView()};
+        if (ImGui.sliderFloat("Champ de vision / FOV", fov, 60.0f, 120.0f)) {
+            preview(gameUi, draft.withRuntimePreferences(
+                    draft.locale(), draft.uiScale(), draft.vsync(), draft.frameRateLimit(), fov[0],
+                    draft.renderDistanceChunks(), draft.graphicsPreferences(), draft.mouseSensitivity(), draft.bindings()
+            ));
+        }
+        int[] renderDistance = {draft.renderDistanceChunks()};
+        if (ImGui.sliderInt("Distance de rendu / Render distance", renderDistance, 2, 32)) {
+            preview(gameUi, draft.withRuntimePreferences(
+                    draft.locale(), draft.uiScale(), draft.vsync(), draft.frameRateLimit(), draft.fieldOfView(),
+                    renderDistance[0], draft.graphicsPreferences(), draft.mouseSensitivity(), draft.bindings()
+            ));
+        }
+
+        GraphicsPreferences graphics = draft.graphicsPreferences();
+        ImInt preset = new ImInt(graphics.preset().ordinal());
+        if (ImGui.combo("Qualité / Quality", preset,
+                new String[]{"Auto", "Bas / Low", "Moyen / Medium", "Élevé / High", "Personnalisé / Custom"})) {
+            GraphicsPreferences next = GraphicsPreferences.forPreset(GraphicsPreset.values()[preset.get()], graphics);
+            previewGraphics(gameUi, draft, next);
+            graphics = next;
+        }
+        if (ImGui.collapsingHeader("Détails / Details")) {
+            ImInt aa = new ImInt(graphics.antiAliasing().ordinal());
+            boolean changed = ImGui.combo("Anti-aliasing", aa,
+                    new String[]{"Off", "FXAA", "MSAA 2×", "MSAA 4×"});
+            ImBoolean clouds = new ImBoolean(graphics.cloudsEnabled());
+            ImBoolean waves = new ImBoolean(graphics.waterWavesEnabled());
+            ImBoolean lighting = new ImBoolean(graphics.lightingEnabled());
+            ImBoolean blockLighting = new ImBoolean(graphics.blockLightingEnabled());
+            ImBoolean toneMapping = new ImBoolean(graphics.toneMappingEnabled());
+            ImBoolean autoExposure = new ImBoolean(graphics.autoExposureEnabled());
+            changed |= ImGui.checkbox("Nuages / Clouds", clouds);
+            changed |= ImGui.checkbox("Vagues / Waves", waves);
+            changed |= ImGui.checkbox("Éclairage / Lighting", lighting);
+            changed |= ImGui.checkbox("Lumières de blocs / Block lights", blockLighting);
+            changed |= ImGui.checkbox("Tone mapping", toneMapping);
+            changed |= ImGui.checkbox("Exposition auto / Auto exposure", autoExposure);
+            float[] exposure = {graphics.exposure()};
+            float[] contrast = {graphics.contrast()};
+            float[] saturation = {graphics.saturation()};
+            float[] gamma = {graphics.gamma()};
+            changed |= ImGui.sliderFloat("Exposition / Exposure", exposure, -4.0f, 4.0f);
+            changed |= ImGui.sliderFloat("Contraste / Contrast", contrast, 0.5f, 2.0f);
+            changed |= ImGui.sliderFloat("Saturation", saturation, 0.0f, 2.0f);
+            changed |= ImGui.sliderFloat("Gamma", gamma, 0.5f, 3.0f);
+            if (changed) {
+                previewGraphics(gameUi, draft, graphics.customized(
+                        AntiAliasingMode.values()[aa.get()], clouds.get(), waves.get(), lighting.get(),
+                        blockLighting.get(), toneMapping.get(), autoExposure.get(), exposure[0], contrast[0],
+                        saturation[0], gamma[0]
+                ));
+            }
+        }
+    }
+
+    private static void previewGraphics(GameUiState gameUi, ClientSettings draft, GraphicsPreferences graphics) {
+        preview(gameUi, draft.withRuntimePreferences(
+                draft.locale(), draft.uiScale(), draft.vsync(), draft.frameRateLimit(), draft.fieldOfView(),
+                draft.renderDistanceChunks(), graphics, draft.mouseSensitivity(), draft.bindings()
+        ));
+    }
+
+    private static void preview(GameUiState gameUi, ClientSettings draft) {
+        gameUi.previewSettings(draft);
+    }
+
+    private void captureBindingInput(GameUiState gameUi) {
+        if (bindingCaptureAction == null || ImGui.getFrameCount() <= bindingCaptureFrame + 1) {
+            return;
+        }
+        ClientSettings draft = gameUi.getSettingsDraft();
+        for (int key = org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE; key <= org.lwjgl.glfw.GLFW.GLFW_KEY_LAST; key++) {
+            if (org.lwjgl.glfw.GLFW.glfwGetKey(window.getId(), key) == org.lwjgl.glfw.GLFW.GLFW_PRESS) {
+                updateCapturedBinding(gameUi, draft, new ClientSettings.BindingSetting("key", key));
+                return;
+            }
+        }
+        for (int button = 0; button <= org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LAST; button++) {
+            if (org.lwjgl.glfw.GLFW.glfwGetMouseButton(window.getId(), button)
+                    == org.lwjgl.glfw.GLFW.GLFW_PRESS) {
+                updateCapturedBinding(gameUi, draft, new ClientSettings.BindingSetting("mouse", button));
+                return;
+            }
+        }
+    }
+
+    private void updateCapturedBinding(
+            GameUiState gameUi,
+            ClientSettings draft,
+            ClientSettings.BindingSetting binding
+    ) {
+        Map<String, ClientSettings.BindingSetting> bindings = new LinkedHashMap<>(draft.bindings());
+        bindings.put(bindingCaptureAction.getId(), binding);
+        bindingCaptureAction = null;
+        preview(gameUi, draft.withRuntimePreferences(
+                draft.locale(), draft.uiScale(), draft.vsync(), draft.frameRateLimit(), draft.fieldOfView(),
+                draft.renderDistanceChunks(), draft.graphicsPreferences(), draft.mouseSensitivity(), bindings
+        ));
+    }
+
+    private static ClientSettings.BindingSetting effectiveBinding(ClientSettings settings, InputAction action) {
+        ClientSettings.BindingSetting stored = settings.bindings().get(action.getId());
+        if (stored != null) return stored;
+        var defaults = action.getDefaultBinding();
+        return new ClientSettings.BindingSetting(
+                defaults.type() == org.weaw.engine.input.InputBindingType.MOUSE_BUTTON ? "mouse" : "key",
+                defaults.code()
+        );
+    }
+
+    private static String bindingLabel(ClientSettings.BindingSetting binding) {
+        return ("mouse".equalsIgnoreCase(binding.type()) ? "Mouse " : "Key ") + binding.code();
+    }
+
+    private boolean fullWidthButton(String label, float width) {
+        return ImGui.button(label, width, scaled(38.0f));
+    }
+
+    private float scaled(float value) {
+        return value * pauseUiScale;
+    }
+
+    private static void centeredText(String value) {
+        ImGui.setCursorPosX(Math.max(8.0f, (ImGui.getWindowWidth() - ImGui.calcTextSize(value).x) * 0.5f));
+        ImGui.text(value);
     }
 
     @Override
@@ -188,7 +517,13 @@ public class DebugImGuiPass implements RenderPass {
             imGuiGlfw.shutdown();
             imGuiGlfw = null;
         }
-        ImGui.destroyContext();
+        if (ImGui.getCurrentContext().isValidPtr()) {
+            ImGui.destroyContext();
+        }
+        if (installedFont != null) {
+            installedFont.close();
+            installedFont = null;
+        }
     }
 
     private void updateFrameStats() {
@@ -881,14 +1216,20 @@ public class DebugImGuiPass implements RenderPass {
 
     private void applyWindowLayout(WindowRect rect, float alpha) {
         int condition = layoutRefreshPending ? ImGuiCond.Always : ImGuiCond.Once;
-        ImGui.setNextWindowPos(rect.x(), rect.y(), condition);
-        ImGui.setNextWindowSize(rect.width(), rect.height(), condition);
+        float viewportWidth = Math.max(1.0f, window.getLogicalWidth());
+        float viewportHeight = Math.max(1.0f, window.getLogicalHeight());
+        float width = Math.min(rect.width(), Math.max(1.0f, viewportWidth - 4.0f));
+        float height = Math.min(rect.height(), Math.max(1.0f, viewportHeight - 39.0f));
+        float x = Math.clamp(rect.x(), 2.0f, Math.max(2.0f, viewportWidth - width - 2.0f));
+        float y = Math.clamp(rect.y(), 35.0f, Math.max(35.0f, viewportHeight - height - 2.0f));
+        ImGui.setNextWindowPos(x, y, condition);
+        ImGui.setNextWindowSize(width, height, condition);
         ImGui.setNextWindowBgAlpha(alpha);
     }
 
     private void updateWindowLayoutIfNeeded(RenderContext context) {
-        int viewportWidth = context.getViewportWidth();
-        int viewportHeight = context.getViewportHeight();
+        int viewportWidth = window.getLogicalWidth();
+        int viewportHeight = window.getLogicalHeight();
         if (!layoutRefreshPending && viewportWidth == lastLayoutWidth && viewportHeight == lastLayoutHeight) {
             return;
         }
@@ -900,7 +1241,7 @@ public class DebugImGuiPass implements RenderPass {
         float gap = 20.0f;
         float rowGap = 15.0f;
         float top = 35.0f;
-        float contentWidth = Math.max(260.0f, viewportWidth - (margin * 2.0f));
+        float contentWidth = Math.max(1.0f, viewportWidth - (margin * 2.0f));
 
         if (viewportWidth >= 1180) {
             float columnWidth = (contentWidth - (gap * 2.0f)) / 3.0f;

@@ -25,6 +25,7 @@ public final class MessageCodec {
     private static final int CLIENT_SET_HOTBAR = 3;
     private static final int CLIENT_SWAP_HOTBAR = 4;
     private static final int CLIENT_DISCONNECT = 5;
+    private static final int CLIENT_SET_VIEW_DISTANCE = 6;
 
     private static final int SERVER_WELCOME = 64;
     private static final int SERVER_STATE = 65;
@@ -69,6 +70,8 @@ public final class MessageCodec {
                 output.writeByte(CLIENT_HELLO);
                 output.writeInt(hello.protocolVersion());
                 output.writeLong(hello.catalogFingerprint());
+                output.writeLong(hello.profileId().getMostSignificantBits());
+                output.writeLong(hello.profileId().getLeastSignificantBits());
                 writeString(output, hello.playerName(), Protocol.MAX_PLAYER_NAME_BYTES);
                 output.writeInt(hello.viewDistance());
             }
@@ -92,6 +95,10 @@ public final class MessageCodec {
                 output.writeByte(swap.firstSlot());
                 output.writeByte(swap.secondSlot());
             }
+            case ClientMessage.SetViewDistance set -> {
+                output.writeByte(CLIENT_SET_VIEW_DISTANCE);
+                output.writeInt(set.viewDistance());
+            }
             case ClientMessage.Disconnect ignored -> output.writeByte(CLIENT_DISCONNECT);
         }
     }
@@ -101,6 +108,7 @@ public final class MessageCodec {
             case CLIENT_HELLO -> new ClientMessage.Hello(
                     input.readInt(),
                     input.readLong(),
+                    new java.util.UUID(input.readLong(), input.readLong()),
                     readString(input, Protocol.MAX_PLAYER_NAME_BYTES),
                     input.readInt()
             );
@@ -121,6 +129,7 @@ public final class MessageCodec {
                     input.readUnsignedByte(),
                     input.readUnsignedByte()
             );
+            case CLIENT_SET_VIEW_DISTANCE -> new ClientMessage.SetViewDistance(input.readInt());
             case CLIENT_DISCONNECT -> new ClientMessage.Disconnect();
             default -> throw new IOException("Unknown client message type");
         };

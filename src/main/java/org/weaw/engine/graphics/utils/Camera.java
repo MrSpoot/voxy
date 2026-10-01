@@ -12,7 +12,7 @@ public class Camera {
     private static final Logger LOGGER = LoggerFactory.getLogger(Camera.class);
 
     @Getter
-    private final float fov;
+    private float fov;
     @Getter
     private float aspectRatio;
     private final float near = 0.1f;
@@ -190,6 +190,15 @@ public class Camera {
             return;
         }
         this.aspectRatio = aspectRatio;
+        visibilityVersion++;
+    }
+
+    public void setFov(float fov) {
+        float clamped = Math.clamp(fov, 60.0f, 120.0f);
+        if (Float.compare(this.fov, clamped) == 0) {
+            return;
+        }
+        this.fov = clamped;
         visibilityVersion++;
     }
 

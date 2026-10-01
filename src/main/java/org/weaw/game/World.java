@@ -44,9 +44,23 @@ public class World implements AutoCloseable, WorldBlockProvider {
     }
 
     public World(WorldGenerator worldGenerator, WorldSettings settings, BlockCatalog blockCatalog) {
+        this(worldGenerator, settings, blockCatalog, Map.of());
+    }
+
+    public World(
+            WorldGenerator worldGenerator,
+            WorldSettings settings,
+            BlockCatalog blockCatalog,
+            Map<ChunkPosition, Map<Integer, Short>> initialEdits
+    ) {
         this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
         this.chunkManager = new ChunkManager(blockCatalog);
         this.baseWorldGenerator = Objects.requireNonNull(worldGenerator, "worldGenerator");
+        Objects.requireNonNull(initialEdits, "initialEdits").forEach((position, edits) -> {
+            if (position != null && edits != null && !edits.isEmpty()) {
+                this.sessionEdits.put(position, new ConcurrentHashMap<>(edits));
+            }
+        });
         this.worldGenerator = new SessionWorldGenerator(baseWorldGenerator);
         this.settings = Objects.requireNonNull(settings, "settings");
         this.worldStreamer = new WorldStreamer(chunkManager, this, this.worldGenerator, settings);
@@ -279,6 +293,17 @@ public class World implements AutoCloseable, WorldBlockProvider {
             changes.add(change);
         }
         return List.copyOf(changes);
+    }
+
+    /** Returns an immutable deep snapshot suitable for asynchronous persistence. */
+    public Map<ChunkPosition, Map<Integer, Short>> snapshotSessionEdits() {
+        Map<ChunkPosition, Map<Integer, Short>> snapshot = new java.util.LinkedHashMap<>();
+        sessionEdits.forEach((position, edits) -> {
+            if (!edits.isEmpty()) {
+                snapshot.put(position, Map.copyOf(edits));
+            }
+        });
+        return Map.copyOf(snapshot);
     }
 
     public boolean isSolidBlockAtWorld(int worldX, int worldY, int worldZ) {

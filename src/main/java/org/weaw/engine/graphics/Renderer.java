@@ -26,6 +26,8 @@ import org.weaw.game.World;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.gameplay.CreativeInventoryState;
 import org.weaw.network.client.RemotePlayerStore;
+import org.weaw.persistence.GraphicsPreferences;
+import org.weaw.persistence.GraphicsPreset;
 
 import java.util.Collection;
 
@@ -126,6 +128,34 @@ public class Renderer {
     public void resize(int width, int height) {
         LOGGER.info("Renderer resize: {}x{}", width, height);
         pipeline.resize(width, height);
+    }
+
+    /** Applies all player-facing rendering preferences to the live pipeline. */
+    public void applyGraphicsPreferences(GraphicsPreferences preferences) {
+        context.setAntiAliasingMode(preferences.antiAliasing());
+        context.getCloudSettings().setEnabled(preferences.cloudsEnabled());
+        context.getWaterSettings().setWavesEnabled(preferences.waterWavesEnabled());
+        context.getLightingSettings().setEnabled(preferences.lightingEnabled());
+        context.getLightingSettings().setBlockLightEnabled(
+                preferences.blockLightingEnabled() && context.isVoxelLightDataEnabled()
+        );
+        context.getColorGradingSettings().setToneMappingEnabled(preferences.toneMappingEnabled());
+        context.getColorGradingSettings().setAutoExposureEnabled(preferences.autoExposureEnabled());
+        context.getColorGradingSettings().exposureRef()[0] = preferences.exposure();
+        context.getColorGradingSettings().contrastRef()[0] = preferences.contrast();
+        context.getColorGradingSettings().saturationRef()[0] = preferences.saturation();
+        context.getColorGradingSettings().gammaRef()[0] = preferences.gamma();
+
+        var adaptive = context.getAdaptiveGraphicsQuality();
+        adaptive.setEnabled(preferences.preset() == GraphicsPreset.AUTO);
+        if (preferences.preset() != GraphicsPreset.AUTO) {
+            adaptive.setLevel(switch (preferences.preset()) {
+                case LOW -> org.weaw.engine.graphics.pipeline.AdaptiveGraphicsQuality.Level.LOW;
+                case MEDIUM -> org.weaw.engine.graphics.pipeline.AdaptiveGraphicsQuality.Level.MEDIUM;
+                case HIGH, CUSTOM -> org.weaw.engine.graphics.pipeline.AdaptiveGraphicsQuality.Level.HIGH;
+                case AUTO -> throw new IllegalStateException("AUTO handled above");
+            });
+        }
     }
 
     public void cleanup() {

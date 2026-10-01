@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.locks.LockSupport;
 
 /** Client simulation, prediction, reconciliation and replicated world state. */
@@ -35,6 +36,7 @@ public final class NetworkClientSession implements AutoCloseable {
     private final ClientTransport transport;
     private final BlockCatalog catalog;
     private final String playerName;
+    private final UUID profileId;
     private final int requestedViewDistance;
     private final RemotePlayerStore remotePlayers = new RemotePlayerStore();
     private final ArrayDeque<PendingPrediction> pendingPredictions = new ArrayDeque<>();
@@ -67,8 +69,25 @@ public final class NetworkClientSession implements AutoCloseable {
             String playerName,
             int requestedViewDistance
     ) {
+        this(
+                transport,
+                catalog,
+                UUID.nameUUIDFromBytes(("legacy:" + playerName).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                playerName,
+                requestedViewDistance
+        );
+    }
+
+    public NetworkClientSession(
+            ClientTransport transport,
+            BlockCatalog catalog,
+            UUID profileId,
+            String playerName,
+            int requestedViewDistance
+    ) {
         this.transport = Objects.requireNonNull(transport, "transport");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+        this.profileId = Objects.requireNonNull(profileId, "profileId");
         this.playerName = Objects.requireNonNull(playerName, "playerName");
         this.requestedViewDistance = requestedViewDistance;
     }
@@ -77,6 +96,7 @@ public final class NetworkClientSession implements AutoCloseable {
         if (!transport.send(new ClientMessage.Hello(
                 Protocol.VERSION,
                 CatalogFingerprint.compute(catalog),
+                profileId,
                 playerName,
                 requestedViewDistance
         ))) {
@@ -230,6 +250,16 @@ public final class NetworkClientSession implements AutoCloseable {
 
     public RemotePlayerStore getRemotePlayers() {
         return remotePlayers;
+    }
+
+    public void requestViewDistance(int viewDistance) {
+        if (transport.isOpen()) {
+            transport.send(new ClientMessage.SetViewDistance(Math.clamp(
+                    viewDistance,
+                    Protocol.MIN_VIEW_DISTANCE,
+                    Protocol.MAX_VIEW_DISTANCE
+            )));
+        }
     }
 
     public long getLocalPlayerId() {

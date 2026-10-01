@@ -25,14 +25,19 @@ public final class CreativeInventoryLayout {
     private final Rect hotbar;
     private final Rect scrollbarTrack;
 
-    private CreativeInventoryLayout(int viewportWidth, int viewportHeight, boolean inventoryOpen) {
+    private CreativeInventoryLayout(int viewportWidth, int viewportHeight, float requestedUiScale, boolean inventoryOpen) {
         this.viewportWidth = Math.max(1, viewportWidth);
         this.viewportHeight = Math.max(1, viewportHeight);
-        this.scale = Math.clamp(
-                Math.min(this.viewportWidth / 1920.0f, this.viewportHeight / 1080.0f),
-                0.75f,
-                1.25f
-        );
+        float naturalScale = Math.max(0.01f, requestedUiScale)
+                * Math.min(this.viewportWidth / 1920.0f, this.viewportHeight / 1080.0f);
+        float basePanelWidth = BASE_PADDING * 2.0f
+                + GRID_COLUMNS * BASE_SLOT_SIZE + (GRID_COLUMNS - 1) * BASE_GAP
+                + BASE_SCROLLBAR_GAP + BASE_SCROLLBAR_WIDTH;
+        float basePanelHeight = BASE_PADDING * 2.0f
+                + VISIBLE_ROWS * BASE_SLOT_SIZE + (VISIBLE_ROWS - 1) * BASE_GAP
+                + BASE_GRID_HOTBAR_GAP + BASE_SLOT_SIZE;
+        this.scale = Math.max(0.01f, Math.min(naturalScale,
+                Math.min(this.viewportWidth / basePanelWidth, this.viewportHeight / basePanelHeight)));
         this.slotSize = BASE_SLOT_SIZE * scale;
         this.gap = BASE_GAP * scale;
         float padding = BASE_PADDING * scale;
@@ -57,7 +62,13 @@ public final class CreativeInventoryLayout {
     }
 
     public static CreativeInventoryLayout forViewport(int width, int height, boolean inventoryOpen) {
-        return new CreativeInventoryLayout(width, height, inventoryOpen);
+        return new CreativeInventoryLayout(width, height, 1.0f, inventoryOpen);
+    }
+
+    public static CreativeInventoryLayout forViewport(
+            int width, int height, float requestedUiScale, boolean inventoryOpen
+    ) {
+        return new CreativeInventoryLayout(width, height, requestedUiScale, inventoryOpen);
     }
 
     public Rect creativeSlot(int column, int visibleRow) {

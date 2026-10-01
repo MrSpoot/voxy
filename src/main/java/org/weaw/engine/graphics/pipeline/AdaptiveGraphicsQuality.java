@@ -48,7 +48,7 @@ public final class AdaptiveGraphicsQuality {
         return level;
     }
 
-    void setLevel(Level level) {
-        this.level = level;
+    public void setLevel(Level level) {
+        this.level = java.util.Objects.requireNonNull(level, "level");
     }
 }

@@ -3,6 +3,9 @@ package org.weaw.runtime;
 import org.joml.Vector3f;
 import org.weaw.game.WorldHeightRange;
 import org.weaw.game.WorldMemoryBudget;
+import org.weaw.game.generation.GenerationConfig;
+import org.weaw.persistence.StorageOptions;
+import org.weaw.persistence.UserDataDirectories;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -25,7 +28,10 @@ public record LaunchOptions(
         boolean transparentChunksEnabled,
         boolean sparseChunkStreamingEnabled,
         WorldHeightRange worldHeightRange,
-        WorldMemoryBudget worldMemoryBudget
+        WorldMemoryBudget worldMemoryBudget,
+        StorageOptions storage,
+        GenerationConfig generationConfig,
+        boolean explicitSessionRequested
 ) {
     private static final long MIB = 1024L * 1024L;
 
@@ -86,6 +92,47 @@ public record LaunchOptions(
                 Math.max(gpuBytes, gpuTransientBytes)
         );
 
+        String requestedPlayerName = cliOptions.containsKey("name")
+                ? cliOptions.get("name")
+                : System.getProperty("voxy.player.name");
+        int simulationDistance = parseInt(
+                cliOptions, "simulation-distance", "voxy.world.simulationDistance", network.viewDistance()
+        );
+        int defaultRenderDistance = parseInt(
+                cliOptions, "default-render-distance", "voxy.world.defaultRenderDistance", network.viewDistance()
+        );
+        StorageOptions storage = new StorageOptions(
+                Paths.get(readString(
+                        cliOptions,
+                        "data-dir",
+                        "voxy.dataDir",
+                        UserDataDirectories.defaultVoxyDataDirectory().toString()
+                )),
+                readString(cliOptions, "world", "voxy.world.key", "default"),
+                readString(cliOptions, "world-name", "voxy.world.name", null),
+                readString(cliOptions, "profile", "voxy.profile.key", "default"),
+                requestedPlayerName,
+                parseNonNegativeInt(
+                        cliOptions, "autosave-seconds", "voxy.world.autosaveSeconds",
+                        StorageOptions.DEFAULT_AUTOSAVE_SECONDS
+                ),
+                simulationDistance,
+                defaultRenderDistance,
+                cliOptions.containsKey("seed") || System.getProperty("voxy.world.seed") != null,
+                cliOptions.containsKey("world-min-chunk-y") || cliOptions.containsKey("world-max-chunk-y")
+                        || System.getProperty("voxy.world.minChunkY") != null
+                        || System.getProperty("voxy.world.maxChunkY") != null
+        );
+        GenerationConfig generationConfig = GenerationConfig.defaults().withSeed(network.worldSeed());
+        boolean explicitSessionRequested = benchmarkEnabled
+                || network.mode() != NetworkMode.SOLO
+                || hasFlag(cliOptions, "solo")
+                || cliOptions.containsKey("world")
+                || cliOptions.containsKey("world-name")
+                || cliOptions.containsKey("seed")
+                || cliOptions.containsKey("world-min-chunk-y")
+                || cliOptions.containsKey("world-max-chunk-y");
+
         return new LaunchOptions(
                 benchmark,
                 network,
@@ -121,12 +168,49 @@ public record LaunchOptions(
                 !hasFlag(cliOptions, "disable-sparse-streaming")
                         && Boolean.parseBoolean(System.getProperty("voxy.sparseChunkStreaming", "true")),
                 heightRange,
-                memoryBudget
+                memoryBudget,
+                storage,
+                generationConfig,
+                explicitSessionRequested
         );
     }
 
     public boolean benchmarkEnabled() {
         return benchmark.enabled();
+    }
+
+    public boolean interactiveMenuRequested() {
+        return !explicitSessionRequested && network.mode() != NetworkMode.DEDICATED;
+    }
+
+    public LaunchOptions forSession(NetworkOptions nextNetwork, StorageOptions nextStorage) {
+        return new LaunchOptions(
+                benchmark, nextNetwork, jfrEnabled, jfrOutputPath, runtimeStatsEnabled,
+                runtimeStatsOutputPath, runtimeSummaryOutputPath, dynamicLightingEnabled,
+                lightUploadEnabled, ambientOcclusionEnabled, remeshEnabled, unloadsEnabled,
+                transparentChunksEnabled, sparseChunkStreamingEnabled, worldHeightRange,
+                worldMemoryBudget, nextStorage, generationConfig, true
+        );
+    }
+
+    public LaunchOptions withWorldHeightRange(WorldHeightRange nextHeightRange) {
+        return new LaunchOptions(
+                benchmark, network, jfrEnabled, jfrOutputPath, runtimeStatsEnabled,
+                runtimeStatsOutputPath, runtimeSummaryOutputPath, dynamicLightingEnabled,
+                lightUploadEnabled, ambientOcclusionEnabled, remeshEnabled, unloadsEnabled,
+                transparentChunksEnabled, sparseChunkStreamingEnabled, nextHeightRange,
+                worldMemoryBudget, storage, generationConfig, explicitSessionRequested
+        );
+    }
+
+    public LaunchOptions withGenerationConfig(GenerationConfig nextGenerationConfig) {
+        return new LaunchOptions(
+                benchmark, network, jfrEnabled, jfrOutputPath, runtimeStatsEnabled,
+                runtimeStatsOutputPath, runtimeSummaryOutputPath, dynamicLightingEnabled,
+                lightUploadEnabled, ambientOcclusionEnabled, remeshEnabled, unloadsEnabled,
+                transparentChunksEnabled, sparseChunkStreamingEnabled, worldHeightRange,
+                worldMemoryBudget, storage, nextGenerationConfig, explicitSessionRequested
+        );
     }
 
     private static NetworkOptions parseNetworkOptions(Map<String, String> options) {
@@ -192,7 +276,7 @@ public record LaunchOptions(
                 "voxy.network.viewDistance",
                 org.weaw.network.protocol.Protocol.DEFAULT_VIEW_DISTANCE
         );
-        return new NetworkOptions(mode, host, port, playerName, maxPlayers, worldSeed, viewDistance);
+        return new NetworkOptions(mode, host, port, playerName, maxPlayers, worldSeed, viewDistance, true);
     }
 
     private static Map<String, String> parseCliOptions(String[] args) {

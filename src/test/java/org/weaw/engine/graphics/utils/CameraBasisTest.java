@@ -38,6 +38,23 @@ class CameraBasisTest {
         assertEquals(0.0f, right.dot(up), 0.0001f);
     }
 
+    @Test
+    void fieldOfViewCanChangeAtRuntimeAndInvalidValuesAreClamped() {
+        Camera camera = new Camera(90.0f, 16.0f / 9.0f);
+        long initialVersion = camera.getVisibilityVersion();
+
+        camera.setFov(105.0f);
+        assertEquals(105.0f, camera.getFov());
+        assertEquals(initialVersion + 1, camera.getVisibilityVersion());
+
+        camera.setFov(500.0f);
+        assertEquals(120.0f, camera.getFov());
+
+        long clampedVersion = camera.getVisibilityVersion();
+        camera.setFov(120.0f);
+        assertEquals(clampedVersion, camera.getVisibilityVersion());
+    }
+
     private static void assertVectorEquals(Vector3f expected, Vector3f actual) {
         assertEquals(expected.x, actual.x, 0.0001f);
         assertEquals(expected.y, actual.y, 0.0001f);

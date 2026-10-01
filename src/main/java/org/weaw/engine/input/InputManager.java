@@ -197,7 +197,11 @@ public class InputManager {
     }
 
     public void cleanup(){
-        if (scrollCallback != null) scrollCallback.close();
+        if (scrollCallback != null) {
+            glfwSetScrollCallback(windowId, null);
+            scrollCallback.close();
+            scrollCallback = null;
+        }
     }
 
     private boolean isBindingDown(InputBinding binding) {

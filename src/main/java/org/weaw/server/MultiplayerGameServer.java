@@ -21,6 +21,8 @@ import org.weaw.network.protocol.Protocol;
 import org.weaw.network.protocol.ServerMessage;
 import org.weaw.network.transport.ServerEvent;
 import org.weaw.network.transport.ServerTransport;
+import org.weaw.persistence.PlayerSaveState;
+import org.weaw.persistence.WorldSaveSession;
 
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -32,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
@@ -58,6 +61,10 @@ public final class MultiplayerGameServer implements AutoCloseable {
     private final Map<Long, ServerPlayerSession> playersByConnection = new LinkedHashMap<>();
     private final Map<ChunkPosition, Long> chunkRevisions = new HashMap<>();
     private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean paused = new AtomicBoolean();
+    private final AtomicBoolean manualSaveRequested = new AtomicBoolean();
+    private final WorldSaveSession saveSession;
     private Thread serverThread;
     private long nextPlayerId = 1L;
     private long tickIndex;
@@ -71,10 +78,21 @@ public final class MultiplayerGameServer implements AutoCloseable {
     }
 
     public MultiplayerGameServer(World world, long worldSeed, ServerTransport transport, int maxPlayers) {
+        this(world, worldSeed, transport, maxPlayers, null);
+    }
+
+    public MultiplayerGameServer(
+            World world,
+            long worldSeed,
+            ServerTransport transport,
+            int maxPlayers,
+            WorldSaveSession saveSession
+    ) {
         this.world = Objects.requireNonNull(world, "world");
         this.worldSeed = worldSeed;
         this.transport = Objects.requireNonNull(transport, "transport");
         this.maxPlayers = Math.clamp(maxPlayers, 1, Protocol.MAX_PLAYERS);
+        this.saveSession = saveSession;
         this.catalogFingerprint = CatalogFingerprint.compute(world.getBlockCatalog());
         world.setMeshGenerationEnabled(false);
     }
@@ -113,6 +131,8 @@ public final class MultiplayerGameServer implements AutoCloseable {
         updateCongestionState();
         updateNetworkStats();
         tickIndex++;
+        requestAutosaveIfDue();
+        requestManualSaveIfNeeded();
     }
 
     public int getPlayerCount() {
@@ -131,10 +151,25 @@ public final class MultiplayerGameServer implements AutoCloseable {
         return networkStats;
     }
 
+    public void setPaused(boolean paused) {
+        this.paused.set(paused);
+    }
+
+    public void requestSave() {
+        manualSaveRequested.set(true);
+    }
+
     private void runLoop() {
         long tickNanos = 1_000_000_000L / GameServer.DEFAULT_TICKS_PER_SECOND;
         long nextTick = System.nanoTime();
         while (running.get() && transport.isOpen()) {
+            if (paused.get()) {
+                drainNetworkEvents();
+                requestManualSaveIfNeeded();
+                LockSupport.parkNanos(tickNanos);
+                nextTick = System.nanoTime() + tickNanos;
+                continue;
+            }
             long now = System.nanoTime();
             if (now < nextTick) {
                 LockSupport.parkNanos(nextTick - now);
@@ -179,6 +214,9 @@ public final class MultiplayerGameServer implements AutoCloseable {
             case ClientMessage.PlayerCommand command -> player.enqueue(command);
             case ClientMessage.SetHotbarSlot set -> applyHotbarSet(player, set);
             case ClientMessage.SwapHotbarSlots swap -> applyHotbarSwap(player, swap);
+            case ClientMessage.SetViewDistance set -> player.viewDistance = Math.clamp(
+                    set.viewDistance(), Protocol.MIN_VIEW_DISTANCE, Protocol.MAX_VIEW_DISTANCE
+            );
             case ClientMessage.Disconnect ignored -> transport.disconnect(connectionId, "client disconnected");
         }
     }
@@ -201,13 +239,24 @@ public final class MultiplayerGameServer implements AutoCloseable {
             transport.disconnect(connectionId, "Server is full");
             return;
         }
+        if (hello.profileId() == null || playersByConnection.values().stream()
+                .anyMatch(existing -> existing.profileId.equals(hello.profileId()))) {
+            transport.disconnect(connectionId, "Player profile is already connected or invalid");
+            return;
+        }
 
         long playerId = nextPlayerId++;
         GameplaySession gameplay = new GameplaySession(world, new GameplaySettings());
-        gameplay.setPlayerPosition(DEFAULT_SPAWN);
+        PlayerSaveState savedState = saveSession == null ? null : saveSession.playerState(hello.profileId());
+        if (savedState == null) {
+            gameplay.setPlayerPosition(DEFAULT_SPAWN);
+        } else {
+            savedState.restore(gameplay, world.getBlockCatalog());
+        }
         ServerPlayerSession session = new ServerPlayerSession(
                 connectionId,
                 playerId,
+                hello.profileId(),
                 name,
                 Math.clamp(hello.viewDistance(), 2, world.getSettings().getRenderDistanceChunks()),
                 gameplay
@@ -559,6 +608,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
         if (removed == null) {
             return;
         }
+        rememberPlayer(removed);
         ServerMessage.PlayerLeft left = new ServerMessage.PlayerLeft(removed.playerId);
         for (ServerPlayerSession player : playersByConnection.values()) {
             transport.send(player.connectionId, left);
@@ -589,6 +639,9 @@ public final class MultiplayerGameServer implements AutoCloseable {
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
         running.set(false);
         if (serverThread != null) {
             serverThread.interrupt();
@@ -599,15 +652,67 @@ public final class MultiplayerGameServer implements AutoCloseable {
             }
             serverThread = null;
         }
+        if (saveSession != null) {
+            try {
+                saveSession.saveNow(world, snapshotPlayers());
+            } catch (RuntimeException exception) {
+                LOGGER.error("Final world save failed", exception);
+            } finally {
+                try {
+                    saveSession.close();
+                } catch (RuntimeException exception) {
+                    LOGGER.error("Unable to close world save writer", exception);
+                }
+            }
+        }
         transport.close();
         world.close();
+    }
+
+    private void requestAutosaveIfDue() {
+        if (saveSession == null) {
+            return;
+        }
+        int seconds = saveSession.manifest().autosaveSeconds();
+        long intervalTicks = (long) seconds * GameServer.DEFAULT_TICKS_PER_SECOND;
+        if (seconds > 0 && tickIndex > 0L && tickIndex % intervalTicks == 0L) {
+            saveSession.saveAsync(world, snapshotPlayers()).exceptionally(exception -> {
+                LOGGER.error("World autosave failed", exception);
+                return null;
+            });
+        }
+    }
+
+    private void requestManualSaveIfNeeded() {
+        if (!manualSaveRequested.compareAndSet(true, false) || saveSession == null) {
+            return;
+        }
+        saveSession.saveAsync(world, snapshotPlayers()).exceptionally(exception -> {
+            LOGGER.error("Manual world save failed", exception);
+            return null;
+        });
+    }
+
+    private List<PlayerSaveState> snapshotPlayers() {
+        return playersByConnection.values().stream().map(this::capturePlayer).toList();
+    }
+
+    private PlayerSaveState capturePlayer(ServerPlayerSession player) {
+        return PlayerSaveState.capture(player.profileId, player.name, player.gameplay);
+    }
+
+    private void rememberPlayer(ServerPlayerSession player) {
+        if (saveSession != null) {
+            saveSession.rememberPlayer(capturePlayer(player));
+        }
     }
 
     private static final class ServerPlayerSession {
         private final long connectionId;
         private final long playerId;
+        private final UUID profileId;
         private final String name;
-        private final int viewDistance;
+        private int viewDistance;
         private final GameplaySession gameplay;
         private final ArrayDeque<ClientMessage.PlayerCommand> commands = new ArrayDeque<>();
         private final Set<ChunkPosition> subscribedChunks = new HashSet<>();
@@ -623,12 +728,14 @@ public final class MultiplayerGameServer implements AutoCloseable {
         private ServerPlayerSession(
                 long connectionId,
                 long playerId,
+                UUID profileId,
                 String name,
                 int viewDistance,
                 GameplaySession gameplay
         ) {
             this.connectionId = connectionId;
             this.playerId = playerId;
+            this.profileId = profileId;
             this.name = name;
             this.viewDistance = viewDistance;
             this.gameplay = gameplay;

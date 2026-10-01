@@ -7,6 +7,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_D;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_E;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_O;
@@ -35,6 +36,7 @@ public enum InputAction {
     MOVE_DOWN("down", "Move Down", InputBinding.key(GLFW_KEY_LEFT_CONTROL)),
     SPRINT("sprint", "Sprint", InputBinding.key(GLFW_KEY_LEFT_SHIFT)),
     TOGGLE_MOUSE_LOCK("toggle_mouse_lock", "Toggle Mouse Lock", InputBinding.key(GLFW_KEY_F1)),
+    TOGGLE_DEBUG("toggle_debug", "Toggle Debug", InputBinding.key(GLFW_KEY_F3)),
     TOGGLE_NOCLIP("toggle_noclip", "Toggle Noclip", InputBinding.key(GLFW_KEY_O)),
     BREAK_BLOCK("break_block", "Break Block", InputBinding.mouseButton(GLFW_MOUSE_BUTTON_LEFT)),
     PLACE_BLOCK("place_block", "Place Block", InputBinding.mouseButton(GLFW_MOUSE_BUTTON_RIGHT)),

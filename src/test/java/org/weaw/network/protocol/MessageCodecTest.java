@@ -10,6 +10,7 @@ import org.weaw.gameplay.PlayerInput;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -17,6 +18,19 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class MessageCodecTest {
+    @Test
+    void roundTripsStableProfileUuidInHello() throws IOException {
+        ClientMessage.Hello original = new ClientMessage.Hello(
+                Protocol.VERSION,
+                123456L,
+                UUID.fromString("123e4567-e89b-12d3-a456-426614174000"),
+                "Alice",
+                12
+        );
+
+        assertEquals(original, MessageCodec.decodeClient(MessageCodec.encodeClient(original)));
+    }
+
     @Test
     void roundTripsPlayerCommand() throws IOException {
         PlayerInput input = new PlayerInput(
@@ -29,6 +43,12 @@ class MessageCodecTest {
         ClientMessage decoded = MessageCodec.decodeClient(MessageCodec.encodeClient(original));
 
         assertEquals(original, decoded);
+    }
+
+    @Test
+    void roundTripsRuntimeViewDistanceChange() throws IOException {
+        ClientMessage.SetViewDistance original = new ClientMessage.SetViewDistance(24);
+        assertEquals(original, MessageCodec.decodeClient(MessageCodec.encodeClient(original)));
     }
 
     @Test
