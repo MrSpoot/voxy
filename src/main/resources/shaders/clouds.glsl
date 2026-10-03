@@ -148,6 +148,7 @@ void main() {
 
 flat in int gFace;
 flat in float gVariation;
+uniform vec3 uCloudTint;
 
 layout(location = 0) out vec4 fragColor;
 
@@ -160,6 +161,6 @@ void main() {
     } else {
         cloudColor = vec3(0.82, 0.86, 0.94);
     }
-    fragColor = vec4(cloudColor * gVariation, 1.0);
+    fragColor = vec4(cloudColor * uCloudTint * gVariation, 1.0);
 }
 //@endfs

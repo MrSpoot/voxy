@@ -138,28 +138,28 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 
 ### Tâches
 
-- [ ] Créer une horloge serveur indépendante du framerate et basée sur les ticks de simulation.
-- [ ] Utiliser une journée de 20 minutes réelles par défaut, avec durée configurable par monde.
-- [ ] Sauvegarder l'heure courante et la restaurer au chargement.
-- [ ] Synchroniser périodiquement l'heure avec les clients et interpoler visuellement entre deux mises à jour.
-- [ ] Ajouter des outils de développement pour régler, accélérer, ralentir et figer l'heure.
-- [ ] Faire évoluer la direction et la couleur du soleil au cours de la journée.
-- [ ] Ajouter la lune et définir sa trajectoire initiale.
-- [ ] Faire varier progressivement :
-  - [ ] couleurs du ciel et de l'horizon ;
-  - [ ] lumière ambiante et exposition ;
-  - [ ] brouillard ;
-  - [ ] nuages ;
-  - [ ] intensité apparente du skylight.
-- [ ] Appliquer un multiplicateur global de lumière solaire au rendu plutôt que recalculer tous les voxels à chaque tick.
-- [ ] Gérer des transitions sans saut lors d'une correction de temps reçue du serveur.
+- [x] Créer une horloge serveur indépendante du framerate et basée sur les ticks de simulation.
+- [x] Utiliser une journée de 20 minutes réelles par défaut, avec durée configurable par monde.
+- [x] Sauvegarder l'heure courante et la restaurer au chargement.
+- [x] Synchroniser périodiquement l'heure avec les clients et interpoler visuellement entre deux mises à jour.
+- [x] Ajouter des outils de développement pour régler, accélérer, ralentir et figer l'heure.
+- [x] Faire évoluer la direction et la couleur du soleil au cours de la journée.
+- [x] Ajouter la lune et définir sa trajectoire initiale.
+- [x] Faire varier progressivement :
+  - [x] couleurs du ciel et de l'horizon ;
+  - [x] lumière ambiante et exposition ;
+  - [x] brouillard ;
+  - [x] nuages ;
+  - [x] intensité apparente du skylight.
+- [x] Appliquer un multiplicateur global de lumière solaire au rendu plutôt que recalculer tous les voxels à chaque tick.
+- [x] Gérer des transitions sans saut lors d'une correction de temps reçue du serveur.
 
 ### Critères de fin
 
-- [ ] Deux clients voient la même phase de journée avec une dérive imperceptible.
-- [ ] Un cycle complet traverse continûment matin, jour, soir et nuit.
-- [ ] L'heure reprend correctement après sauvegarde et redémarrage.
-- [ ] Le cycle ne déclenche pas de remesh global ni de recalcul complet de l'éclairage voxel.
+- [x] Deux clients voient la même phase de journée avec une dérive imperceptible.
+- [x] Un cycle complet traverse continûment matin, jour, soir et nuit.
+- [x] L'heure reprend correctement après sauvegarde et redémarrage.
+- [x] Le cycle ne déclenche pas de remesh global ni de recalcul complet de l'éclairage voxel.
 
 ## 4. Première entité vivante : le mouton — P1
 
@@ -243,7 +243,50 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] Les clients observent le même état de fluide que le serveur.
 - [ ] Une grande propagation reste bornée par le budget de tick et ne bloque pas le rendu.
 
-## 6. Qualité, tests et observabilité — transversal
+## 6. Audio contextuel : actions, ambiances et musique — P1/P2
+
+### 6.1 Fondation audio — P1
+
+- [ ] Ajouter un moteur audio client basé sur OpenAL via LWJGL, sans dépendance côté serveur dédié.
+- [ ] Gérer proprement le périphérique, le contexte audio, les buffers, les sources et leur libération à la fermeture.
+- [ ] Charger les effets courts en mémoire et diffuser les musiques longues sans bloquer la boucle de jeu.
+- [ ] Positionner l'écouteur sur le joueur et prendre en charge l'atténuation spatiale des sources du monde.
+- [ ] Ajouter des volumes séparés pour le niveau principal, les effets, les ambiances et la musique, puis les sauvegarder dans les paramètres globaux.
+- [ ] Continuer à faire fonctionner le client sans plantage lorsqu'un périphérique ou une ressource audio est indisponible.
+
+### 6.2 Sons d'action et de blocs — P1
+
+- [ ] Associer à chaque bloc ou famille de matériaux un ensemble de sons cohérent.
+- [ ] Jouer des sons de pas et de réception selon le bloc situé sous le joueur.
+- [ ] Ajouter les sons de saut, pose, destruction et interaction à partir des événements de gameplay concernés.
+- [ ] Varier légèrement le volume et la hauteur des effets répétés afin d'éviter une répétition mécanique.
+- [ ] Prévoir des temporisations et un nombre maximal de sources simultanées pour éviter les rafales sonores.
+
+### 6.3 Ambiances environnementales — P2
+
+- [ ] Construire un contexte audio local à partir des blocs proches, de la végétation, du skylight, de la profondeur, du degré de confinement et de l'heure du monde.
+- [ ] Jouer des oiseaux et autres sons naturels lorsque le joueur se trouve dans une zone forestière.
+- [ ] Jouer des gouttes, grondements et sons étouffés lorsque le joueur se trouve réellement dans une grotte.
+- [ ] Ajouter progressivement des ambiances adaptées à l'eau, au vent, aux espaces ouverts et au cycle jour/nuit.
+- [ ] Utiliser des délais aléatoires, de l'hystérésis et des fondus pour éviter les boucles évidentes et les bascules rapides entre environnements.
+
+### 6.4 Musique contextuelle — P2
+
+- [ ] Définir des états musicaux pour l'exploration en surface, la forêt, les grottes, la nuit et les futures situations de danger.
+- [ ] Sélectionner les pistes selon le contexte courant avec des périodes de silence et sans répétition immédiate.
+- [ ] Effectuer des transitions progressives sans superposer plusieurs morceaux ni redémarrer une piste à chaque changement mineur.
+- [ ] Permettre aux futurs systèmes de gameplay d'ajouter une situation musicale sans dépendre directement du moteur audio.
+
+### Critères de fin
+
+- [ ] Les sons de déplacement et d'action correspondent au bloc ou au matériau concerné.
+- [ ] Les oiseaux ne jouent que dans un environnement forestier et les sons de grotte uniquement dans une zone souterraine cohérente.
+- [ ] Les transitions d'ambiance et de musique restent progressives aux frontières entre deux contextes.
+- [ ] Les effets, les ambiances et la musique peuvent être réglés ou coupés séparément.
+- [ ] Une ressource manquante ou l'absence de périphérique audio ne fait pas planter le client.
+- [ ] Le serveur dédié reste entièrement indépendant de l'initialisation et des ressources audio.
+
+## 7. Qualité, tests et observabilité — transversal
 
 - [ ] Ajouter des tests unitaires pour chaque format de données et règle de simulation.
 - [ ] Ajouter des tests d'intégration solo, serveur local et serveur TCP.

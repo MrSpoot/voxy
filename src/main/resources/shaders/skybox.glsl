@@ -20,15 +20,16 @@ uniform vec3 uCameraUp;
 uniform vec3 uCameraForward;
 uniform float uVerticalFov;
 uniform float uAspectRatio;
-uniform float uTimeOfDay;
+uniform vec3 uSunDirection;
+uniform float uDaylight;
+uniform float uTwilight;
+uniform vec3 uSunColor;
+uniform vec3 uSkyColor;
+uniform vec3 uHorizonColor;
 
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
-const vec3 NIGHT_COLOR = vec3(0.15, 0.3, 0.6);
-const vec3 HORIZON_COLOR = vec3(0.6, 0.3, 0.4);
-const vec3 DAY_COLOR = vec3(0.58, 0.72, 1.0);
-const vec3 SUN_COLOR = vec3(1.0, 0.8, 0.6);
 const vec3 SUN_RIM_COLOR = vec3(1.0, 0.66, 0.33);
 
 float hash(vec3 position) {
@@ -49,36 +50,25 @@ void main() {
         cameraRay.z * uCameraForward
     );
 
-    float sunAngle = -uTimeOfDay * 2.0 * 3.14159;
-    vec3 sunDirection = normalize(vec3(
-        cos(sunAngle) * 0.95,
-        sin(sunAngle),
-        cos(sunAngle) * 0.4
-    ));
+    vec3 sunDirection = normalize(uSunDirection);
     float sunDot = clamp(dot(sunDirection, rayDirection), 0.0, 1.0);
-    float sunHeight = sunDirection.y;
+    float horizonBlend = smoothstep(-0.03, 0.20, rayDirection.y);
+    vec3 skyColor = mix(uHorizonColor, uSkyColor, horizonBlend);
+    skyColor += 0.10 * SUN_RIM_COLOR * pow(sunDot, 64.0) * (uDaylight + uTwilight);
+    skyColor += uSunColor * pow(sunDot, 2000.0) * uDaylight;
 
-    const float nightHeight = -0.8;
-    const float dayHeight = 0.3;
-    const float horizonLength = dayHeight - nightHeight;
-    const float halfHorizonLength = horizonLength * 0.5;
-    const float midpoint = nightHeight + halfHorizonLength;
-
-    float nightContribution = clamp((sunHeight - midpoint) * (-1.0 / halfHorizonLength), 0.0, 1.0);
-    float horizonContribution = 1.0 - clamp(abs((sunHeight - midpoint) * (-1.0 / halfHorizonLength)), 0.0, 1.0);
-    float dayContribution = clamp((sunHeight - midpoint) * (1.0 / halfHorizonLength), 0.0, 1.0);
-
-    vec3 skyColor =
-        NIGHT_COLOR * nightContribution +
-        HORIZON_COLOR * horizonContribution +
-        DAY_COLOR * dayContribution;
-    skyColor -= clamp(rayDirection.y, 0.0, 0.5);
-    skyColor += 0.4 * SUN_RIM_COLOR * pow(sunDot, 4.0);
-    skyColor += SUN_COLOR * pow(sunDot, 2000.0);
+    float moonDot = clamp(dot(-sunDirection, rayDirection), 0.0, 1.0);
+    float moonVisibility = 1.0 - uDaylight;
+    const float MOON_RADIUS_COS = 0.9998477;
+    float moonEdge = max(fwidth(moonDot) * 1.5, 0.00002);
+    float moonDisc = smoothstep(MOON_RADIUS_COS - moonEdge, MOON_RADIUS_COS + moonEdge, moonDot);
+    float moonHalo = pow(moonDot, 500.0);
+    skyColor += vec3(0.42, 0.50, 0.72) * moonHalo * 0.10 * moonVisibility;
+    skyColor += vec3(0.90, 0.93, 1.0) * moonDisc * 1.15 * moonVisibility;
 
     float starNoise = hash(floor(rayDirection * 400.0));
     float star = smoothstep(0.997, 1.0, starNoise);
-    float starIntensity = 1.0 - clamp(sunHeight * 4.0, 0.0, 1.0);
+    float starIntensity = 1.0 - uDaylight;
     skyColor += vec3(star) * starIntensity;
 
     fragColor = vec4(skyColor, 1.0);

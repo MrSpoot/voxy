@@ -43,6 +43,7 @@ public final class NetworkClientSession implements AutoCloseable {
     private final ArrayDeque<ServerMessage> deferredHandshakeMessages = new ArrayDeque<>();
     private final String[] lastSentHotbar = new String[PlayerHotbar.SLOT_COUNT];
     private final Vector3f renderPositionCorrection = new Vector3f();
+    private final ClientWorldClock worldClock = new ClientWorldClock();
 
     private ServerMessage.Welcome welcome;
     private ClientWorld clientWorld;
@@ -129,6 +130,7 @@ public final class NetworkClientSession implements AutoCloseable {
                 welcome.maxChunkY(),
                 welcome.renderDistance()
         );
+        worldClock.synchronize(welcome.worldTime());
         gameplay = new GameplaySession(clientWorld.world(), new GameplaySettings());
         gameplay.getPlayer().setPosition(new Vector3f(16.0f, 12.0f, 48.0f));
         rememberCurrentHotbar();
@@ -144,6 +146,7 @@ public final class NetworkClientSession implements AutoCloseable {
     public int update(float frameDeltaTime, PlayerInput input) {
         ensureConnected();
         pumpMessages(MAX_WORLD_MESSAGES_PER_UPDATE);
+        worldClock.update(frameDeltaTime);
         advanceVisualCorrection(frameDeltaTime);
         clientWorld.update();
         synchronizeHotbar();
@@ -217,6 +220,10 @@ public final class NetworkClientSession implements AutoCloseable {
 
     public PlayerHotbar getHotbar() {
         return getGameplay().getHotbar();
+    }
+
+    public ClientWorldClock getWorldClock() {
+        return worldClock;
     }
 
     public void selectHotbarSlot(int index) {
@@ -343,6 +350,7 @@ public final class NetworkClientSession implements AutoCloseable {
         if (gameplay == null || welcome == null) {
             return;
         }
+        worldClock.synchronize(snapshot.worldTime());
         long now = System.nanoTime();
         remotePlayers.accept(welcome.playerId(), snapshot.players(), now);
         NetworkPlayerState authoritative = snapshot.players().stream()

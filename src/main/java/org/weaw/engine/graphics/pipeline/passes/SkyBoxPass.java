@@ -2,6 +2,7 @@ package org.weaw.engine.graphics.pipeline.passes;
 
 import org.joml.Vector3f;
 import org.weaw.engine.graphics.pipeline.RenderContext;
+import org.weaw.engine.graphics.pipeline.DayNightVisualState;
 import org.weaw.engine.graphics.pipeline.RenderPass;
 import org.weaw.engine.graphics.pipeline.resources.FullscreenQuad;
 import org.weaw.engine.graphics.pipeline.resources.GLStateManager;
@@ -15,8 +16,6 @@ import static org.lwjgl.opengl.GL11.GL_FILL;
  * Renders the procedural HDR sky directly into the scene target before world geometry.
  */
 public final class SkyBoxPass implements RenderPass {
-    private static final float FIXED_TIME_OF_DAY = 0.75f;
-
     private final Vector3f cameraRight = new Vector3f();
     private final Vector3f cameraUp = new Vector3f();
     private final Vector3f cameraForward = new Vector3f();
@@ -65,7 +64,13 @@ public final class SkyBoxPass implements RenderPass {
         shader.setUniform("uCameraForward", cameraForward);
         shader.setUniform("uVerticalFov", (float) Math.toRadians(camera.getFov()));
         shader.setUniform("uAspectRatio", camera.getAspectRatio());
-        shader.setUniform("uTimeOfDay", FIXED_TIME_OF_DAY);
+        DayNightVisualState cycle = context.getDayNightVisualState();
+        shader.setUniform("uSunDirection", cycle.sunX(), cycle.sunY(), cycle.sunZ());
+        shader.setUniform("uDaylight", cycle.daylight());
+        shader.setUniform("uTwilight", cycle.twilight());
+        shader.setUniform("uSunColor", cycle.sunRed(), cycle.sunGreen(), cycle.sunBlue());
+        shader.setUniform("uSkyColor", cycle.skyRed(), cycle.skyGreen(), cycle.skyBlue());
+        shader.setUniform("uHorizonColor", cycle.horizonRed(), cycle.horizonGreen(), cycle.horizonBlue());
         fullscreenQuad.render();
         shader.unbind();
 

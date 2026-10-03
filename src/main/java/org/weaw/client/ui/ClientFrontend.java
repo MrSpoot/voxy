@@ -19,6 +19,7 @@ import org.weaw.engine.window.Window;
 import org.weaw.engine.input.InputAction;
 import org.weaw.engine.input.InputBinding;
 import org.weaw.game.WorldHeightRange;
+import org.weaw.game.WorldTimeState;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.network.protocol.Protocol;
 import org.weaw.persistence.ClientSettings;
@@ -96,6 +97,7 @@ public final class ClientFrontend implements AutoCloseable {
     private final int[] simulationDistance = {12};
     private final int[] renderDistance = {12};
     private final int[] autosaveSeconds = {60};
+    private final int[] dayLengthMinutes = {20};
     private final float[] amplitude = {25.0f};
     private final int[] baseHeight = {0};
     private final int[] waterLevel = {-10};
@@ -362,6 +364,7 @@ public final class ClientFrontend implements AutoCloseable {
         ImGui.sliderInt("Distance de simulation", simulationDistance, 2, 64);
         ImGui.sliderInt("Distance de rendu initiale", renderDistance, 2, 64);
         ImGui.sliderInt("Autosave (secondes)", autosaveSeconds, 0, 600);
+        ImGui.sliderInt("Durée d'un jour (minutes)", dayLengthMinutes, 1, 120);
         if (ImGui.collapsingHeader(text.get("create.advanced"))) {
             ImGui.sliderFloat("Amplitude du relief", amplitude, 0.0f, 64.0f);
             ImGui.sliderInt("Hauteur de base", baseHeight, -48, 48);
@@ -399,6 +402,7 @@ public final class ClientFrontend implements AutoCloseable {
         ImGui.text("Hauteur / Height: " + minChunkY[0] + " → " + maxChunkY[0] + " chunks");
         ImGui.text("Simulation: " + simulationDistance[0] + " chunks");
         ImGui.text("Rendu / Render: " + renderDistance[0] + " chunks");
+        ImGui.text("Cycle jour/nuit: " + dayLengthMinutes[0] + " min");
         ImGui.text("Mode: " + (createForHost ? "Hôte / Host" : "Solo"));
         ImGui.separator();
         if (ImGui.button(text.get("common.create"), ui(160), ui(40))) {
@@ -730,6 +734,7 @@ public final class ClientFrontend implements AutoCloseable {
         return new StorageOptions(
                 baseOptions.storage().dataDirectory(), key, name, activeProfile().key(),
                 activeProfile().displayName(), autosaveSeconds[0], simulationDistance[0], renderDistance[0],
+                dayLengthMinutes[0] * 60,
                 seedExplicit, heightExplicit
         );
     }
@@ -738,7 +743,7 @@ public final class ClientFrontend implements AutoCloseable {
         return new StorageOptions(
                 source.dataDirectory(), source.worldKey(), source.worldName(), activeProfile().key(),
                 activeProfile().displayName(), source.autosaveSeconds(), source.simulationDistanceChunks(),
-                source.defaultRenderDistanceChunks(), source.seedExplicit(), source.heightExplicit()
+                source.defaultRenderDistanceChunks(), source.dayLengthSeconds(), source.seedExplicit(), source.heightExplicit()
         );
     }
 
@@ -1051,6 +1056,7 @@ public final class ClientFrontend implements AutoCloseable {
         simulationDistance[0] = settings.defaultViewDistance();
         renderDistance[0] = settings.renderDistanceChunks();
         autosaveSeconds[0] = StorageOptions.DEFAULT_AUTOSAVE_SECONDS;
+        dayLengthMinutes[0] = WorldTimeState.DEFAULT_DAY_LENGTH_SECONDS / 60;
         applyPreset(0);
     }
 

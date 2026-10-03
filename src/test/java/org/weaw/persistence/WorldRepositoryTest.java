@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.weaw.game.World;
 import org.weaw.game.WorldMemoryBudget;
 import org.weaw.game.WorldSettings;
+import org.weaw.game.WorldTimeState;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.utils.BlockCatalog;
@@ -95,6 +96,35 @@ class WorldRepositoryTest {
         assertNotEquals(BlockRegistry.getRuntimeId(Blocks.BLUE_LAMP), betaWorld.getBlockAtWorld(1, 2, 3));
         beta.close();
         betaWorld.close();
+    }
+
+    @Test
+    void restoresWorldTimeAfterRestart() {
+        StorageOptions storage = storage("world-time");
+        GenerationConfig generation = GenerationConfig.defaults().withSeed(52L);
+        WorldSaveSession session = open(storage, generation);
+        World world = createWorld(session);
+        WorldTimeState savedTime = new WorldTimeState(0.8125, storage.dayLengthSeconds());
+        session.saveNow(world, List.of(), savedTime);
+        session.close();
+        world.close();
+
+        WorldSaveSession reopened = open(storage, generation);
+        assertEquals(savedTime, reopened.manifest().worldTime());
+        reopened.close();
+    }
+
+    @Test
+    void migratesVersionTwoTimeToNoon() {
+        WorldManifest current = WorldManifest.create(
+                storage("legacy-time"), GenerationConfig.defaults(), org.weaw.game.WorldHeightRange.DEFAULT);
+        WorldManifest versionTwo = copyWithVersion(current, 2);
+
+        WorldManifest migrated = new WorldSaveMigrationRegistry(List.of(new WorldSaveV2ToV3Migrator()))
+                .migrateToCurrent(versionTwo, temporaryDirectory.resolve("v2.json"));
+
+        assertEquals(WorldTimeState.defaults(), migrated.worldTime());
+        assertEquals(new WorldManifest.FutureSection(1, true), migrated.sections().get("time"));
     }
 
     @Test

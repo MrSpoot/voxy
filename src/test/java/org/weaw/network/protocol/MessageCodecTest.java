@@ -97,13 +97,15 @@ class MessageCodecTest {
                 90.0f, -12.0f, 0.25f, true, false
         );
         ServerMessage.StateSnapshot original = new ServerMessage.StateSnapshot(
-                100L, 88L, List.of(state), new String[]{"voxy:stone", null}, 1
+                100L, 88L, List.of(state), new String[]{"voxy:stone", null}, 1,
+                new WorldTimeSnapshot(0.875, 900, 3.0, true)
         );
 
         ServerMessage decodedMessage = MessageCodec.decodeServer(MessageCodec.encodeServer(original));
         ServerMessage.StateSnapshot decoded = assertInstanceOf(ServerMessage.StateSnapshot.class, decodedMessage);
 
         assertEquals(original.serverTick(), decoded.serverTick());
+        assertEquals(original.worldTime(), decoded.worldTime());
         assertEquals(original.acknowledgedSequence(), decoded.acknowledgedSequence());
         assertEquals(original.players(), decoded.players());
         assertArrayEquals(original.hotbarStableIds(), decoded.hotbarStableIds());

@@ -11,6 +11,7 @@ import org.weaw.engine.graphics.utils.ChunkGpuMemoryBudget;
 import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkPosition;
 import org.weaw.game.World;
+import org.weaw.game.WorldClock;
 import org.weaw.game.WorldSettings;
 import org.weaw.gameplay.CreativeInventoryState;
 import org.weaw.client.ui.GameUiState;
@@ -47,6 +48,8 @@ public class RenderContext {
     private int viewportHeight;
     private float frameDeltaSeconds = 1.0f / 60.0f;
     private float uiScale = 1.0f;
+    private double worldTimePhase = 0.5;
+    private WorldClock authoritativeWorldClock;
     private String graphicsVendor = "unknown";
     private String graphicsRenderer = "unknown";
     private String graphicsVersion = "unknown";
@@ -115,6 +118,10 @@ public class RenderContext {
      */
     public void setRenderTarget(String name, RenderTarget target) {
         renderTargets.put(name, target);
+    }
+
+    public DayNightVisualState getDayNightVisualState() {
+        return DayNightCycle.sample(worldTimePhase);
     }
 
     public void resetCurrentColorTarget() {

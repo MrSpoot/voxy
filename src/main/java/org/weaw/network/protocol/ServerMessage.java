@@ -21,19 +21,32 @@ public sealed interface ServerMessage permits
             long playerId,
             long serverTick,
             long worldSeed,
-            int minChunkY,
-            int maxChunkY,
-            int renderDistance
+             int minChunkY,
+             int maxChunkY,
+             int renderDistance,
+             WorldTimeSnapshot worldTime
     ) implements ServerMessage {
+        public Welcome(long playerId, long serverTick, long worldSeed, int minChunkY, int maxChunkY,
+                       int renderDistance) {
+            this(playerId, serverTick, worldSeed, minChunkY, maxChunkY, renderDistance,
+                    new WorldTimeSnapshot(0.5, 1_200, 1.0, false));
+        }
     }
 
     record StateSnapshot(
             long serverTick,
             long acknowledgedSequence,
-            List<NetworkPlayerState> players,
-            String[] hotbarStableIds,
-            int selectedHotbarSlot
+             List<NetworkPlayerState> players,
+             String[] hotbarStableIds,
+             int selectedHotbarSlot,
+             WorldTimeSnapshot worldTime
     ) implements ServerMessage {
+        public StateSnapshot(long serverTick, long acknowledgedSequence, List<NetworkPlayerState> players,
+                             String[] hotbarStableIds, int selectedHotbarSlot) {
+            this(serverTick, acknowledgedSequence, players, hotbarStableIds, selectedHotbarSlot,
+                    new WorldTimeSnapshot(0.5, 1_200, 1.0, false));
+        }
+
         public StateSnapshot {
             players = List.copyOf(players);
             hotbarStableIds = hotbarStableIds.clone();

@@ -7,6 +7,8 @@ import org.weaw.game.Chunk;
 import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkPosition;
 import org.weaw.game.World;
+import org.weaw.game.WorldClock;
+import org.weaw.game.WorldTimeState;
 import org.weaw.game.World.WorldBlockChange;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.gameplay.BlockAction;
@@ -19,6 +21,7 @@ import org.weaw.network.protocol.ClientMessage;
 import org.weaw.network.protocol.NetworkPlayerState;
 import org.weaw.network.protocol.Protocol;
 import org.weaw.network.protocol.ServerMessage;
+import org.weaw.network.protocol.WorldTimeSnapshot;
 import org.weaw.network.transport.ServerEvent;
 import org.weaw.network.transport.ServerTransport;
 import org.weaw.persistence.PlayerSaveState;
@@ -64,6 +67,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
     private final AtomicBoolean paused = new AtomicBoolean();
     private final AtomicBoolean manualSaveRequested = new AtomicBoolean();
     private final WorldSaveSession saveSession;
+    private final WorldClock worldClock;
     private Thread serverThread;
     private long nextPlayerId = 1L;
     private long tickIndex;
@@ -92,6 +96,9 @@ public final class MultiplayerGameServer implements AutoCloseable {
         this.transport = Objects.requireNonNull(transport, "transport");
         this.maxPlayers = Math.clamp(maxPlayers, 1, Protocol.MAX_PLAYERS);
         this.saveSession = saveSession;
+        this.worldClock = new WorldClock(saveSession == null
+                ? WorldTimeState.defaults()
+                : saveSession.manifest().worldTime());
         this.catalogFingerprint = CatalogFingerprint.compute(world.getBlockCatalog());
         world.setMeshGenerationEnabled(false);
     }
@@ -104,6 +111,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
     }
 
     public void tickOnce() {
+        worldClock.tick();
         drainNetworkEvents();
         publishBlockChanges();
         for (ServerPlayerSession player : playersByConnection.values()) {
@@ -144,6 +152,10 @@ public final class MultiplayerGameServer implements AutoCloseable {
 
     public World getWorld() {
         return world;
+    }
+
+    public WorldClock getWorldClock() {
+        return worldClock;
     }
 
     public ServerNetworkStats getNetworkStats() {
@@ -267,7 +279,8 @@ public final class MultiplayerGameServer implements AutoCloseable {
                 worldSeed,
                 world.getSettings().getHeightRange().minChunkY(),
                 world.getSettings().getHeightRange().maxChunkY(),
-                session.viewDistance
+                session.viewDistance,
+                snapshotWorldTime()
         ));
         LOGGER.info("Player {} ({}) joined on connection {}", name, playerId, connectionId);
     }
@@ -315,7 +328,8 @@ public final class MultiplayerGameServer implements AutoCloseable {
                     receiver.lastProcessedSequence,
                     playerStates,
                     hotbarIds,
-                    hotbar.getSelectedIndex()
+                    hotbar.getSelectedIndex(),
+                    snapshotWorldTime()
             ));
         }
     }
@@ -653,7 +667,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
         }
         if (saveSession != null) {
             try {
-                saveSession.saveNow(world, snapshotPlayers());
+                saveSession.saveNow(world, snapshotPlayers(), worldClock.persistentState());
             } catch (RuntimeException exception) {
                 LOGGER.error("Final world save failed", exception);
             } finally {
@@ -675,7 +689,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
         int seconds = saveSession.manifest().autosaveSeconds();
         long intervalTicks = (long) seconds * GameServer.DEFAULT_TICKS_PER_SECOND;
         if (seconds > 0 && tickIndex > 0L && tickIndex % intervalTicks == 0L) {
-            saveSession.saveAsync(world, snapshotPlayers()).exceptionally(exception -> {
+            saveSession.saveAsync(world, snapshotPlayers(), worldClock.persistentState()).exceptionally(exception -> {
                 LOGGER.error("World autosave failed", exception);
                 return null;
             });
@@ -686,7 +700,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
         if (!manualSaveRequested.compareAndSet(true, false) || saveSession == null) {
             return;
         }
-        saveSession.saveAsync(world, snapshotPlayers()).exceptionally(exception -> {
+        saveSession.saveAsync(world, snapshotPlayers(), worldClock.persistentState()).exceptionally(exception -> {
             LOGGER.error("Manual world save failed", exception);
             return null;
         });
@@ -694,6 +708,11 @@ public final class MultiplayerGameServer implements AutoCloseable {
 
     private List<PlayerSaveState> snapshotPlayers() {
         return playersByConnection.values().stream().map(this::capturePlayer).toList();
+    }
+
+    private WorldTimeSnapshot snapshotWorldTime() {
+        return new WorldTimeSnapshot(
+                worldClock.phase(), worldClock.dayLengthSeconds(), worldClock.timeScale(), worldClock.frozen());
     }
 
     private PlayerSaveState capturePlayer(ServerPlayerSession player) {

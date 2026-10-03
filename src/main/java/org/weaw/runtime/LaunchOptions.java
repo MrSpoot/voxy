@@ -3,6 +3,7 @@ package org.weaw.runtime;
 import org.joml.Vector3f;
 import org.weaw.game.WorldHeightRange;
 import org.weaw.game.WorldMemoryBudget;
+import org.weaw.game.WorldTimeState;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.persistence.StorageOptions;
 import org.weaw.persistence.UserDataDirectories;
@@ -118,6 +119,8 @@ public record LaunchOptions(
                 ),
                 simulationDistance,
                 defaultRenderDistance,
+                parseInt(cliOptions, "day-length-minutes", "voxy.world.dayLengthMinutes",
+                        WorldTimeState.DEFAULT_DAY_LENGTH_SECONDS / 60) * 60,
                 cliOptions.containsKey("seed") || System.getProperty("voxy.world.seed") != null,
                 cliOptions.containsKey("world-min-chunk-y") || cliOptions.containsKey("world-max-chunk-y")
                         || System.getProperty("voxy.world.minChunkY") != null
@@ -129,6 +132,7 @@ public record LaunchOptions(
                 || hasFlag(cliOptions, "solo")
                 || cliOptions.containsKey("world")
                 || cliOptions.containsKey("world-name")
+                || cliOptions.containsKey("day-length-minutes")
                 || cliOptions.containsKey("seed")
                 || cliOptions.containsKey("world-min-chunk-y")
                 || cliOptions.containsKey("world-max-chunk-y");

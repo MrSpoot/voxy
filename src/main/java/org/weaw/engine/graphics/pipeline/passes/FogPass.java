@@ -50,6 +50,7 @@ public class FogPass implements RenderPass {
 
         FogSettings settings = context.getFogSettings();
         LightingSettings lighting = context.getLightingSettings();
+        var cycle = context.getDayNightVisualState();
         WorldSettings worldSettings = context.getWorldSettings();
         int effectiveRenderDistance = context.getWorld() != null
                 ? context.getWorld().getMemorySnapshot().effectiveRenderDistanceChunks()
@@ -81,14 +82,15 @@ public class FogPass implements RenderPass {
         shader.setUniform("uInverseProjection", inverseProjection);
         shader.setUniform(
                 "uFogColor",
-                settings.getRed() * lighting.getSkyIntensity(),
-                settings.getGreen() * lighting.getSkyIntensity(),
-                settings.getBlue() * lighting.getSkyIntensity()
+                settings.getRed() * cycle.fogRed() * lighting.getSkyIntensity() * cycle.skyMultiplier(),
+                settings.getGreen() * cycle.fogGreen() * lighting.getSkyIntensity() * cycle.skyMultiplier(),
+                settings.getBlue() * cycle.fogBlue() * lighting.getSkyIntensity() * cycle.skyMultiplier()
         );
         shader.setUniform("uFogStart", fogStart);
         shader.setUniform("uFogEnd", fogEnd);
         shader.setUniform("uFogDensity", settings.getDensity());
-        shader.setUniform("uFogIntensity", settings.getIntensity());
+        float fogCycleIntensity = 0.35f - 0.20f * cycle.daylight();
+        shader.setUniform("uFogIntensity", settings.getIntensity() * fogCycleIntensity);
 
         fullscreenQuad.render();
 

@@ -1,6 +1,7 @@
 package org.weaw.persistence;
 
 import org.weaw.game.WorldHeightRange;
+import org.weaw.game.WorldTimeState;
 import org.weaw.game.generation.GenerationConfig;
 
 import java.util.LinkedHashMap;
@@ -22,11 +23,24 @@ public record WorldManifest(
         int simulationDistanceChunks,
         int defaultRenderDistanceChunks,
         int autosaveSeconds,
+        WorldTimeState worldTime,
         Map<String, FutureSection> sections,
         Map<String, String> chunks,
         Map<String, String> players
 ) {
-    public static final int CURRENT_FORMAT_VERSION = 2;
+    public static final int CURRENT_FORMAT_VERSION = 3;
+
+    public WorldManifest(int formatVersion, long generation, UUID worldId, String worldKey, String displayName,
+                         long seed, long createdAtEpochMillis, long lastOpenedAtEpochMillis,
+                         GenerationSettings generationSettings, int minChunkY, int maxChunkY,
+                         int simulationDistanceChunks, int defaultRenderDistanceChunks, int autosaveSeconds,
+                         Map<String, FutureSection> sections, Map<String, String> chunks, Map<String, String> players) {
+        this(formatVersion, generation, worldId, worldKey, displayName, seed, createdAtEpochMillis,
+                lastOpenedAtEpochMillis, generationSettings, minChunkY, maxChunkY, simulationDistanceChunks,
+                defaultRenderDistanceChunks, autosaveSeconds,
+                formatVersion >= CURRENT_FORMAT_VERSION ? WorldTimeState.defaults() : null,
+                sections, chunks, players);
+    }
 
     public WorldManifest {
         sections = Map.copyOf(sections == null ? Map.of() : sections);
@@ -41,7 +55,7 @@ public record WorldManifest(
     ) {
         long now = System.currentTimeMillis();
         Map<String, FutureSection> future = new LinkedHashMap<>();
-        future.put("time", new FutureSection(0, false));
+        future.put("time", new FutureSection(1, true));
         future.put("entities", new FutureSection(0, false));
         future.put("fluids", new FutureSection(0, false));
         return new WorldManifest(
@@ -59,6 +73,7 @@ public record WorldManifest(
                 storage.simulationDistanceChunks(),
                 storage.defaultRenderDistanceChunks(),
                 storage.autosaveSeconds(),
+                new WorldTimeState(WorldTimeState.NOON, storage.dayLengthSeconds()),
                 future,
                 Map.of(),
                 Map.of()
@@ -73,12 +88,13 @@ public record WorldManifest(
         return new WorldHeightRange(minChunkY, maxChunkY);
     }
 
-    public WorldManifest nextGeneration(Map<String, String> nextChunks, Map<String, String> nextPlayers) {
+    public WorldManifest nextGeneration(Map<String, String> nextChunks, Map<String, String> nextPlayers,
+                                        WorldTimeState nextWorldTime) {
         return new WorldManifest(
                 formatVersion, generation + 1L, worldId, worldKey, displayName, seed,
                 createdAtEpochMillis, lastOpenedAtEpochMillis, generationSettings,
                 minChunkY, maxChunkY, simulationDistanceChunks, defaultRenderDistanceChunks,
-                autosaveSeconds, sections, nextChunks, nextPlayers
+                autosaveSeconds, nextWorldTime, sections, nextChunks, nextPlayers
         );
     }
 
@@ -87,7 +103,7 @@ public record WorldManifest(
                 formatVersion, generation, worldId, worldKey, displayName, seed,
                 createdAtEpochMillis, System.currentTimeMillis(), generationSettings,
                 minChunkY, maxChunkY, simulationDistanceChunks, defaultRenderDistanceChunks,
-                autosaveSeconds, sections, chunks, players
+                autosaveSeconds, worldTime, sections, chunks, players
         );
     }
 
@@ -97,7 +113,7 @@ public record WorldManifest(
                 createdAtEpochMillis, lastOpenedAtEpochMillis, generationSettings,
                 minChunkY, maxChunkY,
                 storage.simulationDistanceChunks(), storage.defaultRenderDistanceChunks(),
-                storage.autosaveSeconds(), sections, chunks, players
+                storage.autosaveSeconds(), worldTime, sections, chunks, players
         );
     }
 
@@ -110,7 +126,7 @@ public record WorldManifest(
                 formatVersion, generation + 1L, worldId, worldKey, normalized, seed,
                 createdAtEpochMillis, lastOpenedAtEpochMillis, generationSettings,
                 minChunkY, maxChunkY, simulationDistanceChunks, defaultRenderDistanceChunks,
-                autosaveSeconds, sections, chunks, players
+                autosaveSeconds, worldTime, sections, chunks, players
         );
     }
 

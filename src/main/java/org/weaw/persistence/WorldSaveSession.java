@@ -3,6 +3,7 @@ package org.weaw.persistence;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.weaw.game.ChunkPosition;
 import org.weaw.game.World;
+import org.weaw.game.WorldTimeState;
 import org.weaw.game.utils.BlockCatalog;
 
 import java.io.IOException;
@@ -73,7 +74,7 @@ public final class WorldSaveSession implements AutoCloseable {
     }
 
     void saveInitial() {
-        commit(Map.of(), List.of());
+        commit(Map.of(), List.of(), manifest.worldTime());
     }
 
     public WorldManifest manifest() {
@@ -96,16 +97,25 @@ public final class WorldSaveSession implements AutoCloseable {
     }
 
     public synchronized CompletableFuture<Void> saveAsync(World world, Collection<PlayerSaveState> players) {
+        return saveAsync(world, players, manifest.worldTime());
+    }
+
+    public synchronized CompletableFuture<Void> saveAsync(
+            World world, Collection<PlayerSaveState> players, WorldTimeState worldTime) {
         ensureOpen();
         Map<ChunkPosition, Map<Integer, Short>> edits = world.snapshotSessionEdits();
         List<PlayerSaveState> playerSnapshot = rememberAndSnapshot(players);
         pendingWrite = pendingWrite.handle((ignored, failure) -> null)
-                .thenRunAsync(() -> commit(edits, playerSnapshot), writer);
+                .thenRunAsync(() -> commit(edits, playerSnapshot, worldTime), writer);
         return pendingWrite;
     }
 
     public void saveNow(World world, Collection<PlayerSaveState> players) {
         saveAsync(world, players).join();
+    }
+
+    public void saveNow(World world, Collection<PlayerSaveState> players, WorldTimeState worldTime) {
+        saveAsync(world, players, worldTime).join();
     }
 
     private synchronized List<PlayerSaveState> rememberAndSnapshot(Collection<PlayerSaveState> players) {
@@ -118,7 +128,8 @@ public final class WorldSaveSession implements AutoCloseable {
 
     private synchronized void commit(
             Map<ChunkPosition, Map<Integer, Short>> edits,
-            Collection<PlayerSaveState> players
+            Collection<PlayerSaveState> players,
+            WorldTimeState worldTime
     ) {
         try {
             Map<String, String> chunkRefs = new LinkedHashMap<>();
@@ -142,7 +153,7 @@ public final class WorldSaveSession implements AutoCloseable {
             }
 
             WorldManifest previous = manifest;
-            WorldManifest next = previous.nextGeneration(chunkRefs, playerRefs);
+            WorldManifest next = previous.nextGeneration(chunkRefs, playerRefs, worldTime);
             byte[] manifestBytes = mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(next);
             String manifestHash = ContentHash.sha256(manifestBytes);
             String manifestFile = "%020d-%s.json".formatted(next.generation(), manifestHash);

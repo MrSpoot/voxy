@@ -80,6 +80,8 @@ public final class CloudRenderPass implements RenderPass {
         shader.setUniform("uCloudDensity", density);
         shader.setUniform("uCloudSize", cloudSize);
         shader.setUniform("uWindOffset", (float) windOffsetBlocks);
+        var cycle = context.getDayNightVisualState();
+        shader.setUniform("uCloudTint", cycle.cloudRed(), cycle.cloudGreen(), cycle.cloudBlue());
         int gridSide = context.getAdaptiveGraphicsQuality().getLevel().cloudGridSide();
         shader.setUniform("uGridSide", gridSide);
 

@@ -29,7 +29,9 @@ public final class WorldRepository {
     public WorldRepository(Path dataDirectory, List<WorldSaveMigrator> migrations) {
         worldsDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory")
                 .toAbsolutePath().normalize().resolve("worlds");
-        this.migrations = new WorldSaveMigrationRegistry(Objects.requireNonNull(migrations, "migrations"));
+        List<WorldSaveMigrator> registered = new ArrayList<>(Objects.requireNonNull(migrations, "migrations"));
+        registered.add(new WorldSaveV2ToV3Migrator());
+        this.migrations = new WorldSaveMigrationRegistry(registered);
     }
 
     public List<WorldSummary> listWorlds() {
@@ -318,6 +320,7 @@ public final class WorldRepository {
 
     private static void validateManifest(WorldManifest manifest, String expectedKey, Path path) {
         if (manifest == null || manifest.worldId() == null || manifest.generationSettings() == null
+                || manifest.worldTime() == null
                 || !expectedKey.equals(manifest.worldKey()) || manifest.generation() < 1L
                 || manifest.seed() != manifest.generationSettings().seed()
                 || manifest.minChunkY() > manifest.maxChunkY()

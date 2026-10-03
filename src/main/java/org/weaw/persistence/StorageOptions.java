@@ -1,5 +1,7 @@
 package org.weaw.persistence;
 
+import org.weaw.game.WorldTimeState;
+
 import java.nio.file.Path;
 import java.util.Objects;
 
@@ -12,10 +14,19 @@ public record StorageOptions(
         int autosaveSeconds,
         int simulationDistanceChunks,
         int defaultRenderDistanceChunks,
+        int dayLengthSeconds,
         boolean seedExplicit,
         boolean heightExplicit
 ) {
     public static final int DEFAULT_AUTOSAVE_SECONDS = 60;
+
+    public StorageOptions(Path dataDirectory, String worldKey, String worldName, String profileKey,
+                          String requestedPlayerName, int autosaveSeconds, int simulationDistanceChunks,
+                          int defaultRenderDistanceChunks, boolean seedExplicit, boolean heightExplicit) {
+        this(dataDirectory, worldKey, worldName, profileKey, requestedPlayerName, autosaveSeconds,
+                simulationDistanceChunks, defaultRenderDistanceChunks,
+                WorldTimeState.DEFAULT_DAY_LENGTH_SECONDS, seedExplicit, heightExplicit);
+    }
 
     public StorageOptions {
         dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory").toAbsolutePath().normalize();
@@ -36,6 +47,10 @@ public record StorageOptions(
         }
         if (defaultRenderDistanceChunks < 2 || defaultRenderDistanceChunks > 64) {
             throw new IllegalArgumentException("Default render distance must be in range [2, 64]");
+        }
+        if (dayLengthSeconds < WorldTimeState.MIN_DAY_LENGTH_SECONDS
+                || dayLengthSeconds > WorldTimeState.MAX_DAY_LENGTH_SECONDS) {
+            throw new IllegalArgumentException("Day length must be between 60 and 7200 seconds");
         }
     }
 

@@ -1,7 +1,7 @@
 package org.weaw.network.protocol;
 
 public final class Protocol {
-    public static final int VERSION = 6;
+    public static final int VERSION = 7;
     public static final int DEFAULT_PORT = 25565;
     public static final int DEFAULT_MAX_PLAYERS = 16;
     public static final int MAX_PLAYERS = 16;

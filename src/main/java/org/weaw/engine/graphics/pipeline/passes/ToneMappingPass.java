@@ -87,6 +87,7 @@ public class ToneMappingPass implements RenderPass {
         shader.setUniform("uColorGradingEnabled", settings.isEnabled() ? 1 : 0);
         shader.setUniform("uToneMappingEnabled", settings.isToneMappingEnabled() ? 1 : 0);
         shader.setUniform("uExposure", settings.getExposure());
+        shader.setUniform("uExposureOffset", context.getDayNightVisualState().exposureOffset());
         shader.setUniform("uContrast", settings.getContrast());
         shader.setUniform("uSaturation", settings.getSaturation());
         shader.setUniform("uVibrance", settings.getVibrance());

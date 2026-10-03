@@ -221,6 +221,8 @@ public class Game {
         );
         renderer.create();
         renderer.getContext().setGameUiState(gameUiState);
+        renderer.getContext().setAuthoritativeWorldClock(
+                multiplayerServer == null ? null : multiplayerServer.getWorldClock());
         boolean voxelLightDataEnabled = launchOptions.dynamicLightingEnabled() && launchOptions.lightUploadEnabled();
         renderer.getContext().setVoxelLightDataEnabled(voxelLightDataEnabled);
         renderer.getContext().getLightingSettings().setBlockLightEnabled(voxelLightDataEnabled);
@@ -869,6 +871,9 @@ public class Game {
         syncCameraToPlayer(interpolationAlpha);
         camera.setAspectRatio(window.aspectRatio());
         renderer.getContext().setFrameDeltaSeconds(Math.max(0.0f, deltaTime));
+        renderer.getContext().setWorldTimePhase(launchOptions.benchmarkEnabled()
+                ? 0.5
+                : networkSession.getWorldClock().phase());
         renderer.render(camera);
     }
 

@@ -235,7 +235,7 @@ vec3 applyHdrLighting(vec3 albedo, int face, float ao) {
 
     vec3 normal = getFaceNormal(face);
     vec3 sunDirection = normalize(uSunDirection + vec3(0.0, 0.00001, 0.0));
-    float sunFactor = getSoftenedSunFactor(normal, sunDirection, distanceSoftening);
+    float sunFactor = mix(0.35, getSoftenedSunFactor(normal, sunDirection, distanceSoftening), 0.40);
     float skyFactor = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
     float indirectSkyFactor = mix(0.35, 1.0, skyFactor);
 

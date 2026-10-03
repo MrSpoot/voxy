@@ -145,6 +145,7 @@ public final class MessageCodec {
                 output.writeInt(welcome.minChunkY());
                 output.writeInt(welcome.maxChunkY());
                 output.writeInt(welcome.renderDistance());
+                writeWorldTime(output, welcome.worldTime());
             }
             case ServerMessage.StateSnapshot snapshot -> {
                 output.writeByte(SERVER_STATE);
@@ -160,6 +161,7 @@ public final class MessageCodec {
                     writeString(output, stableId == null ? "" : stableId, 128);
                 }
                 output.writeByte(snapshot.selectedHotbarSlot());
+                writeWorldTime(output, snapshot.worldTime());
             }
             case ServerMessage.ChunkSnapshot chunk -> {
                 output.writeByte(SERVER_CHUNK);
@@ -218,7 +220,7 @@ public final class MessageCodec {
         return switch (input.readUnsignedByte()) {
             case SERVER_WELCOME -> new ServerMessage.Welcome(
                     input.readLong(), input.readLong(), input.readLong(),
-                    input.readInt(), input.readInt(), input.readInt()
+                    input.readInt(), input.readInt(), input.readInt(), readWorldTime(input)
             );
             case SERVER_STATE -> readStateSnapshot(input);
             case SERVER_CHUNK -> {
@@ -294,8 +296,21 @@ public final class MessageCodec {
                 acknowledgedSequence,
                 players,
                 hotbar,
-                input.readUnsignedByte()
+                input.readUnsignedByte(),
+                readWorldTime(input)
         );
+    }
+
+    private static void writeWorldTime(DataOutputStream output, WorldTimeSnapshot time) throws IOException {
+        output.writeDouble(time.phase());
+        output.writeInt(time.dayLengthSeconds());
+        output.writeDouble(time.timeScale());
+        output.writeBoolean(time.frozen());
+    }
+
+    private static WorldTimeSnapshot readWorldTime(DataInputStream input) throws IOException {
+        return new WorldTimeSnapshot(
+                input.readDouble(), input.readInt(), input.readDouble(), input.readBoolean());
     }
 
     private static void writePlayerState(DataOutputStream output, NetworkPlayerState state) throws IOException {

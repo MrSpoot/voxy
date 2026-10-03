@@ -781,6 +781,31 @@ public class DebugImGuiPass implements RenderPass {
         LightingSettings settings = context.getLightingSettings();
         applyWindowLayout(lightingRect, 0.9f);
         ImGui.begin("Render Lighting");
+        if (context.getAuthoritativeWorldClock() != null) {
+            var clock = context.getAuthoritativeWorldClock();
+            ImGui.text(String.format("World time: %02d:%02d",
+                    (int) (clock.phase() * 24.0), (int) ((clock.phase() * 24.0 % 1.0) * 60.0)));
+            float[] phase = {(float) clock.phase()};
+            if (ImGui.sliderFloat("Time of day", phase, 0.0f, 1.0f)) {
+                clock.setPhase(phase[0]);
+            }
+            float[] speed = {(float) clock.timeScale()};
+            if (ImGui.sliderFloat("Time scale", speed, 0.1f, 20.0f)) {
+                clock.setTimeScale(speed[0]);
+            }
+            ImBoolean frozen = new ImBoolean(clock.frozen());
+            if (ImGui.checkbox("Freeze time", frozen)) {
+                clock.setFrozen(frozen.get());
+            }
+            if (ImGui.smallButton("Dawn")) clock.setPhase(0.25);
+            ImGui.sameLine();
+            if (ImGui.smallButton("Noon")) clock.setPhase(0.5);
+            ImGui.sameLine();
+            if (ImGui.smallButton("Dusk")) clock.setPhase(0.75);
+            ImGui.sameLine();
+            if (ImGui.smallButton("Midnight")) clock.setPhase(0.0);
+            ImGui.separator();
+        }
         ImBoolean enabled = new ImBoolean(settings.isEnabled());
         if (ImGui.checkbox("Enabled", enabled)) {
             settings.setEnabled(enabled.get());

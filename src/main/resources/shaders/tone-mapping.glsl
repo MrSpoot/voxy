@@ -21,6 +21,7 @@ uniform int uAutoExposureEnabled;
 uniform int uColorGradingEnabled;
 uniform int uToneMappingEnabled;
 uniform float uExposure;
+uniform float uExposureOffset;
 uniform float uContrast;
 uniform float uSaturation;
 uniform float uVibrance;
@@ -78,6 +79,7 @@ void main() {
     if (uAutoExposureEnabled != 0) {
         effectiveExposure = texelFetch(uAutoExposureTexture, ivec2(0), 0).r;
     }
+    effectiveExposure += uExposureOffset;
     color *= exp2(effectiveExposure);
 
     if (uToneMappingEnabled != 0) {

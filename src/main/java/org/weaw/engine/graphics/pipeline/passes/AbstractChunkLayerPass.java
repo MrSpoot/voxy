@@ -263,6 +263,7 @@ abstract class AbstractChunkLayerPass implements RenderPass {
 
     private void setLightingUniforms(RenderContext context) {
         LightingSettings lighting = context.getLightingSettings();
+        var cycle = context.getDayNightVisualState();
         int configuredRenderDistance = context.getWorldSettings().getRenderDistanceChunks();
         int effectiveRenderDistance = context.getWorld() != null
                 ? context.getWorld().getMemorySnapshot().effectiveRenderDistanceChunks()
@@ -272,14 +273,17 @@ abstract class AbstractChunkLayerPass implements RenderPass {
         }
         float renderDistanceBlocks = Math.max(Chunk.SIZE, effectiveRenderDistance * (float) Chunk.SIZE);
         shader.setUniform("uLightingEnabled", lighting.isEnabled() ? 1 : 0);
-        shader.setUniform("uAmbientColor", lighting.getAmbientRed(), lighting.getAmbientGreen(), lighting.getAmbientBlue());
-        shader.setUniform("uAmbientIntensity", lighting.getAmbientIntensity());
+        shader.setUniform("uAmbientColor", lighting.getAmbientRed() * cycle.ambientRed(),
+                lighting.getAmbientGreen() * cycle.ambientGreen(), lighting.getAmbientBlue() * cycle.ambientBlue());
+        shader.setUniform("uAmbientIntensity", lighting.getAmbientIntensity() * cycle.ambientMultiplier());
         shader.setUniform("uShadowStrength", lighting.getShadowStrength());
-        shader.setUniform("uSunColor", lighting.getSunRed(), lighting.getSunGreen(), lighting.getSunBlue());
-        shader.setUniform("uSunIntensity", lighting.getSunIntensity());
-        shader.setUniform("uSunDirection", lighting.getSunDirectionX(), lighting.getSunDirectionY(), lighting.getSunDirectionZ());
-        shader.setUniform("uSkyColor", lighting.getSkyRed(), lighting.getSkyGreen(), lighting.getSkyBlue());
-        shader.setUniform("uSkyIntensity", lighting.getSkyIntensity());
+        shader.setUniform("uSunColor", lighting.getSunRed() * cycle.sunRed(),
+                lighting.getSunGreen() * cycle.sunGreen(), lighting.getSunBlue() * cycle.sunBlue());
+        shader.setUniform("uSunIntensity", lighting.getSunIntensity() * cycle.daylight());
+        shader.setUniform("uSunDirection", cycle.sunX(), cycle.sunY(), cycle.sunZ());
+        shader.setUniform("uSkyColor", lighting.getSkyRed() * cycle.skyRed(),
+                lighting.getSkyGreen() * cycle.skyGreen(), lighting.getSkyBlue() * cycle.skyBlue());
+        shader.setUniform("uSkyIntensity", lighting.getSkyIntensity() * cycle.skyMultiplier());
         shader.setUniform("uVoxelLightGamma", lighting.getVoxelLightGamma());
         shader.setUniform("uVoxelDarknessFloor", lighting.getVoxelDarknessFloor());
         shader.setUniform("uCameraPosition", context.getCamera().getPosition());
