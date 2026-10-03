@@ -4,7 +4,7 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.gameplay.BlockAction;
 import org.weaw.gameplay.PlayerInput;
 

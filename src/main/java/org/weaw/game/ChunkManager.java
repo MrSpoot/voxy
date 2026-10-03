@@ -102,7 +102,7 @@ public class ChunkManager {
 
     public synchronized short getBlockAtWorld(int worldX, int worldY, int worldZ) {
         int loadedBlock = getLoadedBlockAtWorld(worldX, worldY, worldZ);
-        return loadedBlock < 0 ? blockCatalog.air().getId() : (short) loadedBlock;
+        return loadedBlock < 0 ? blockCatalog.getRuntimeId(blockCatalog.air()) : (short) loadedBlock;
     }
 
     /** Returns an unsigned runtime id, or {@code -1} when the chunk is absent. */
@@ -540,12 +540,6 @@ public class ChunkManager {
         firstRetainedChunkLightVersion = chunkLightDeltas.isEmpty()
                 ? (chunkLightVersion + 1)
                 : chunkLightDeltas.get(0).version();
-    }
-
-    public record ChunkPosition(int x, int y, int z) {
-        public static ChunkPosition fromChunk(Chunk chunk) {
-            return new ChunkPosition(chunk.getPosition().x, chunk.getPosition().y, chunk.getPosition().z);
-        }
     }
 
     public record ChunkUpload(ChunkPosition position, Chunk chunk, ChunkMeshData meshData) {

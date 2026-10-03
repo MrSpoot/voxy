@@ -329,6 +329,14 @@ public final class WorldRepository {
         if (manifest.formatVersion() != WorldManifest.CURRENT_FORMAT_VERSION) {
             throw corrupt(path, "Migration did not produce the current world format", null);
         }
+        if (manifest.generationSettings().generatorVersion() != GenerationConfig.CURRENT_GENERATOR_VERSION) {
+            throw new WorldSaveException(
+                    WorldSaveException.Kind.INCOMPATIBLE,
+                    path,
+                    "World generator version " + manifest.generationSettings().generatorVersion()
+                            + " is not supported; expected " + GenerationConfig.CURRENT_GENERATOR_VERSION
+            );
+        }
         for (String section : new String[]{"time", "entities", "fluids"}) {
             if (!manifest.sections().containsKey(section)) {
                 throw corrupt(path, "World manifest is missing reserved section " + section, null);

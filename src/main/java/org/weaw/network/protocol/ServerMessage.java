@@ -2,7 +2,7 @@ package org.weaw.network.protocol;
 
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 
 import java.util.List;
 

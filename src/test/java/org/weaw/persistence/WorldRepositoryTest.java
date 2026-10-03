@@ -58,7 +58,11 @@ class WorldRepositoryTest {
         World restoredWorld = createWorld(reopened);
         restoredWorld.setDynamicLightingEnabled(false);
         assertEquals(1234L, reopened.manifest().seed());
-        assertEquals(Blocks.RED_LAMP.getId(), restoredWorld.getBlockAtWorld(3, 4, 5));
+        assertEquals(
+                GenerationConfig.CURRENT_GENERATOR_VERSION,
+                reopened.manifest().generationSettings().generatorVersion()
+        );
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.RED_LAMP), restoredWorld.getBlockAtWorld(3, 4, 5));
 
         GameplaySession restoredGameplay = new GameplaySession(restoredWorld, new GameplaySettings());
         reopened.playerState(profileId).restore(restoredGameplay, BlockRegistry.getDefaultCatalog());
@@ -88,7 +92,7 @@ class WorldRepositoryTest {
         betaWorld.setDynamicLightingEnabled(false);
         assertNotEquals(alphaId, beta.manifest().worldId());
         assertEquals(22L, beta.manifest().seed());
-        assertNotEquals(Blocks.BLUE_LAMP.getId(), betaWorld.getBlockAtWorld(1, 2, 3));
+        assertNotEquals(BlockRegistry.getRuntimeId(Blocks.BLUE_LAMP), betaWorld.getBlockAtWorld(1, 2, 3));
         beta.close();
         betaWorld.close();
     }
@@ -111,7 +115,7 @@ class WorldRepositoryTest {
 
         WorldSaveSession recovered = open(storage, generation);
         World recoveredWorld = createWorld(recovered);
-        assertNotEquals(Blocks.GREEN_LAMP.getId(), recoveredWorld.getBlockAtWorld(2, 2, 2));
+        assertNotEquals(BlockRegistry.getRuntimeId(Blocks.GREEN_LAMP), recoveredWorld.getBlockAtWorld(2, 2, 2));
         recovered.close();
         recoveredWorld.close();
     }
@@ -149,12 +153,19 @@ class WorldRepositoryTest {
                 GenerationConfig.defaults().withSeed(1L),
                 org.weaw.game.WorldHeightRange.DEFAULT
         );
-        WorldManifest versionZero = copyWithVersion(current, 0);
+        WorldManifest versionOne = copyWithVersion(current, 1);
         Path path = temporaryDirectory.resolve("legacy-manifest.json");
 
         assertEquals(
-                WorldManifest.CURRENT_FORMAT_VERSION,
-                new WorldSaveMigrationRegistry(List.of(new WorldSaveMigrator() {
+                WorldSaveException.Kind.INCOMPATIBLE,
+                assertThrows(
+                        WorldSaveException.class,
+                        () -> new WorldSaveMigrationRegistry(List.of()).migrateToCurrent(versionOne, path)
+                ).kind()
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new WorldSaveMigrationRegistry(List.of(new WorldSaveMigrator() {
                     @Override
                     public int sourceVersion() {
                         return 0;
@@ -162,22 +173,45 @@ class WorldRepositoryTest {
 
                     @Override
                     public int targetVersion() {
-                        return 1;
+                        return 2;
                     }
 
                     @Override
                     public WorldManifest migrate(WorldManifest source) {
-                        return copyWithVersion(source, 1);
+                        return copyWithVersion(source, 2);
                     }
-                })).migrateToCurrent(versionZero, path).formatVersion()
+                }))
         );
-        assertEquals(
-                WorldSaveException.Kind.INCOMPATIBLE,
-                assertThrows(
-                        WorldSaveException.class,
-                        () -> new WorldSaveMigrationRegistry(List.of()).migrateToCurrent(versionZero, path)
-                ).kind()
+    }
+
+    @Test
+    void rejectsWorldFromPreviousGeneratorVersion() {
+        StorageOptions storage = storage("previous-generator");
+        GenerationConfig current = GenerationConfig.defaults().withSeed(42L);
+        int previousVersion = current.generatorVersion() - 1;
+        GenerationConfig previous = new GenerationConfig(
+                current.seed(),
+                current.amplitude(),
+                current.baseHeight(),
+                current.waterLevel(),
+                current.terrainFrequency(),
+                current.terrainOctaves(),
+                current.terrainLacunarity(),
+                current.terrainGain(),
+                current.treeSeedOffset(),
+                current.treeRarity(),
+                current.treeSteepness(),
+                previousVersion
         );
+        open(storage, previous).close();
+
+        WorldSaveException exception = assertThrows(
+                WorldSaveException.class,
+                () -> open(storage, current)
+        );
+
+        assertEquals(WorldSaveException.Kind.INCOMPATIBLE, exception.kind());
+        assertTrue(exception.getMessage().contains("World generator version " + previousVersion));
     }
 
     @Test

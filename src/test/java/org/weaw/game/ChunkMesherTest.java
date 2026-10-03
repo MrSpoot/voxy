@@ -60,7 +60,7 @@ class ChunkMesherTest {
                         && worldZ >= 0 && worldZ < Chunk.SIZE) {
                     return chunk.getBlock(worldX, worldY, worldZ);
                 }
-                return worldX < 0 ? Blocks.STONE.getId() : Blocks.AIR.getId();
+                return worldX < 0 ? BlockRegistry.getRuntimeId(Blocks.STONE) : BlockRegistry.getRuntimeId(Blocks.AIR);
             };
 
             ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, provider);
@@ -95,8 +95,8 @@ class ChunkMesherTest {
             chunk.setBlock(8, 8, 8, Blocks.GLASS);
             chunk.setBlock(9, 8, 8, Blocks.GLASS);
             WorldBlockProvider provider = (worldX, worldY, worldZ) -> worldX < 0
-                    ? Blocks.STONE.getId()
-                    : Blocks.AIR.getId();
+                    ? BlockRegistry.getRuntimeId(Blocks.STONE)
+                    : BlockRegistry.getRuntimeId(Blocks.AIR);
 
             ChunkMesher.setMeshingMode(ChunkMesher.MeshingMode.LEGACY);
             ChunkMeshData legacy = ChunkMesher.buildMeshData(chunk, provider);
@@ -163,7 +163,7 @@ class ChunkMesherTest {
         Chunk chunk = new Chunk(new Vector3i());
         assertThrows(CancellationException.class, () -> ChunkMesher.buildMeshDataProfiled(
                 chunk,
-                (x, y, z) -> Blocks.AIR.getId(),
+                (x, y, z) -> BlockRegistry.getRuntimeId(Blocks.AIR),
                 () -> true
         ));
     }
@@ -178,7 +178,7 @@ class ChunkMesherTest {
                     && worldZ >= 0 && worldZ < Chunk.SIZE) {
                 return chunk.getBlock(worldX, worldY, worldZ);
             }
-            return Blocks.AIR.getId();
+            return BlockRegistry.getRuntimeId(Blocks.AIR);
         };
 
         ChunkMeshData meshData = ChunkMesher.buildMeshData(chunk, provider);
@@ -199,7 +199,7 @@ class ChunkMesherTest {
                     && worldZ >= 0 && worldZ < Chunk.SIZE) {
                 return chunk.getBlock(worldX, worldY, worldZ);
             }
-            return Blocks.AIR.getId();
+            return BlockRegistry.getRuntimeId(Blocks.AIR);
         };
         return ChunkMesher.buildMeshData(chunk, provider);
     }

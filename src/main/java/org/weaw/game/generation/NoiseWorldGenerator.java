@@ -1,7 +1,9 @@
 package org.weaw.game.generation;
 
 import org.weaw.game.Chunk;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
+import org.weaw.game.utils.BlockCatalog;
+import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 import org.weaw.game.utils.FastNoiseLite;
 
@@ -19,33 +21,69 @@ import java.util.concurrent.TimeUnit;
 public final class NoiseWorldGenerator implements WorldGenerator {
     private static final int TOPSOIL_DEPTH = 3;
     private static final int TREE_HORIZONTAL_RADIUS = 2;
+    private static final int COLUMN_HALO_RADIUS = TREE_HORIZONTAL_RADIUS + 1;
     private static final int TREE_MAX_HEIGHT_ABOVE_SURFACE = 6;
+    private static final float CONTINENT_SCALE = 0.18f;
+    private static final float REGION_SCALE = 0.35f;
+    private static final float RIDGE_SCALE = 0.85f;
+    private static final float CAVE_TUNNEL_THRESHOLD = 0.16f;
+    private static final float CAVERN_THRESHOLD = 0.72f;
+    private static final int CAVE_FLOOR_DEPTH = 27;
+    private static final int CAVE_FLOOR_VARIATION = 8;
+    private static final int CAVE_FLOOR_FADE_HEIGHT = 8;
+    private static final float CAVE_ENTRANCE_START = 0.55f;
+    private static final float CAVE_ENTRANCE_FULL = 0.78f;
+    private static final int CAVE_ENTRANCE_DEPTH = 14;
+    private static final float CAVE_ENTRANCE_BOOST = 0.22f;
     private static final int DEFAULT_CLASSIFICATION_CACHE_COLUMNS = 4096;
     private static final int MAX_PENDING_CLASSIFICATION_COLUMNS = 4096;
     private static final ThreadPoolExecutor CLASSIFICATION_EXECUTOR = createClassificationExecutor();
 
     private final GenerationConfig config;
-    private final ThreadLocal<FastNoiseLite> noise;
-    private final ThreadLocal<FastNoiseLite> treeNoise;
+    private final ThreadLocal<NoiseSet> noises;
     private final ThreadLocal<GenerationScratch> generationScratch;
     private final ThreadLocal<RecentColumnCache> recentColumns;
     private final Map<ColumnPosition, CompletableFuture<ColumnGenerationData>> classificationCache;
     private final int maxClassificationCacheColumns;
     private final ColumnBounds globalBounds;
+    private final short airBlockId;
+    private final short grassBlockId;
+    private final short dirtBlockId;
+    private final short stoneBlockId;
+    private final short sandBlockId;
+    private final short woodLogBlockId;
+    private final short leavesBlockId;
+    private final short waterBlockId;
     private long classificationCacheHits;
     private long classificationCacheMisses;
 
     public NoiseWorldGenerator(GenerationConfig config) {
+        this(config, BlockRegistry.getDefaultCatalog());
+    }
+
+    public NoiseWorldGenerator(GenerationConfig config, BlockCatalog blockCatalog) {
         this.config = Objects.requireNonNull(config, "config");
-        this.noise = ThreadLocal.withInitial(() -> createNoise((int) config.seed()));
-        this.treeNoise = ThreadLocal.withInitial(() -> createNoise((int) config.seed() + config.treeSeedOffset()));
+        Objects.requireNonNull(blockCatalog, "blockCatalog");
+        if (config.generatorVersion() != GenerationConfig.CURRENT_GENERATOR_VERSION) {
+            throw new IllegalArgumentException("Unsupported generator version: " + config.generatorVersion());
+        }
+        this.airBlockId = blockCatalog.getRuntimeId(Blocks.AIR);
+        this.grassBlockId = blockCatalog.getRuntimeId(Blocks.GRASS_BLOCK);
+        this.dirtBlockId = blockCatalog.getRuntimeId(Blocks.DIRT);
+        this.stoneBlockId = blockCatalog.getRuntimeId(Blocks.STONE);
+        this.sandBlockId = blockCatalog.getRuntimeId(Blocks.SAND);
+        this.woodLogBlockId = blockCatalog.getRuntimeId(Blocks.WOOD_LOG);
+        this.leavesBlockId = blockCatalog.getRuntimeId(Blocks.LEAVES);
+        this.waterBlockId = blockCatalog.getRuntimeId(Blocks.WATER);
+        this.noises = ThreadLocal.withInitial(this::createNoiseSet);
         this.generationScratch = ThreadLocal.withInitial(GenerationScratch::new);
         this.recentColumns = ThreadLocal.withInitial(RecentColumnCache::new);
         int minimumSurfaceY = (int) Math.floor(config.baseHeight() - Math.abs(config.amplitude()));
         int maximumSurfaceY = (int) Math.ceil(config.baseHeight() + Math.abs(config.amplitude()));
         this.globalBounds = new ColumnBounds(
                 minimumSurfaceY,
-                Math.max(config.waterLevel(), maximumSurfaceY + TREE_MAX_HEIGHT_ABOVE_SURFACE)
+                Math.max(config.waterLevel(), maximumSurfaceY + TREE_MAX_HEIGHT_ABOVE_SURFACE),
+                minimumSurfaceY - CAVE_FLOOR_DEPTH - CAVE_FLOOR_VARIATION
         );
         this.maxClassificationCacheColumns = Math.max(
                 64,
@@ -62,6 +100,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         GenerationScratch scratch = generationScratch.get();
         short[] blocks = scratch.blocks;
         ColumnGenerationData columnData = getColumnData(chunk.getPosition().x, chunk.getPosition().z);
+        NoiseSet noiseSet = noises.get();
 
         for (int y = 0; y < Chunk.SIZE; y++) {
             int globalY = chunkGlobalY + y;
@@ -70,7 +109,14 @@ public final class NoiseWorldGenerator implements WorldGenerator {
                 int zOffset = yOffset + (z * Chunk.SIZE);
                 for (int x = 0; x < Chunk.SIZE; x++) {
                     int height = columnData.surfaceHeight(x, z);
-                    blocks[zOffset + x] = getBaseTerrainBlock(globalY, height);
+                    blocks[zOffset + x] = getTerrainBlock(
+                            noiseSet,
+                            chunkGlobalX + x,
+                            globalY,
+                            chunkGlobalZ + z,
+                            height,
+                            columnData.hasSmoothSlope(x, z)
+                    );
                 }
             }
         }
@@ -84,18 +130,22 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         int chunkX = Math.floorDiv(worldX, Chunk.SIZE);
         int chunkZ = Math.floorDiv(worldZ, Chunk.SIZE);
         ColumnGenerationData columnData = getColumnData(chunkX, chunkZ);
-        short baseBlock = getBaseTerrainBlock(
+        short baseBlock = getTerrainBlock(
+                noises.get(),
+                worldX,
                 worldY,
-                columnData.surfaceHeight(worldX - chunkX * Chunk.SIZE, worldZ - chunkZ * Chunk.SIZE)
+                worldZ,
+                columnData.surfaceHeight(worldX - chunkX * Chunk.SIZE, worldZ - chunkZ * Chunk.SIZE),
+                columnData.hasSmoothSlope(worldX - chunkX * Chunk.SIZE, worldZ - chunkZ * Chunk.SIZE)
         );
-        if (baseBlock != Blocks.AIR.getId()) {
+        if (baseBlock != airBlockId) {
             return baseBlock;
         }
 
         for (int treeX = worldX - 2; treeX <= worldX + 2; treeX++) {
             for (int treeZ = worldZ - 2; treeZ <= worldZ + 2; treeZ++) {
                 short treeBlock = getTreeBlockAt(columnData, chunkX, chunkZ, treeX, treeZ, worldX, worldY, worldZ);
-                if (treeBlock != Blocks.AIR.getId()) {
+                if (treeBlock != airBlockId) {
                     return treeBlock;
                 }
             }
@@ -145,6 +195,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
             }
         }
 
+        NoiseSet noiseSet = noises.get();
         for (int z = 0; z < sizeZ; z++) {
             int worldZ = originZ + z;
             for (int x = 0; x < sizeX; x++) {
@@ -154,8 +205,14 @@ public final class NoiseWorldGenerator implements WorldGenerator {
                         Math.floorMod(worldX, Chunk.SIZE),
                         Math.floorMod(worldZ, Chunk.SIZE)
                 );
+                boolean smoothSlope = data.hasSmoothSlope(
+                        Math.floorMod(worldX, Chunk.SIZE),
+                        Math.floorMod(worldZ, Chunk.SIZE)
+                );
                 for (int y = 0; y < sizeY; y++) {
-                    destination[x + z * sizeX + y * sizeX * sizeZ] = getBaseTerrainBlock(originY + y, height);
+                    destination[x + z * sizeX + y * sizeX * sizeZ] = getTerrainBlock(
+                            noiseSet, worldX, originY + y, worldZ, height, smoothSlope
+                    );
                 }
             }
         }
@@ -207,15 +264,16 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         return classifyAgainstBounds(position.y(), columnData.bounds());
     }
 
-    private static ChunkGenerationHint classifyAgainstBounds(int chunkY, ColumnBounds bounds) {
+    private ChunkGenerationHint classifyAgainstBounds(int chunkY, ColumnBounds bounds) {
         int chunkMinY = chunkY * Chunk.SIZE;
         int chunkMaxY = chunkMinY + Chunk.SIZE - 1;
 
         if (chunkMinY > bounds.maxContentY()) {
             return ChunkGenerationHint.empty();
         }
-        if (chunkMaxY < bounds.minSurfaceY() - TOPSOIL_DEPTH) {
-            return ChunkGenerationHint.uniform(Blocks.STONE.getId());
+        if (chunkMaxY < bounds.minSurfaceY() - TOPSOIL_DEPTH
+                && chunkMaxY < bounds.caveBottomY()) {
+            return ChunkGenerationHint.uniform(stoneBlockId);
         }
         return ChunkGenerationHint.materialized();
     }
@@ -258,32 +316,132 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         );
     }
 
-    private int getSurfaceHeight(FastNoiseLite terrainNoise, int worldX, int worldZ) {
-        float height = getFractalNoise(
-                terrainNoise,
-                worldX * config.terrainFrequency(),
-                worldZ * config.terrainFrequency(),
+    private TerrainSample sampleTerrain(NoiseSet noiseSet, int worldX, int worldZ) {
+        float frequency = config.terrainFrequency();
+        float continent = getFractalNoise(
+                noiseSet.continent,
+                worldX * frequency * CONTINENT_SCALE,
+                worldZ * frequency * CONTINENT_SCALE,
+                3,
+                2.0f,
+                0.5f
+        );
+        float region = getFractalNoise(
+                noiseSet.region,
+                worldX * frequency * REGION_SCALE,
+                worldZ * frequency * REGION_SCALE,
+                2,
+                2.0f,
+                0.5f
+        );
+        float detail = getFractalNoise(
+                noiseSet.detail,
+                worldX * frequency,
+                worldZ * frequency,
                 config.terrainOctaves(),
                 config.terrainLacunarity(),
                 config.terrainGain()
-        ) * config.amplitude() + config.baseHeight();
-        return (int) height;
+        );
+        float ridgeSource = getFractalNoise(
+                noiseSet.ridge,
+                worldX * frequency * RIDGE_SCALE,
+                worldZ * frequency * RIDGE_SCALE,
+                4,
+                2.0f,
+                0.5f
+        );
+        float ridge = (float) Math.pow(1.0f - Math.abs(ridgeSource), 2.0);
+        float ruggedness = smoothstep(-0.35f, 0.45f, region);
+        float plains = 0.55f * continent + 0.18f * detail;
+        float mountains = 0.30f * continent + 0.20f * detail + ridge - 0.35f;
+        float normalizedHeight = lerp(plains, mountains, ruggedness);
+        normalizedHeight = Math.max(-1.0f, Math.min(1.0f, normalizedHeight));
+        int surfaceHeight = Math.round(config.baseHeight() + config.amplitude() * normalizedHeight);
+        float treeSuitability = 0.20f + 0.65f * (1.0f - ruggedness);
+        return new TerrainSample(surfaceHeight, treeSuitability);
+    }
+
+    private short getTerrainBlock(
+            NoiseSet noiseSet,
+            int worldX,
+            int worldY,
+            int worldZ,
+            int height,
+            boolean allowEntrance
+    ) {
+        short baseBlock = getBaseTerrainBlock(worldY, height);
+        if (baseBlock == stoneBlockId
+                && isCave(noiseSet, worldX, worldY, worldZ, height, allowEntrance)) {
+            return airBlockId;
+        }
+        return baseBlock == stoneBlockId ? getSurfaceMaterial(worldY, height) : baseBlock;
     }
 
     private short getBaseTerrainBlock(int worldY, int height) {
         if (worldY > height) {
-            return worldY <= config.waterLevel() ? Blocks.WATER.getId() : Blocks.AIR.getId();
+            return worldY <= config.waterLevel() ? waterBlockId : airBlockId;
         }
 
+        return stoneBlockId;
+    }
+
+    private short getSurfaceMaterial(int worldY, int height) {
         if (worldY < config.waterLevel() + 1) {
-            return worldY >= height - 3 ? Blocks.SAND.getId() : Blocks.STONE.getId();
+            return worldY >= height - 3 ? sandBlockId : stoneBlockId;
         }
 
         if (worldY == height) {
-            return Blocks.GRASS_BLOCK.getId();
+            return grassBlockId;
         }
 
-        return worldY >= height - 3 ? Blocks.DIRT.getId() : Blocks.STONE.getId();
+        return worldY >= height - 3 ? dirtBlockId : stoneBlockId;
+    }
+
+    private boolean isCave(
+            NoiseSet noiseSet,
+            int worldX,
+            int worldY,
+            int worldZ,
+            int surfaceHeight,
+            boolean allowEntrance
+    ) {
+        int caveFloorY = getCaveFloorY(noiseSet, worldX, worldZ);
+        if (worldY < caveFloorY || worldY > surfaceHeight) {
+            return false;
+        }
+
+        float entranceStrength = allowEntrance && surfaceHeight > config.waterLevel()
+                ? smoothstep(
+                        CAVE_ENTRANCE_START,
+                        CAVE_ENTRANCE_FULL,
+                        noiseSet.entrance.GetNoise(worldX * 0.35f, worldZ * 0.35f)
+                )
+                : 0.0f;
+        int caveCeiling = entranceStrength > 0.0f ? surfaceHeight : surfaceHeight - TOPSOIL_DEPTH;
+        if (worldY > caveCeiling) {
+            return false;
+        }
+
+        float floorFade = smoothstep(caveFloorY, caveFloorY + CAVE_FLOOR_FADE_HEIGHT, worldY);
+        int depth = surfaceHeight - worldY;
+        float entranceFade = 1.0f - smoothstep(0.0f, CAVE_ENTRANCE_DEPTH, depth);
+        float caveA = noiseSet.caveA.GetNoise(worldX * 1.5f, worldY * 1.1f, worldZ * 1.5f);
+        float caveB = noiseSet.caveB.GetNoise(worldX * 1.5f, worldY * 1.1f, worldZ * 1.5f);
+        float tunnelThreshold = (CAVE_TUNNEL_THRESHOLD
+                + CAVE_ENTRANCE_BOOST * entranceStrength * entranceFade) * floorFade;
+        boolean tunnel = Math.abs(caveA) + Math.abs(caveB) < tunnelThreshold;
+        float cavernThreshold = lerp(1.0f, CAVERN_THRESHOLD, floorFade);
+        boolean cavern = worldY <= surfaceHeight - 8
+                && noiseSet.cavern.GetNoise(worldX * 0.65f, worldY * 0.45f, worldZ * 0.65f)
+                > cavernThreshold;
+        return tunnel || cavern;
+    }
+
+    private int getCaveFloorY(NoiseSet noiseSet, int worldX, int worldZ) {
+        int center = globalBounds.minSurfaceY() - CAVE_FLOOR_DEPTH;
+        return center + Math.round(
+                noiseSet.caveFloor.GetNoise(worldX * 0.25f, worldZ * 0.25f) * CAVE_FLOOR_VARIATION
+        );
     }
 
     private short getTreeBlockAt(
@@ -299,12 +457,12 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         int localTreeX = treeX - chunkX * Chunk.SIZE;
         int localTreeZ = treeZ - chunkZ * Chunk.SIZE;
         if (!data.hasTree(localTreeX, localTreeZ)) {
-            return Blocks.AIR.getId();
+            return airBlockId;
         }
 
         int trunkBaseY = data.surfaceHeight(localTreeX, localTreeZ) + 1;
         if (worldX == treeX && worldZ == treeZ && worldY >= trunkBaseY && worldY < trunkBaseY + 4) {
-            return Blocks.WOOD_LOG.getId();
+            return woodLogBlockId;
         }
 
         int dx = worldX - treeX;
@@ -313,10 +471,10 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         int distance = dx * dx + dy * dy + dz * dz;
 
         if (dy >= 0 && dy <= 2 && distance <= 5) {
-            return Blocks.LEAVES.getId();
+            return leavesBlockId;
         }
 
-        return Blocks.AIR.getId();
+        return airBlockId;
     }
 
     private synchronized ColumnGenerationData getReadyColumnDataOrSchedule(int chunkX, int chunkZ) {
@@ -406,42 +564,68 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         int chunkWorldX = chunkX * Chunk.SIZE;
         int chunkWorldZ = chunkZ * Chunk.SIZE;
         int minSurfaceY = Integer.MAX_VALUE;
+        int minCaveFloorY = Integer.MAX_VALUE;
         int maxContentY = config.waterLevel();
-        FastNoiseLite terrainNoise = noise.get();
-        int extendedSize = Chunk.SIZE + TREE_HORIZONTAL_RADIUS * 2;
+        NoiseSet noiseSet = noises.get();
+        int extendedSize = Chunk.SIZE + COLUMN_HALO_RADIUS * 2;
         int[] surfaceHeights = new int[extendedSize * extendedSize];
+        float[] treeSuitability = new float[extendedSize * extendedSize];
         boolean[] trees = new boolean[extendedSize * extendedSize];
 
-        for (int localZ = -TREE_HORIZONTAL_RADIUS; localZ < Chunk.SIZE + TREE_HORIZONTAL_RADIUS; localZ++) {
-            for (int localX = -TREE_HORIZONTAL_RADIUS; localX < Chunk.SIZE + TREE_HORIZONTAL_RADIUS; localX++) {
-                int surfaceY = getSurfaceHeight(terrainNoise, chunkWorldX + localX, chunkWorldZ + localZ);
-                int index = (localX + TREE_HORIZONTAL_RADIUS)
-                        + (localZ + TREE_HORIZONTAL_RADIUS) * extendedSize;
-                surfaceHeights[index] = surfaceY;
+        for (int localZ = -COLUMN_HALO_RADIUS; localZ < Chunk.SIZE + COLUMN_HALO_RADIUS; localZ++) {
+            for (int localX = -COLUMN_HALO_RADIUS; localX < Chunk.SIZE + COLUMN_HALO_RADIUS; localX++) {
+                TerrainSample terrain = sampleTerrain(noiseSet, chunkWorldX + localX, chunkWorldZ + localZ);
+                int index = (localX + COLUMN_HALO_RADIUS)
+                        + (localZ + COLUMN_HALO_RADIUS) * extendedSize;
+                surfaceHeights[index] = terrain.surfaceHeight();
+                treeSuitability[index] = terrain.treeSuitability();
                 if (localX >= 0 && localX < Chunk.SIZE && localZ >= 0 && localZ < Chunk.SIZE) {
-                    minSurfaceY = Math.min(minSurfaceY, surfaceY);
-                    maxContentY = Math.max(maxContentY, surfaceY);
+                    minSurfaceY = Math.min(minSurfaceY, terrain.surfaceHeight());
+                    minCaveFloorY = Math.min(
+                            minCaveFloorY,
+                            getCaveFloorY(noiseSet, chunkWorldX + localX, chunkWorldZ + localZ)
+                    );
+                    maxContentY = Math.max(maxContentY, terrain.surfaceHeight());
                 }
             }
         }
 
-        FastNoiseLite vegetationNoise = treeNoise.get();
         for (int localZ = -TREE_HORIZONTAL_RADIUS; localZ < Chunk.SIZE + TREE_HORIZONTAL_RADIUS; localZ++) {
             for (int localX = -TREE_HORIZONTAL_RADIUS; localX < Chunk.SIZE + TREE_HORIZONTAL_RADIUS; localX++) {
-                int index = (localX + TREE_HORIZONTAL_RADIUS)
-                        + (localZ + TREE_HORIZONTAL_RADIUS) * extendedSize;
+                int index = columnIndex(localX, localZ);
                 int surfaceY = surfaceHeights[index];
                 int treeX = chunkWorldX + localX;
                 int treeZ = chunkWorldZ + localZ;
+                int maximumSlope = Math.max(
+                        Math.max(
+                                Math.abs(surfaceY - surfaceHeights[columnIndex(localX - 1, localZ)]),
+                                Math.abs(surfaceY - surfaceHeights[columnIndex(localX + 1, localZ)])
+                        ),
+                        Math.max(
+                                Math.abs(surfaceY - surfaceHeights[columnIndex(localX, localZ - 1)]),
+                                Math.abs(surfaceY - surfaceHeights[columnIndex(localX, localZ + 1)])
+                        )
+                );
                 if (surfaceY > config.waterLevel()
-                        && shouldPlace(vegetationNoise.GetNoise(treeX, treeZ), treeX, treeZ)) {
+                        && maximumSlope <= 2
+                        && !isCave(noiseSet, treeX, surfaceY, treeZ, surfaceY, maximumSlope <= 1)
+                        && shouldPlace(
+                                noiseSet.vegetation.GetNoise(treeX, treeZ),
+                                treeSuitability[index],
+                                treeX,
+                                treeZ
+                        )) {
                     trees[index] = true;
                     maxContentY = Math.max(maxContentY, surfaceY + TREE_MAX_HEIGHT_ABOVE_SURFACE);
                 }
             }
         }
 
-        return new ColumnGenerationData(surfaceHeights, trees, new ColumnBounds(minSurfaceY, maxContentY));
+        return new ColumnGenerationData(
+                surfaceHeights,
+                trees,
+                new ColumnBounds(minSurfaceY, maxContentY, minCaveFloorY)
+        );
     }
 
     private static final class GenerationScratch {
@@ -498,7 +682,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
                     treeX,
                     trunkBaseY + offsetY,
                     treeZ,
-                    Blocks.WOOD_LOG.getId()
+                    woodLogBlockId
             );
         }
 
@@ -519,7 +703,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
                             treeX + offsetX,
                             worldY,
                             treeZ + offsetZ,
-                            Blocks.LEAVES.getId()
+                            leavesBlockId
                     );
                 }
             }
@@ -545,7 +729,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         }
 
         int blockIndex = localX + (localZ * Chunk.SIZE) + (localY * Chunk.SIZE * Chunk.SIZE);
-        if (blocks[blockIndex] == Blocks.AIR.getId()) {
+        if (blocks[blockIndex] == airBlockId) {
             blocks[blockIndex] = blockId;
         }
     }
@@ -563,7 +747,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         return columns[(chunkX - minChunkX) + (chunkZ - minChunkZ) * columnCountX];
     }
 
-    private static void placeTreeIntoRegion(
+    private void placeTreeIntoRegion(
             short[] blocks,
             int originX,
             int originY,
@@ -578,7 +762,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         for (int offsetY = 0; offsetY < 4; offsetY++) {
             writeTreeBlockIfInRegion(
                     blocks, originX, originY, originZ, sizeX, sizeY, sizeZ,
-                    treeX, trunkBaseY + offsetY, treeZ, Blocks.WOOD_LOG.getId()
+                    treeX, trunkBaseY + offsetY, treeZ, woodLogBlockId
             );
         }
         for (int offsetY = 0; offsetY <= 2; offsetY++) {
@@ -589,7 +773,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
                     if (distance <= 5) {
                         writeTreeBlockIfInRegion(
                                 blocks, originX, originY, originZ, sizeX, sizeY, sizeZ,
-                                treeX + offsetX, worldY, treeZ + offsetZ, Blocks.LEAVES.getId()
+                                treeX + offsetX, worldY, treeZ + offsetZ, leavesBlockId
                         );
                     }
                 }
@@ -597,7 +781,7 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         }
     }
 
-    private static void writeTreeBlockIfInRegion(
+    private void writeTreeBlockIfInRegion(
             short[] blocks,
             int originX,
             int originY,
@@ -618,14 +802,14 @@ public final class NoiseWorldGenerator implements WorldGenerator {
             return;
         }
         int index = localX + localZ * sizeX + localY * sizeX * sizeZ;
-        if (blocks[index] == Blocks.AIR.getId()) {
+        if (blocks[index] == airBlockId) {
             blocks[index] = blockId;
         }
     }
 
-    private boolean shouldPlace(float noiseValue, int globalX, int globalZ) {
+    private boolean shouldPlace(float noiseValue, float suitability, int globalX, int globalZ) {
         float adjusted = noiseValue * 0.2f + 0.2f;
-        adjusted = (float) Math.pow(adjusted, config.treeSteepness());
+        adjusted = (float) Math.pow(Math.max(0.0f, adjusted), config.treeSteepness()) * suitability;
         float random = randomValueBasedOnBlock(globalX, globalZ) * config.treeRarity();
         return adjusted > random;
     }
@@ -644,6 +828,36 @@ public final class NoiseWorldGenerator implements WorldGenerator {
         FastNoiseLite fastNoise = new FastNoiseLite();
         fastNoise.SetSeed(seed);
         return fastNoise;
+    }
+
+    private NoiseSet createNoiseSet() {
+        int seed = (int) config.seed();
+        return new NoiseSet(
+                createNoise(seed + 101),
+                createNoise(seed + 211),
+                createNoise(seed),
+                createNoise(seed + 307),
+                createNoise(seed + config.treeSeedOffset()),
+                createNoise(seed + 401),
+                createNoise(seed + 503),
+                createNoise(seed + 601),
+                createNoise(seed + 701),
+                createNoise(seed + 809)
+        );
+    }
+
+    private static float smoothstep(float lower, float upper, float value) {
+        float normalized = Math.max(0.0f, Math.min(1.0f, (value - lower) / (upper - lower)));
+        return normalized * normalized * (3.0f - 2.0f * normalized);
+    }
+
+    private static float lerp(float from, float to, float amount) {
+        return from + (to - from) * amount;
+    }
+
+    private static int columnIndex(int localX, int localZ) {
+        int extendedSize = Chunk.SIZE + COLUMN_HALO_RADIUS * 2;
+        return localX + COLUMN_HALO_RADIUS + (localZ + COLUMN_HALO_RADIUS) * extendedSize;
     }
 
     private static ThreadPoolExecutor createClassificationExecutor() {
@@ -684,7 +898,10 @@ public final class NoiseWorldGenerator implements WorldGenerator {
     private record ColumnPosition(int x, int z) {
     }
 
-    private record ColumnBounds(int minSurfaceY, int maxContentY) {
+    private record TerrainSample(int surfaceHeight, float treeSuitability) {
+    }
+
+    private record ColumnBounds(int minSurfaceY, int maxContentY, int caveBottomY) {
     }
 
     private record ColumnGenerationData(int[] surfaceHeights, boolean[] trees, ColumnBounds bounds) {
@@ -696,15 +913,37 @@ public final class NoiseWorldGenerator implements WorldGenerator {
             return trees[index(localX, localZ)];
         }
 
+        private boolean hasSmoothSlope(int localX, int localZ) {
+            int height = surfaceHeight(localX, localZ);
+            return Math.abs(height - surfaceHeight(localX - 1, localZ)) <= 1
+                    && Math.abs(height - surfaceHeight(localX + 1, localZ)) <= 1
+                    && Math.abs(height - surfaceHeight(localX, localZ - 1)) <= 1
+                    && Math.abs(height - surfaceHeight(localX, localZ + 1)) <= 1;
+        }
+
         private static int index(int localX, int localZ) {
-            int extendedSize = Chunk.SIZE + TREE_HORIZONTAL_RADIUS * 2;
-            int x = localX + TREE_HORIZONTAL_RADIUS;
-            int z = localZ + TREE_HORIZONTAL_RADIUS;
+            int extendedSize = Chunk.SIZE + COLUMN_HALO_RADIUS * 2;
+            int x = localX + COLUMN_HALO_RADIUS;
+            int z = localZ + COLUMN_HALO_RADIUS;
             if (x < 0 || z < 0 || x >= extendedSize || z >= extendedSize) {
                 throw new IndexOutOfBoundsException("Column coordinates outside generation halo: " + localX + ", " + localZ);
             }
             return x + z * extendedSize;
         }
+    }
+
+    private record NoiseSet(
+            FastNoiseLite continent,
+            FastNoiseLite region,
+            FastNoiseLite detail,
+            FastNoiseLite ridge,
+            FastNoiseLite vegetation,
+            FastNoiseLite caveA,
+            FastNoiseLite caveB,
+            FastNoiseLite cavern,
+            FastNoiseLite entrance,
+            FastNoiseLite caveFloor
+    ) {
     }
 
     private static final class RecentColumnCache {

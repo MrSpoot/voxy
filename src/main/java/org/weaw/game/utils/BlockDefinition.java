@@ -16,7 +16,6 @@ public final class BlockDefinition {
     private final int lightEmissionBlue;
     private final int lightAttenuation;
     private volatile int textureIndex = -1;
-    private short runtimeId = -1;
 
     public BlockDefinition(String stableId, String texturePath, TransparencyType transparencyType, boolean cullSameTypeFaces) {
         this(stableId, texturePath, transparencyType, cullSameTypeFaces, 0, 0, 0);
@@ -85,17 +84,6 @@ public final class BlockDefinition {
 
     public void setTextureIndex(int textureIndex) {
         this.textureIndex = textureIndex;
-    }
-
-    public short getId() {
-        if (runtimeId < 0) {
-            throw new IllegalStateException("Block runtime id not assigned for " + stableId + ". Add it to a BlockCatalog first.");
-        }
-        return runtimeId;
-    }
-
-    void setRuntimeId(short runtimeId) {
-        this.runtimeId = runtimeId;
     }
 
     public boolean isOpaque() {

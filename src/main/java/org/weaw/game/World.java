@@ -1,13 +1,14 @@
 package org.weaw.game;
 
 import org.joml.Vector3f;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.NoiseWorldGenerator;
 import org.weaw.game.generation.WorldGenerator;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockRegistry;
+import org.weaw.game.utils.Blocks;
 
 import java.util.Objects;
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 public class World implements AutoCloseable, WorldBlockProvider {
+    private static final int SPAWN_SEARCH_RADIUS = 128;
     private final ChunkManager chunkManager;
     private final BlockCatalog blockCatalog;
     private final WorldStreamer worldStreamer;
@@ -82,6 +84,83 @@ public class World implements AutoCloseable, WorldBlockProvider {
 
     public BlockCatalog getBlockCatalog() {
         return blockCatalog;
+    }
+
+    public Vector3f findSpawnPosition() {
+        Vector3f fallback = null;
+        for (int radius = 0; radius <= SPAWN_SEARCH_RADIUS; radius++) {
+            if (radius == 0) {
+                Vector3f candidate = spawnCandidate(0, 0, true);
+                if (candidate != null) {
+                    return candidate;
+                }
+                fallback = spawnCandidate(0, 0, false);
+                continue;
+            }
+            for (int x = -radius; x <= radius; x++) {
+                Vector3f candidate = spawnCandidate(x, -radius, true);
+                if (candidate != null) {
+                    return candidate;
+                }
+                if (fallback == null) {
+                    fallback = spawnCandidate(x, -radius, false);
+                }
+                candidate = spawnCandidate(x, radius, true);
+                if (candidate != null) {
+                    return candidate;
+                }
+                if (fallback == null) {
+                    fallback = spawnCandidate(x, radius, false);
+                }
+            }
+            for (int z = -radius + 1; z < radius; z++) {
+                Vector3f candidate = spawnCandidate(-radius, z, true);
+                if (candidate != null) {
+                    return candidate;
+                }
+                if (fallback == null) {
+                    fallback = spawnCandidate(-radius, z, false);
+                }
+                candidate = spawnCandidate(radius, z, true);
+                if (candidate != null) {
+                    return candidate;
+                }
+                if (fallback == null) {
+                    fallback = spawnCandidate(radius, z, false);
+                }
+            }
+        }
+        if (fallback != null) {
+            return fallback;
+        }
+        throw new IllegalStateException("Unable to find a safe spawn within " + SPAWN_SEARCH_RADIUS + " blocks");
+    }
+
+    private Vector3f spawnCandidate(int worldX, int worldZ, boolean requireGentleSlope) {
+        int surfaceY = baseWorldGenerator.getSurfaceHeight(worldX, worldZ);
+        short ground = worldGenerator.getBlockAtWorld(worldX, surfaceY, worldZ);
+        short airId = blockCatalog.getRuntimeId(Blocks.AIR);
+        if (ground == airId || ground == blockCatalog.getRuntimeId(Blocks.WATER)
+                || worldGenerator.getBlockAtWorld(worldX, surfaceY + 1, worldZ) != airId
+                || worldGenerator.getBlockAtWorld(worldX, surfaceY + 2, worldZ) != airId) {
+            return null;
+        }
+        if (requireGentleSlope) {
+            int maximumSlope = Math.max(
+                    Math.max(
+                            Math.abs(surfaceY - baseWorldGenerator.getSurfaceHeight(worldX - 1, worldZ)),
+                            Math.abs(surfaceY - baseWorldGenerator.getSurfaceHeight(worldX + 1, worldZ))
+                    ),
+                    Math.max(
+                            Math.abs(surfaceY - baseWorldGenerator.getSurfaceHeight(worldX, worldZ - 1)),
+                            Math.abs(surfaceY - baseWorldGenerator.getSurfaceHeight(worldX, worldZ + 1))
+                    )
+            );
+            if (maximumSlope > 1) {
+                return null;
+            }
+        }
+        return new Vector3f(worldX, surfaceY + 1.0f, worldZ);
     }
 
     public void update(Vector3f playerPosition) {
@@ -257,8 +336,9 @@ public class World implements AutoCloseable, WorldBlockProvider {
             lightingSystem.ensureInitialized(editedChunk);
         }
         chunkManager.setBlockAtWorld(worldX, worldY, worldZ, block);
-        rememberSessionEdit(worldX, worldY, worldZ, block.getId());
-        blockChanges.offer(new WorldBlockChange(worldX, worldY, worldZ, block.getId()));
+        short blockId = blockCatalog.getRuntimeId(block);
+        rememberSessionEdit(worldX, worldY, worldZ, blockId);
+        blockChanges.offer(new WorldBlockChange(worldX, worldY, worldZ, blockId));
         if (dynamicLightingEnabled) {
             lightingSystem.enqueueBlockChange(worldX, worldY, worldZ);
         }

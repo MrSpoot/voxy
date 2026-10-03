@@ -48,7 +48,7 @@ public class Chunk {
         this.blockCatalog = Objects.requireNonNull(blockCatalog, "blockCatalog");
         this.lighting = new ChunkLighting();
         this.directSkyLight = new ChunkSkyLight();
-        applyUniformBlock(blockCatalog.air().getId());
+        applyUniformBlock(blockCatalog.getRuntimeId(blockCatalog.air()));
     }
 
     public BlockCatalog getBlockCatalog() {
@@ -95,7 +95,7 @@ public class Chunk {
         Objects.requireNonNull(block, "block");
         checkBounds(x, y, z);
 
-        short blockId = block.getId();
+        short blockId = blockCatalog.getRuntimeId(block);
         short previousUniformBlockId = uniformBlockId;
 
         if (isUniform) {
@@ -146,7 +146,7 @@ public class Chunk {
         if (uniform) {
             BlockDefinition blockDefinition = Objects.requireNonNull(blockCatalog.getBlock(first), "Unknown block id: " + first);
             LOGGER.debug("Chunk {} loaded as uniform chunk with block {}", position, blockDefinition);
-            applyUniformBlock(blockDefinition.getId());
+        applyUniformBlock(blockCatalog.getRuntimeId(blockDefinition));
             return;
         }
 
@@ -209,7 +209,7 @@ public class Chunk {
 
     public void fillChunk(BlockDefinition block) {
         Objects.requireNonNull(block, "block");
-        applyUniformBlock(block.getId());
+        applyUniformBlock(blockCatalog.getRuntimeId(block));
     }
 
     public ChunkLighting getLighting() {
@@ -559,7 +559,7 @@ public class Chunk {
         }
 
         if (activeEntries == 0) {
-            applyUniformBlock(blockCatalog.air().getId());
+        applyUniformBlock(blockCatalog.getRuntimeId(blockCatalog.air()));
             LOGGER.warn("Chunk {} palette became empty, resetting chunk to AIR", position);
             return;
         }

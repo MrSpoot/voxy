@@ -100,7 +100,37 @@ Permettre à chaque monde de posséder sa propre configuration et de survivre à
 - [x] Une erreur réseau ou de chargement ramène vers un écran utilisable sans fermer le jeu.
 - [x] Le serveur dédié reste entièrement headless.
 
-## 2. Temps du monde et cycle jour/nuit — P1
+## 2. Génération procédurale enrichie — P1
+
+### Objectif
+
+Produire des mondes déterministes mais nettement plus variés, avec de grandes régions reconnaissables, des reliefs plus contrastés et un sous-sol parcouru de grottes, sans compromettre le streaming par chunks.
+
+### Tâches
+
+- [x] Combiner plusieurs bruits seedés à différentes échelles afin de séparer les grandes régions du détail local.
+- [x] Générer des régions cohérentes mêlant plaines, collines, montagnes, vallées, falaises, côtes et îles.
+- [x] Assurer des transitions continues entre les régions plutôt qu'une juxtaposition de formes indépendantes.
+- [x] Creuser des grottes et tunnels à partir d'un champ de densité 3D, avec des entrées naturelles en surface.
+- [x] Faire varier la densité de la végétation existante selon les régions et le relief.
+- [x] Rendre chaque décision de génération dépendante uniquement de la seed et des coordonnées mondiales, indépendamment de l'ordre de chargement des chunks.
+- [x] Adapter la classification sparse afin que les chunks souterrains contenant des grottes ne soient pas classés à tort comme uniformément pleins.
+- [x] Conserver des résultats identiques entre génération de chunk, lecture scalaire et échantillonnage de région.
+- [x] Choisir une position d'apparition sur un terrain solide et praticable, hors de l'eau et des cavités.
+- [x] Mesurer le coût CPU, les allocations et l'efficacité des caches afin de rester dans les budgets actuels du streaming.
+- [x] Identifier la version du générateur dans les métadonnées et refuser clairement un monde incompatible plutôt que de le réinterpréter silencieusement.
+
+### Critères de fin
+
+- [x] Une même seed produit exactement les mêmes hauteurs, blocs, arbres et grottes, quel que soit l'ordre de génération des chunks.
+- [x] Une zone de jeu raisonnable contient plusieurs silhouettes de terrain clairement différentes sans répétition évidente.
+- [x] Les reliefs, grottes et tunnels traversent les frontières de chunks sans raccord visible.
+- [x] Les lectures scalaires et en volume correspondent bloc pour bloc à la génération matérialisée.
+- [x] Le point d'apparition initial est sûr et praticable.
+- [x] Le chargement conserve les budgets de temps CPU et de mémoire du streaming existant.
+- [x] Les anciens mondes incompatibles sont détectés ; leur migration de terrain n'est pas requise et leur recréation est acceptée.
+
+## 3. Temps du monde et cycle jour/nuit — P1
 
 ### Objectif
 
@@ -131,9 +161,9 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] L'heure reprend correctement après sauvegarde et redémarrage.
 - [ ] Le cycle ne déclenche pas de remesh global ni de recalcul complet de l'éclairage voxel.
 
-## 3. Première entité vivante : le mouton — P1
+## 4. Première entité vivante : le mouton — P1
 
-### 3.1 Fondation générique des entités
+### 4.1 Fondation générique des entités
 
 - [ ] Créer un identifiant stable d'entité attribué par le serveur.
 - [ ] Définir les composants minimums : type, position, rotation, vélocité, dimensions, collision et état vivant.
@@ -144,7 +174,7 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] Ajouter interpolation et correction côté client sans téléportations visuelles inutiles.
 - [ ] Créer un pipeline de rendu d'entités distinct du rendu des chunks.
 
-### 3.2 Mouton
+### 4.2 Mouton
 
 - [ ] Ajouter un modèle temporaire puis un modèle final de mouton.
 - [ ] Ajouter les animations repos, marche et rotation.
@@ -154,7 +184,7 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] Faire éviter l'eau profonde dans la première version.
 - [ ] Ajouter des règles simples d'apparition sur terrain solide éclairé et de disparition à grande distance.
 
-### 3.3 Pathfinding
+### 4.3 Pathfinding
 
 - [ ] Construire une représentation navigable à partir des voxels solides et de l'espace libre au-dessus.
 - [ ] Implémenter un A* borné pour la marche terrestre avec montée d'une marche et chute limitée.
@@ -171,9 +201,9 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] Plusieurs moutons respectent le budget de simulation sans dégrader sensiblement les 30 ticks par seconde.
 - [ ] Leur état survit à une sauvegarde et un rechargement.
 
-## 4. Eau dynamique, courants et nage — P1/P2
+## 5. Eau dynamique, courants et nage — P1/P2
 
-### 4.1 État et propagation du fluide
+### 5.1 État et propagation du fluide
 
 - [ ] Séparer le type de fluide de son niveau afin de représenter une source et plusieurs hauteurs d'écoulement.
 - [ ] Définir une source stable et des niveaux d'écoulement décroissants.
@@ -186,7 +216,7 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] Garder le serveur autoritaire et répliquer uniquement les deltas nécessaires aux clients.
 - [ ] Déduire un vecteur de courant local à partir des différences de niveau et de la direction d'écoulement.
 
-### 4.2 Joueur et entités dans l'eau
+### 5.2 Joueur et entités dans l'eau
 
 - [ ] Détecter séparément les pieds, le corps et la tête immergés.
 - [ ] Appliquer une traînée horizontale et verticale dans l'eau.
@@ -197,7 +227,7 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] Réutiliser les mêmes principes pour les entités capables de flotter.
 - [ ] Ajouter plus tard la respiration et la noyade après validation de la nage de base.
 
-### 4.3 Rendu de l'eau
+### 5.3 Rendu de l'eau
 
 - [ ] Générer une hauteur de surface correspondant au niveau réel du fluide.
 - [ ] Créer des surfaces inclinées entre niveaux voisins sans fissures entre chunks.
@@ -213,7 +243,7 @@ Ajouter une horloge de monde persistante et autoritaire produisant un cycle visu
 - [ ] Les clients observent le même état de fluide que le serveur.
 - [ ] Une grande propagation reste bornée par le budget de tick et ne bloque pas le rendu.
 
-## 5. Qualité, tests et observabilité — transversal
+## 6. Qualité, tests et observabilité — transversal
 
 - [ ] Ajouter des tests unitaires pour chaque format de données et règle de simulation.
 - [ ] Ajouter des tests d'intégration solo, serveur local et serveur TCP.

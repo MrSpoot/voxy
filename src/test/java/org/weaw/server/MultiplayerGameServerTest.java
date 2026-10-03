@@ -143,7 +143,7 @@ class MultiplayerGameServerTest {
             PlayerInput breakInput = breakInput();
             BlockAction action = new BlockAction(
                     BlockAction.Type.BREAK, 16, 11, 46,
-                    Blocks.STONE.getId(), Blocks.AIR.getId()
+                    BlockRegistry.getRuntimeId(Blocks.STONE), BlockRegistry.getRuntimeId(Blocks.AIR)
             );
             pair.client().send(new ClientMessage.PlayerCommand(0L, 0L, breakInput, 0, action));
 
@@ -152,9 +152,9 @@ class MultiplayerGameServerTest {
             ServerMessage.BlockActionResult result = pollUntil(pair, ServerMessage.BlockActionResult.class);
             assertNotNull(result);
             assertTrue(result.accepted());
-            assertEquals(Blocks.AIR.getId(), result.authoritativeBlockId());
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), result.authoritativeBlockId());
             assertTrue(result.revision() >= 2L);
-            assertEquals(Blocks.AIR.getId(), world.getBlockAtWorld(16, 11, 46));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), world.getBlockAtWorld(16, 11, 46));
         }
     }
 
@@ -167,7 +167,7 @@ class MultiplayerGameServerTest {
             assertTrue(world.trySetBlockAtWorld(16, 11, 46, Blocks.STONE));
             BlockAction stale = new BlockAction(
                     BlockAction.Type.BREAK, 16, 11, 46,
-                    Blocks.DIRT.getId(), Blocks.AIR.getId()
+                    BlockRegistry.getRuntimeId(Blocks.DIRT), BlockRegistry.getRuntimeId(Blocks.AIR)
             );
             pair.client().send(new ClientMessage.PlayerCommand(
                     0L, 0L, breakInput(), 0, stale
@@ -178,8 +178,8 @@ class MultiplayerGameServerTest {
             ServerMessage.BlockActionResult result = pollUntil(pair, ServerMessage.BlockActionResult.class);
             assertNotNull(result);
             org.junit.jupiter.api.Assertions.assertFalse(result.accepted());
-            assertEquals(Blocks.STONE.getId(), result.authoritativeBlockId());
-            assertEquals(Blocks.STONE.getId(), world.getBlockAtWorld(16, 11, 46));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), result.authoritativeBlockId());
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), world.getBlockAtWorld(16, 11, 46));
         }
     }
 
@@ -192,7 +192,7 @@ class MultiplayerGameServerTest {
             assertTrue(world.trySetBlockAtWorld(16, 11, 45, Blocks.STONE));
             BlockAction placement = new BlockAction(
                     BlockAction.Type.PLACE, 16, 11, 46,
-                    Blocks.AIR.getId(), Blocks.GRASS_BLOCK.getId()
+                    BlockRegistry.getRuntimeId(Blocks.AIR), BlockRegistry.getRuntimeId(Blocks.GRASS_BLOCK)
             );
             pair.client().send(new ClientMessage.PlayerCommand(
                     0L, 0L, placeInput(), 0, placement
@@ -203,7 +203,7 @@ class MultiplayerGameServerTest {
             ServerMessage.BlockActionResult result = pollUntil(pair, ServerMessage.BlockActionResult.class);
             assertNotNull(result);
             assertTrue(result.accepted());
-            assertEquals(Blocks.GRASS_BLOCK.getId(), world.getBlockAtWorld(16, 11, 46));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.GRASS_BLOCK), world.getBlockAtWorld(16, 11, 46));
         }
     }
 
@@ -381,9 +381,14 @@ class MultiplayerGameServerTest {
 
     private static World createSmallWorld() {
         World world = new World(
-                new FlatGenerator(Blocks.AIR.getId()),
+                new FlatGenerator(BlockRegistry.getRuntimeId(Blocks.AIR)),
                 new WorldSettings(2, new WorldHeightRange(0, 0), WorldMemoryBudget.balanced(), false)
-        );
+        ) {
+            @Override
+            public org.joml.Vector3f findSpawnPosition() {
+                return new org.joml.Vector3f(16.0f, 12.0f, 48.0f);
+            }
+        };
         world.setDynamicLightingEnabled(false);
         return world;
     }

@@ -11,6 +11,7 @@ import java.util.Objects;
 /** Immutable, injectable catalogue of block definitions. */
 public final class BlockCatalog {
     private final Map<String, BlockDefinition> blocksByStableId;
+    private final Map<String, Short> runtimeIdsByStableId;
     private final BlockDefinition[] blocksByRuntimeId;
     private final BlockDefinition air;
 
@@ -33,14 +34,15 @@ public final class BlockCatalog {
             throw new IllegalStateException("A block catalogue must define voxy:air");
         }
 
+        Map<String, Short> runtimeIdsByStableId = new LinkedHashMap<>();
         BlockDefinition[] byRuntimeId = new BlockDefinition[byStableId.size()];
         int runtimeId = 0;
         for (BlockDefinition definition : byStableId.values()) {
-            definition.setRuntimeId((short) runtimeId);
+            runtimeIdsByStableId.put(definition.getStableId(), (short) runtimeId);
             byRuntimeId[runtimeId] = definition;
             runtimeId++;
         }
-        return new BlockCatalog(byStableId, byRuntimeId, air);
+        return new BlockCatalog(byStableId, runtimeIdsByStableId, byRuntimeId, air);
     }
 
     public static BlockCatalog createDefault() {
@@ -59,17 +61,18 @@ public final class BlockCatalog {
 
     private BlockCatalog(
             Map<String, BlockDefinition> blocksByStableId,
+            Map<String, Short> runtimeIdsByStableId,
             BlockDefinition[] blocksByRuntimeId,
             BlockDefinition air
     ) {
         this.blocksByStableId = Collections.unmodifiableMap(new LinkedHashMap<>(blocksByStableId));
+        this.runtimeIdsByStableId = Collections.unmodifiableMap(new LinkedHashMap<>(runtimeIdsByStableId));
         this.blocksByRuntimeId = blocksByRuntimeId.clone();
         this.air = air;
     }
 
     public BlockDefinition getBlock(short runtimeId) {
-        int index = runtimeId;
-        return index >= 0 && index < blocksByRuntimeId.length ? blocksByRuntimeId[index] : null;
+        return runtimeId >= 0 && runtimeId < blocksByRuntimeId.length ? blocksByRuntimeId[runtimeId] : null;
     }
 
     public BlockDefinition getBlock(String stableId) {
@@ -77,11 +80,16 @@ public final class BlockCatalog {
     }
 
     public short getRuntimeId(String stableId) {
-        BlockDefinition block = getBlock(stableId);
-        if (block == null) {
+        Short runtimeId = runtimeIdsByStableId.get(stableId);
+        if (runtimeId == null) {
             throw new IllegalArgumentException("Unknown block stable id: " + stableId);
         }
-        return block.getId();
+        return runtimeId;
+    }
+
+    public short getRuntimeId(BlockDefinition definition) {
+        Objects.requireNonNull(definition, "definition");
+        return getRuntimeId(definition.getStableId());
     }
 
     public String getStableId(short runtimeId) {

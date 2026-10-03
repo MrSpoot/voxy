@@ -38,7 +38,7 @@ class GameServerTest {
 
     @Test
     void updateDoesNotDriveWorldStreaming() {
-        try (CountingWorld world = new CountingWorld(new FlatGenerator(Blocks.AIR.getId()), new WorldSettings(1))) {
+        try (CountingWorld world = new CountingWorld(new FlatGenerator(BlockRegistry.getRuntimeId(Blocks.AIR)), new WorldSettings(1))) {
             GameplaySession session = new GameplaySession(world, new GameplaySettings());
             try (GameServer server = new GameServer(world, session, 10)) {
                 assertEquals(1, server.update(0.1f, PlayerInput.disabled()));
@@ -116,7 +116,7 @@ class GameServerTest {
     }
 
     private static GameServer createServer(int ticksPerSecond) {
-        World world = new World(new FlatGenerator(Blocks.AIR.getId()), new WorldSettings(1));
+        World world = new World(new FlatGenerator(BlockRegistry.getRuntimeId(Blocks.AIR)), new WorldSettings(1));
         GameplaySession session = new GameplaySession(world, new GameplaySettings());
         return new GameServer(world, session, ticksPerSecond);
     }

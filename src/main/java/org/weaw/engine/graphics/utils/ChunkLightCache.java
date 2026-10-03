@@ -8,7 +8,7 @@ import org.weaw.game.ChunkLighting;
 import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkManager.ChunkLightDelta;
 import org.weaw.game.ChunkManager.ChunkLightSync;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.ChunkManager.ChunkUpload;
 import org.weaw.game.ChunkManager.ChunkUploadChangeType;
 import org.weaw.game.ChunkMeshData;

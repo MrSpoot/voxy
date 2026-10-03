@@ -4,7 +4,7 @@ import org.joml.Vector3f;
 import org.joml.Vector3i;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.generation.GenerationConfig;
 import org.weaw.game.generation.ChunkClassificationCacheStats;
 import org.weaw.game.generation.ChunkGenerationHint;
@@ -105,7 +105,7 @@ public class WorldStreamer implements AutoCloseable {
         this(
                 chunkManager,
                 blockProvider,
-                new NoiseWorldGenerator(GenerationConfig.defaults()),
+                new NoiseWorldGenerator(GenerationConfig.defaults(), chunkManager.getBlockCatalog()),
                 new WorldSettings()
         );
     }

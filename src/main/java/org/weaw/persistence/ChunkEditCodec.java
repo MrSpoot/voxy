@@ -1,7 +1,7 @@
 package org.weaw.persistence;
 
 import org.weaw.game.Chunk;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.utils.BlockCatalog;
 
 import java.io.ByteArrayInputStream;

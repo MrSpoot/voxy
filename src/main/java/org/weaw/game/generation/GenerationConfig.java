@@ -11,8 +11,11 @@ public record GenerationConfig(
         float terrainGain,
         int treeSeedOffset,
         float treeRarity,
-        float treeSteepness
+        float treeSteepness,
+        int generatorVersion
 ) {
+    public static final int CURRENT_GENERATOR_VERSION = 4;
+
     public static GenerationConfig defaults() {
         return new GenerationConfig(
                 1052002L,
@@ -25,7 +28,8 @@ public record GenerationConfig(
                 0.5f,
                 999,
                 0.5f,
-                2.0f
+                2.0f,
+                CURRENT_GENERATOR_VERSION
         );
     }
 
@@ -41,7 +45,8 @@ public record GenerationConfig(
                 terrainGain,
                 treeSeedOffset,
                 treeRarity,
-                treeSteepness
+                treeSteepness,
+                generatorVersion
         );
     }
 }

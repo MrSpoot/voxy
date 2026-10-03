@@ -5,7 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkManager;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.World;
 import org.weaw.game.World.WorldBlockChange;
 import org.weaw.game.utils.BlockDefinition;
@@ -40,7 +40,6 @@ import java.util.concurrent.locks.LockSupport;
 
 public final class MultiplayerGameServer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(MultiplayerGameServer.class);
-    private static final Vector3f DEFAULT_SPAWN = new Vector3f(16.0f, 12.0f, 48.0f);
     private static final int SNAPSHOT_INTERVAL_TICKS = 2;
     private static final int MAX_CHUNKS_SENT_PER_TICK = 1;
     private static final int MAX_LIGHT_UPDATES_SENT_PER_TICK = 1;
@@ -249,7 +248,7 @@ public final class MultiplayerGameServer implements AutoCloseable {
         GameplaySession gameplay = new GameplaySession(world, new GameplaySettings());
         PlayerSaveState savedState = saveSession == null ? null : saveSession.playerState(hello.profileId());
         if (savedState == null) {
-            gameplay.setPlayerPosition(DEFAULT_SPAWN);
+            gameplay.setPlayerPosition(world.findSpawnPosition());
         } else {
             savedState.restore(gameplay, world.getBlockCatalog());
         }

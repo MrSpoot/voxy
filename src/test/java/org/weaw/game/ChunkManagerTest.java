@@ -3,7 +3,7 @@ package org.weaw.game;
 import org.joml.Vector3i;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 
@@ -48,7 +48,7 @@ class ChunkManagerTest {
 
         assertTrue(manager.hasChunk(position));
         assertEquals(1, manager.getChunkCount());
-        assertEquals(Blocks.STONE.getId(), manager.getBlockAtWorld(Chunk.SIZE, 0, -Chunk.SIZE));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), manager.getBlockAtWorld(Chunk.SIZE, 0, -Chunk.SIZE));
         assertEquals(meshData, manager.getChunkUpload(position).meshData());
     }
 
@@ -85,7 +85,7 @@ class ChunkManagerTest {
 
         assertFalse(manager.hasChunk(position));
         assertNull(manager.getChunkUpload(position));
-        assertEquals(Blocks.AIR.getId(), manager.getBlockAtWorld(0, 0, 0));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), manager.getBlockAtWorld(0, 0, 0));
         assertEquals(0L, manager.getEstimatedResidentBytes());
     }
 

@@ -5,7 +5,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 import org.weaw.gameplay.BlockAction;
@@ -27,91 +27,91 @@ class ClientWorldPredictionTest {
 
     @Test
     void appliesBreakImmediatelyAndRollsBackWhenRejected() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.STONE.getId())) {
-            BlockAction action = breakAction(Blocks.STONE.getId());
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.STONE))) {
+            BlockAction action = breakAction(BlockRegistry.getRuntimeId(Blocks.STONE));
 
             assertTrue(clientWorld.predictBlock(10L, action));
-            assertEquals(Blocks.AIR.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), clientWorld.world().getBlockAtWorld(1, 1, 1));
 
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    10L, false, 1, 1, 1, Blocks.STONE.getId(), 1L
+                    10L, false, 1, 1, 1, BlockRegistry.getRuntimeId(Blocks.STONE), 1L
             ));
 
-            assertEquals(Blocks.STONE.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), clientWorld.world().getBlockAtWorld(1, 1, 1));
             assertEquals(0, clientWorld.pendingBlockPredictionCount());
         }
     }
 
     @Test
     void acceptedPredictionDoesNotChangeTheVisibleResult() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.STONE.getId())) {
-            assertTrue(clientWorld.predictBlock(11L, breakAction(Blocks.STONE.getId())));
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.STONE))) {
+            assertTrue(clientWorld.predictBlock(11L, breakAction(BlockRegistry.getRuntimeId(Blocks.STONE))));
 
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    11L, true, 1, 1, 1, Blocks.AIR.getId(), 2L
+                    11L, true, 1, 1, 1, BlockRegistry.getRuntimeId(Blocks.AIR), 2L
             ));
 
-            assertEquals(Blocks.AIR.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), clientWorld.world().getBlockAtWorld(1, 1, 1));
             assertEquals(0, clientWorld.pendingBlockPredictionCount());
         }
     }
 
     @Test
     void keepsANewerPredictionVisibleWhileResolvingAnOlderOne() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.STONE.getId())) {
-            assertTrue(clientWorld.predictBlock(20L, breakAction(Blocks.STONE.getId())));
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.STONE))) {
+            assertTrue(clientWorld.predictBlock(20L, breakAction(BlockRegistry.getRuntimeId(Blocks.STONE))));
             assertTrue(clientWorld.predictBlock(21L, new BlockAction(
                     BlockAction.Type.PLACE, 1, 1, 1,
-                    Blocks.AIR.getId(), Blocks.DIRT.getId()
+                    BlockRegistry.getRuntimeId(Blocks.AIR), BlockRegistry.getRuntimeId(Blocks.DIRT)
             )));
 
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    20L, true, 1, 1, 1, Blocks.AIR.getId(), 2L
+                    20L, true, 1, 1, 1, BlockRegistry.getRuntimeId(Blocks.AIR), 2L
             ));
-            assertEquals(Blocks.DIRT.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), clientWorld.world().getBlockAtWorld(1, 1, 1));
 
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    21L, false, 1, 1, 1, Blocks.AIR.getId(), 2L
+                    21L, false, 1, 1, 1, BlockRegistry.getRuntimeId(Blocks.AIR), 2L
             ));
-            assertEquals(Blocks.AIR.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), clientWorld.world().getBlockAtWorld(1, 1, 1));
         }
     }
 
     @Test
     void reappliesPredictionOverANewerChunkSnapshot() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.STONE.getId())) {
-            assertTrue(clientWorld.predictBlock(30L, breakAction(Blocks.STONE.getId())));
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.STONE))) {
+            assertTrue(clientWorld.predictBlock(30L, breakAction(BlockRegistry.getRuntimeId(Blocks.STONE))));
 
-            clientWorld.apply(snapshot(Blocks.DIRT.getId(), 2L));
-            assertEquals(Blocks.AIR.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            clientWorld.apply(snapshot(BlockRegistry.getRuntimeId(Blocks.DIRT), 2L));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), clientWorld.world().getBlockAtWorld(1, 1, 1));
 
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    30L, false, 1, 1, 1, Blocks.DIRT.getId(), 2L
+                    30L, false, 1, 1, 1, BlockRegistry.getRuntimeId(Blocks.DIRT), 2L
             ));
-            assertEquals(Blocks.DIRT.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), clientWorld.world().getBlockAtWorld(1, 1, 1));
         }
     }
 
     @Test
     void actionResultDoesNotHideAnOlderUpdateForAnotherBlock() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.STONE.getId())) {
-            assertTrue(clientWorld.predictBlock(40L, breakAction(Blocks.STONE.getId())));
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.STONE))) {
+            assertTrue(clientWorld.predictBlock(40L, breakAction(BlockRegistry.getRuntimeId(Blocks.STONE))));
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    40L, true, 1, 1, 1, Blocks.AIR.getId(), 3L
+                    40L, true, 1, 1, 1, BlockRegistry.getRuntimeId(Blocks.AIR), 3L
             ));
 
-            clientWorld.apply(new ServerMessage.BlockUpdate(2, 1, 1, Blocks.DIRT.getId(), 2L));
-            clientWorld.apply(new ServerMessage.BlockUpdate(1, 1, 1, Blocks.STONE.getId(), 2L));
+            clientWorld.apply(new ServerMessage.BlockUpdate(2, 1, 1, BlockRegistry.getRuntimeId(Blocks.DIRT), 2L));
+            clientWorld.apply(new ServerMessage.BlockUpdate(1, 1, 1, BlockRegistry.getRuntimeId(Blocks.STONE), 2L));
 
-            assertEquals(Blocks.DIRT.getId(), clientWorld.world().getBlockAtWorld(2, 1, 1));
-            assertEquals(Blocks.AIR.getId(), clientWorld.world().getBlockAtWorld(1, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), clientWorld.world().getBlockAtWorld(2, 1, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), clientWorld.world().getBlockAtWorld(1, 1, 1));
         }
     }
 
     @Test
     void unloadingAChunkDropsItsPendingPredictions() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.STONE.getId())) {
-            assertTrue(clientWorld.predictBlock(50L, breakAction(Blocks.STONE.getId())));
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.STONE))) {
+            assertTrue(clientWorld.predictBlock(50L, breakAction(BlockRegistry.getRuntimeId(Blocks.STONE))));
 
             clientWorld.apply(new ServerMessage.ChunkUnload(ORIGIN));
 
@@ -122,10 +122,10 @@ class ClientWorldPredictionTest {
 
     @Test
     void predictsBlockLightingAndReappliesItOverAnAuthoritativeLightUpdate() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.AIR.getId())) {
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.AIR))) {
             BlockAction action = new BlockAction(
                     BlockAction.Type.PLACE, 1, 1, 1,
-                    Blocks.AIR.getId(), Blocks.RED_LAMP.getId()
+                    BlockRegistry.getRuntimeId(Blocks.AIR), BlockRegistry.getRuntimeId(Blocks.RED_LAMP)
             );
 
             assertTrue(clientWorld.predictBlock(60L, action));
@@ -141,7 +141,7 @@ class ClientWorldPredictionTest {
             assertEquals(15, redLightAtPrediction(clientWorld));
 
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    60L, false, 1, 1, 1, Blocks.AIR.getId(), 1L
+                    60L, false, 1, 1, 1, BlockRegistry.getRuntimeId(Blocks.AIR), 1L
             ));
             assertEquals(0, redLightAtPrediction(clientWorld));
         }
@@ -151,7 +151,7 @@ class ClientWorldPredictionTest {
     void predictsSkyLightWhenAnOpaqueBlockIsBroken() {
         try (ClientWorld clientWorld = new ClientWorld(BlockRegistry.getDefaultCatalog(), 99L, 0, 0, 2)) {
             short[] blocks = new short[Chunk.TOTAL_BLOCKS];
-            blocks[1 + Chunk.SIZE + 30 * Chunk.SIZE * Chunk.SIZE] = Blocks.STONE.getId();
+            blocks[1 + Chunk.SIZE + 30 * Chunk.SIZE * Chunk.SIZE] = BlockRegistry.getRuntimeId(Blocks.STONE);
             clientWorld.apply(new ServerMessage.ChunkSnapshot(
                     ORIGIN,
                     1L,
@@ -162,14 +162,14 @@ class ClientWorldPredictionTest {
 
             assertTrue(clientWorld.predictBlock(65L, new BlockAction(
                     BlockAction.Type.BREAK, 1, 30, 1,
-                    Blocks.STONE.getId(), Blocks.AIR.getId()
+                    BlockRegistry.getRuntimeId(Blocks.STONE), BlockRegistry.getRuntimeId(Blocks.AIR)
             )));
             assertEquals(15, ChunkLighting.getSky(clientWorld.world().getPackedLightAtWorld(1, 30, 1)));
 
             clientWorld.apply(new ServerMessage.BlockActionResult(
-                    65L, false, 1, 30, 1, Blocks.STONE.getId(), 1L
+                    65L, false, 1, 30, 1, BlockRegistry.getRuntimeId(Blocks.STONE), 1L
             ));
-            assertEquals(Blocks.STONE.getId(), clientWorld.world().getBlockAtWorld(1, 30, 1));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), clientWorld.world().getBlockAtWorld(1, 30, 1));
             assertEquals(0, clientWorld.world().getChunkManager().getChunk(0, 0, 0)
                     .getDirectSkyLight(1, 29, 1));
             assertTrue(ChunkLighting.getSky(clientWorld.world().getPackedLightAtWorld(1, 29, 1)) < 15);
@@ -178,10 +178,10 @@ class ClientWorldPredictionTest {
 
     @Test
     void predictionReplayMovesBeforeApplyingTheBlockFromTheSameTick() {
-        try (ClientWorld clientWorld = worldWithBlock(Blocks.AIR.getId())) {
+        try (ClientWorld clientWorld = worldWithBlock(BlockRegistry.getRuntimeId(Blocks.AIR))) {
             BlockAction action = new BlockAction(
                     BlockAction.Type.PLACE, 1, 1, 0,
-                    Blocks.AIR.getId(), Blocks.STONE.getId()
+                    BlockRegistry.getRuntimeId(Blocks.AIR), BlockRegistry.getRuntimeId(Blocks.STONE)
             );
             assertTrue(clientWorld.predictBlock(70L, action));
             GameplaySession gameplay = new GameplaySession(clientWorld.world(), new GameplaySettings());
@@ -196,7 +196,7 @@ class ClientWorldPredictionTest {
                 gameplay.updateMovement(1.0f / 30.0f, moveForward);
                 assertTrue(gameplay.getPlayer().getPosition().z < 1.31f);
                 replay.apply(70L);
-                assertEquals(Blocks.STONE.getId(), clientWorld.world().getBlockAtWorld(1, 1, 0));
+                assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), clientWorld.world().getBlockAtWorld(1, 1, 0));
             }
 
             gameplay.getPlayer().setPosition(new Vector3f(1.5f, 2.62f, 1.31f));
@@ -227,7 +227,7 @@ class ClientWorldPredictionTest {
     private static BlockAction breakAction(short expectedBlockId) {
         return new BlockAction(
                 BlockAction.Type.BREAK, 1, 1, 1,
-                expectedBlockId, Blocks.AIR.getId()
+                expectedBlockId, BlockRegistry.getRuntimeId(Blocks.AIR)
         );
     }
 

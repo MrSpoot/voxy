@@ -18,7 +18,7 @@ import org.weaw.game.ChunkManager;
 import org.weaw.game.ChunkManager.ChunkUploadChangeType;
 import org.weaw.game.ChunkManager.ChunkUploadDelta;
 import org.weaw.game.ChunkManager.ChunkUploadSync;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.ChunkManager.ChunkUpload;
 import org.weaw.game.ChunkMeshData.LayerMeshData;
 

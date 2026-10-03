@@ -5,7 +5,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.weaw.game.Chunk;
 import org.weaw.game.ChunkLighting;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 import org.weaw.game.generation.GenerationConfig;
@@ -34,7 +34,7 @@ class NetworkClientSessionTest {
     void preservesSnapshotsThatArriveInTheSameBatchAsWelcome() throws IOException {
         QueueClientTransport transport = new QueueClientTransport();
         short[] blocks = new short[Chunk.TOTAL_BLOCKS];
-        blocks[0] = Blocks.STONE.getId();
+        blocks[0] = BlockRegistry.getRuntimeId(Blocks.STONE);
         int[] light = new int[ChunkLighting.packedIntCount()];
         byte[] directSky = new byte[Chunk.packedDirectSkyByteCount()];
         java.util.Arrays.fill(directSky, (byte) 0xFF);
@@ -59,7 +59,7 @@ class NetworkClientSessionTest {
             client.connect();
 
             assertTrue(client.getClientWorld().world().containsChunk(0, 0, 0));
-            assertEquals(Blocks.STONE.getId(), client.getClientWorld().world().getBlockAtWorld(0, 0, 0));
+            assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), client.getClientWorld().world().getBlockAtWorld(0, 0, 0));
             assertEquals(
                     ChunkLighting.MAX_SKY_LIGHT,
                     client.getClientWorld().world().getChunkManager().getChunk(0, 0, 0)

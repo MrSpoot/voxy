@@ -24,7 +24,7 @@ public final class BlockRegistry {
         defaultCatalog = BlockCatalog.createDefault(pendingRegistrations);
         pendingRegistrations.clear();
         defaultCatalog.getRegisteredBlocks().forEach((stableId, block) ->
-                LOGGER.info("Registered block {} with runtimeId {}", stableId, block.getId()));
+                LOGGER.info("Registered block {} with runtimeId {}", stableId, defaultCatalog.getRuntimeId(stableId)));
         LOGGER.info("Block registry initialized with {} blocks", defaultCatalog.getRegisteredBlocks().size());
     }
 
@@ -61,6 +61,10 @@ public final class BlockRegistry {
 
     public static short getRuntimeId(String stableId) {
         return getDefaultCatalog().getRuntimeId(stableId);
+    }
+
+    public static short getRuntimeId(BlockDefinition definition) {
+        return getDefaultCatalog().getRuntimeId(definition);
     }
 
     public static String getStableId(short runtimeId) {

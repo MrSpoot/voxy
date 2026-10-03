@@ -3,7 +3,7 @@ package org.weaw.game;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.generation.ChunkGenerationHint;
 import org.weaw.game.generation.WorldGenerator;
 import org.weaw.game.utils.BlockRegistry;
@@ -40,7 +40,7 @@ class WorldStreamerTest {
             ChunkMesher.setAmbientOcclusionEnabled(false);
 
             ChunkManager manager = new ChunkManager();
-            FlatGenerator generator = new FlatGenerator(Blocks.STONE.getId());
+            FlatGenerator generator = new FlatGenerator(BlockRegistry.getRuntimeId(Blocks.STONE));
             WorldStreamer streamer = new WorldStreamer(
                     manager,
                     new AirBlockProvider(),
@@ -63,7 +63,7 @@ class WorldStreamerTest {
                 assertEquals(0, manager.getChunkCount());
 
                 streamer.update(new Vector3f(0.0f, 0.0f, 0.0f));
-                ChunkManager.ChunkPosition origin = new ChunkManager.ChunkPosition(0, 0, 0);
+                ChunkPosition origin = new ChunkPosition(0, 0, 0);
                 assertTrue(manager.hasChunk(origin));
                 assertNotNull(manager.getChunkUpload(origin));
                 assertTrue(manager.getChunkUpload(origin).meshData().opaque().faceCount() >= 1);
@@ -106,7 +106,7 @@ class WorldStreamerTest {
         WorldStreamer streamer = new WorldStreamer(
                 manager,
                 new AirBlockProvider(),
-                new FlatGenerator(Blocks.AIR.getId()),
+                new FlatGenerator(BlockRegistry.getRuntimeId(Blocks.AIR)),
                 settings,
                 1,
                 5,
@@ -249,7 +249,7 @@ class WorldStreamerTest {
         ChunkPosition origin = new ChunkPosition(0, 0, 0);
         Chunk originChunk = new Chunk(new org.joml.Vector3i(0, 0, 0));
         short[] blocks = new short[Chunk.TOTAL_BLOCKS];
-        java.util.Arrays.fill(blocks, Blocks.STONE.getId());
+        java.util.Arrays.fill(blocks, BlockRegistry.getRuntimeId(Blocks.STONE));
         originChunk.setAllBlocks(blocks);
         manager.publishBuiltChunk(originChunk, emptyMeshData());
 
@@ -301,14 +301,14 @@ class WorldStreamerTest {
     void interactionResultPublishesBeforeAnEarlierCompletedLoad() {
         ChunkManager manager = new ChunkManager();
         ChunkPosition origin = new ChunkPosition(0, 0, 0);
-        Chunk originChunk = filledChunk(origin, Blocks.STONE.getId());
+        Chunk originChunk = filledChunk(origin, BlockRegistry.getRuntimeId(Blocks.STONE));
         manager.publishBuiltChunk(originChunk, emptyMeshData());
 
         DirectExecutorService executor = new DirectExecutorService();
         WorldStreamer streamer = new WorldStreamer(
                 manager,
                 new AirBlockProvider(),
-                new FlatGenerator(Blocks.AIR.getId()),
+                new FlatGenerator(BlockRegistry.getRuntimeId(Blocks.AIR)),
                 new WorldSettings(2, new WorldHeightRange(0, 0), WorldMemoryBudget.balanced(), false),
                 1,
                 5,
@@ -343,7 +343,7 @@ class WorldStreamerTest {
     void repeatedInteractionPublishesOnlyTheLatestChunkState() {
         ChunkManager manager = new ChunkManager();
         ChunkPosition origin = new ChunkPosition(0, 0, 0);
-        manager.publishBuiltChunk(filledChunk(origin, Blocks.AIR.getId()), emptyMeshData());
+        manager.publishBuiltChunk(filledChunk(origin, BlockRegistry.getRuntimeId(Blocks.AIR)), emptyMeshData());
 
         WorldMemoryBudget budget = new WorldMemoryBudget(
                 16L * MIB,
@@ -360,7 +360,7 @@ class WorldStreamerTest {
         WorldStreamer streamer = new WorldStreamer(
                 manager,
                 new AirBlockProvider(),
-                new FlatGenerator(Blocks.AIR.getId()),
+                new FlatGenerator(BlockRegistry.getRuntimeId(Blocks.AIR)),
                 new WorldSettings(2, new WorldHeightRange(0, 0), budget, false),
                 1,
                 5,
@@ -420,7 +420,7 @@ class WorldStreamerTest {
 
         @Override
         public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
-            return Blocks.AIR.getId();
+            return BlockRegistry.getRuntimeId(Blocks.AIR);
         }
 
         @Override
@@ -429,17 +429,17 @@ class WorldStreamerTest {
         }
 
         @Override
-        public ChunkGenerationHint classifyChunk(ChunkManager.ChunkPosition position) {
+        public ChunkGenerationHint classifyChunk(ChunkPosition position) {
             return position.x() < 0
                     ? ChunkGenerationHint.empty()
-                    : ChunkGenerationHint.uniform(Blocks.STONE.getId());
+                    : ChunkGenerationHint.uniform(BlockRegistry.getRuntimeId(Blocks.STONE));
         }
     }
 
     private static final class AirBlockProvider implements WorldBlockProvider {
         @Override
         public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
-            return Blocks.AIR.getId();
+            return BlockRegistry.getRuntimeId(Blocks.AIR);
         }
     }
 
@@ -466,7 +466,7 @@ class WorldStreamerTest {
 
         @Override
         public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
-            return Blocks.AIR.getId();
+            return BlockRegistry.getRuntimeId(Blocks.AIR);
         }
 
         @Override

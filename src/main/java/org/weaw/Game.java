@@ -390,7 +390,7 @@ public class Game {
                 launchOptions.sparseChunkStreamingEnabled()
         );
         return new World(
-                new NoiseWorldGenerator(manifest.generationConfig()),
+                new NoiseWorldGenerator(manifest.generationConfig(), blockCatalog),
                 settings,
                 blockCatalog,
                 worldSaveSession.consumeInitialEdits()
@@ -551,7 +551,7 @@ public class Game {
                 launchOptions.worldMemoryBudget(),
                 launchOptions.sparseChunkStreamingEnabled()
         );
-        return new World(new NoiseWorldGenerator(config), settings, blockCatalog);
+        return new World(new NoiseWorldGenerator(config, blockCatalog), settings, blockCatalog);
     }
 
     private void handleInputModes() {

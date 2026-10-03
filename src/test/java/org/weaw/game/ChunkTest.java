@@ -22,9 +22,9 @@ class ChunkTest {
         Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
 
         assertTrue(chunk.isUniform());
-        assertEquals(Blocks.AIR.getId(), chunk.getUniformBlockId());
-        assertEquals(Blocks.AIR.getId(), chunk.getBlock(0, 0, 0));
-        assertEquals(Blocks.AIR.getId(), chunk.getBlock(Chunk.SIZE - 1, Chunk.SIZE - 1, Chunk.SIZE - 1));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), chunk.getUniformBlockId());
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), chunk.getBlock(0, 0, 0));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), chunk.getBlock(Chunk.SIZE - 1, Chunk.SIZE - 1, Chunk.SIZE - 1));
     }
 
     @Test
@@ -34,8 +34,8 @@ class ChunkTest {
         chunk.setBlock(3, 4, 5, Blocks.STONE);
 
         assertFalse(chunk.isUniform());
-        assertEquals(Blocks.STONE.getId(), chunk.getBlock(3, 4, 5));
-        assertEquals(Blocks.AIR.getId(), chunk.getBlock(3, 4, 4));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), chunk.getBlock(3, 4, 5));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), chunk.getBlock(3, 4, 4));
     }
 
     @Test
@@ -46,20 +46,20 @@ class ChunkTest {
         chunk.setBlock(1, 2, 3, Blocks.AIR);
 
         assertTrue(chunk.isUniform());
-        assertEquals(Blocks.AIR.getId(), chunk.getUniformBlockId());
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.AIR), chunk.getUniformBlockId());
     }
 
     @Test
     void setAllBlocksUsesUniformStorageForUniformInput() {
         Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
         short[] blocks = new short[Chunk.TOTAL_BLOCKS];
-        java.util.Arrays.fill(blocks, Blocks.DIRT.getId());
+        java.util.Arrays.fill(blocks, BlockRegistry.getRuntimeId(Blocks.DIRT));
 
         chunk.setAllBlocks(blocks);
 
         assertTrue(chunk.isUniform());
-        assertEquals(Blocks.DIRT.getId(), chunk.getUniformBlockId());
-        assertEquals(Blocks.DIRT.getId(), chunk.getBlock(12, 8, 4));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), chunk.getUniformBlockId());
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), chunk.getBlock(12, 8, 4));
     }
 
     @Test
@@ -67,14 +67,14 @@ class ChunkTest {
         Chunk chunk = new Chunk(new Vector3i(0, 0, 0));
         short[] blocks = new short[Chunk.TOTAL_BLOCKS];
         for (int index = 0; index < blocks.length; index++) {
-            blocks[index] = (index & 1) == 0 ? Blocks.STONE.getId() : Blocks.DIRT.getId();
+            blocks[index] = (index & 1) == 0 ? BlockRegistry.getRuntimeId(Blocks.STONE) : BlockRegistry.getRuntimeId(Blocks.DIRT);
         }
 
         chunk.setAllBlocks(blocks);
 
         assertFalse(chunk.isUniform());
-        assertEquals(Blocks.STONE.getId(), chunk.getBlock(0, 0, 0));
-        assertEquals(Blocks.DIRT.getId(), chunk.getBlock(1, 0, 0));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), chunk.getBlock(0, 0, 0));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), chunk.getBlock(1, 0, 0));
     }
 
     @Test
@@ -85,8 +85,8 @@ class ChunkTest {
         Chunk copy = source.copy();
         source.setBlock(2, 3, 4, Blocks.DIRT);
 
-        assertEquals(Blocks.STONE.getId(), copy.getBlock(2, 3, 4));
-        assertEquals(Blocks.DIRT.getId(), source.getBlock(2, 3, 4));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), copy.getBlock(2, 3, 4));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), source.getBlock(2, 3, 4));
     }
 
     @Test
@@ -97,7 +97,7 @@ class ChunkTest {
 
         Chunk copy = source.copyForMeshing();
 
-        assertEquals(Blocks.STONE.getId(), copy.getBlock(2, 3, 4));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), copy.getBlock(2, 3, 4));
         assertTrue(copy.getLighting().isAllDark());
     }
 

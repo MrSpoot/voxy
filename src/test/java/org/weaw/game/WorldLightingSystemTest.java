@@ -3,7 +3,7 @@ package org.weaw.game;
 import org.joml.Vector3i;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.utils.BlockRegistry;
 import org.weaw.game.utils.Blocks;
 
@@ -177,7 +177,7 @@ class WorldLightingSystemTest {
             @Override
             public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
                 if (worldY == 40) {
-                    return Blocks.STONE.getId();
+                    return BlockRegistry.getRuntimeId(Blocks.STONE);
                 }
                 return manager.getBlockAtWorld(worldX, worldY, worldZ);
             }
@@ -236,7 +236,7 @@ class WorldLightingSystemTest {
             @Override
             public short getBlockAtWorld(int worldX, int worldY, int worldZ) {
                 if (addCanopy.get() && worldX == 16 && worldY == Chunk.SIZE - 1 && worldZ == 16) {
-                    return Blocks.LEAVES.getId();
+                    return BlockRegistry.getRuntimeId(Blocks.LEAVES);
                 }
                 return manager.getBlockAtWorld(worldX, worldY, worldZ);
             }

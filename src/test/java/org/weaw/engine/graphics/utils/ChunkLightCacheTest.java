@@ -3,7 +3,7 @@ package org.weaw.engine.graphics.utils;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.weaw.game.ChunkManager;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 
 import java.util.LinkedHashSet;
 import java.util.List;

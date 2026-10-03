@@ -26,7 +26,7 @@ public record WorldManifest(
         Map<String, String> chunks,
         Map<String, String> players
 ) {
-    public static final int CURRENT_FORMAT_VERSION = 1;
+    public static final int CURRENT_FORMAT_VERSION = 2;
 
     public WorldManifest {
         sections = Map.copyOf(sections == null ? Map.of() : sections);
@@ -128,20 +128,22 @@ public record WorldManifest(
             float terrainGain,
             int treeSeedOffset,
             float treeRarity,
-            float treeSteepness
+            float treeSteepness,
+            int generatorVersion
     ) {
         static GenerationSettings from(GenerationConfig config) {
             return new GenerationSettings(
                     config.seed(), config.amplitude(), config.baseHeight(), config.waterLevel(),
                     config.terrainFrequency(), config.terrainOctaves(), config.terrainLacunarity(),
-                    config.terrainGain(), config.treeSeedOffset(), config.treeRarity(), config.treeSteepness()
+                    config.terrainGain(), config.treeSeedOffset(), config.treeRarity(), config.treeSteepness(),
+                    config.generatorVersion()
             );
         }
 
         GenerationConfig toConfig() {
             return new GenerationConfig(
                     seed, amplitude, baseHeight, waterLevel, terrainFrequency, terrainOctaves,
-                    terrainLacunarity, terrainGain, treeSeedOffset, treeRarity, treeSteepness
+                    terrainLacunarity, terrainGain, treeSeedOffset, treeRarity, treeSteepness, generatorVersion
             );
         }
     }

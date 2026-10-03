@@ -1,6 +1,5 @@
 package org.weaw.client.ui;
 
-import imgui.ImColor;
 import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.ImGuiStyle;
@@ -12,10 +11,8 @@ import imgui.glfw.ImGuiImplGlfw;
 import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 import imgui.type.ImString;
-import org.lwjgl.BufferUtils;
 import org.weaw.Game;
 import org.weaw.engine.ui.ResponsiveImGuiStyle;
-import org.weaw.engine.utils.FileReader;
 import org.weaw.engine.window.DisplayResolution;
 import org.weaw.engine.window.DisplayResolutionCatalog;
 import org.weaw.engine.window.Window;
@@ -38,9 +35,6 @@ import org.weaw.runtime.LaunchOptions;
 import org.weaw.runtime.NetworkMode;
 import org.weaw.runtime.NetworkOptions;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -58,29 +52,10 @@ import static org.lwjgl.opengl.GL11.GL_CULL_FACE;
 import static org.lwjgl.opengl.GL11.GL_DEPTH_TEST;
 import static org.lwjgl.opengl.GL11.GL_FILL;
 import static org.lwjgl.opengl.GL11.GL_FRONT_AND_BACK;
-import static org.lwjgl.opengl.GL11.GL_LINEAR;
-import static org.lwjgl.opengl.GL11.GL_RGBA;
-import static org.lwjgl.opengl.GL11.GL_RGBA8;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S;
-import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T;
-import static org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE;
-import static org.lwjgl.opengl.GL11.GL_REPEAT;
-import static org.lwjgl.opengl.GL11.glBindTexture;
 import static org.lwjgl.opengl.GL11.glClear;
 import static org.lwjgl.opengl.GL11.glClearColor;
-import static org.lwjgl.opengl.GL11.glDeleteTextures;
 import static org.lwjgl.opengl.GL11.glDisable;
-import static org.lwjgl.opengl.GL11.glGenTextures;
 import static org.lwjgl.opengl.GL11.glPolygonMode;
-import static org.lwjgl.opengl.GL11.glTexImage2D;
-import static org.lwjgl.opengl.GL11.glTexParameteri;
-import static org.lwjgl.opengl.GL30.glGenerateMipmap;
-import static org.lwjgl.stb.STBImage.stbi_failure_reason;
-import static org.lwjgl.stb.STBImage.stbi_image_free;
-import static org.lwjgl.stb.STBImage.stbi_load_from_memory;
 
 /** Interactive title screen and all pre-game flows. */
 public final class ClientFrontend implements AutoCloseable {
@@ -105,7 +80,6 @@ public final class ClientFrontend implements AutoCloseable {
     private float activeUiScale = 1.0f;
     private ResponsiveImGuiStyle responsiveStyle;
     private boolean responsiveStylePushed;
-    private int panoramaTexture;
     private Screen screen = Screen.TITLE;
     private List<WorldSummary> worlds = List.of();
     private int selectedWorld = -1;
@@ -235,7 +209,6 @@ public final class ClientFrontend implements AutoCloseable {
         imGuiGlfw.init(window.getId(), true);
         imGuiGl3 = new ImGuiImplGl3();
         imGuiGl3.init("#version 460 core");
-        panoramaTexture = loadTexture("ui/menu-panorama.png");
     }
 
     private void renderFrame() {
@@ -244,7 +217,6 @@ public final class ClientFrontend implements AutoCloseable {
         imGuiGlfw.newFrame();
         imGuiGl3.newFrame();
         ImGui.newFrame();
-        renderPanorama();
         responsiveStylePushed = false;
         try {
             switch (screen) {
@@ -265,19 +237,6 @@ public final class ClientFrontend implements AutoCloseable {
         }
         ImGui.render();
         imGuiGl3.renderDrawData(ImGui.getDrawData());
-    }
-
-    private void renderPanorama() {
-        float width = Math.max(1, window.getWidth());
-        float height = Math.max(1, window.getHeight());
-        float offset = (float) ((ImGui.getTime() * 0.006) % 1.0);
-        ImGui.getBackgroundDrawList().addImage(
-                panoramaTexture, 0, 0, width, height,
-                offset, 0, 1.0f + offset, 1.0f
-        );
-        ImGui.getBackgroundDrawList().addRectFilled(
-                0, 0, width, height, ImColor.rgba(8, 12, 18, 118)
-        );
     }
 
     private void renderTitle() {
@@ -758,7 +717,8 @@ public final class ClientFrontend implements AutoCloseable {
         );
         GenerationConfig generation = new GenerationConfig(
                 seed, amplitude[0], baseHeight[0], waterLevel[0], terrainFrequency[0], terrainOctaves[0],
-                terrainLacunarity[0], terrainGain[0], 999, treeRarity[0], treeSteepness[0]
+                terrainLacunarity[0], terrainGain[0], 999, treeRarity[0], treeSteepness[0],
+                GenerationConfig.CURRENT_GENERATOR_VERSION
         );
         LaunchOptions options = baseOptions.forSession(network, storage)
                 .withWorldHeightRange(new WorldHeightRange(minChunkY[0], maxChunkY[0]))
@@ -1245,41 +1205,8 @@ public final class ClientFrontend implements AutoCloseable {
         style.setColor(ImGuiCol.Border, 0.68f, 0.70f, 0.65f, 0.72f);
     }
 
-    private static int loadTexture(String resource) {
-        try {
-            ByteBuffer encoded = FileReader.read(resource, 32 * 1024);
-            IntBuffer width = BufferUtils.createIntBuffer(1);
-            IntBuffer height = BufferUtils.createIntBuffer(1);
-            IntBuffer channels = BufferUtils.createIntBuffer(1);
-            ByteBuffer pixels = stbi_load_from_memory(encoded, width, height, channels, 4);
-            if (pixels == null) {
-                throw new IllegalStateException("Unable to decode " + resource + ": " + stbi_failure_reason());
-            }
-            int texture = glGenTextures();
-            glBindTexture(GL_TEXTURE_2D, texture);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glTexImage2D(
-                    GL_TEXTURE_2D, 0, GL_RGBA8, width.get(0), height.get(0), 0,
-                    GL_RGBA, GL_UNSIGNED_BYTE, pixels
-            );
-            glGenerateMipmap(GL_TEXTURE_2D);
-            stbi_image_free(pixels);
-            glBindTexture(GL_TEXTURE_2D, 0);
-            return texture;
-        } catch (IOException exception) {
-            throw new IllegalStateException("Unable to load menu panorama", exception);
-        }
-    }
-
     @Override
     public void close() {
-        if (panoramaTexture != 0) {
-            glDeleteTextures(panoramaTexture);
-            panoramaTexture = 0;
-        }
         if (imGuiGl3 != null) {
             imGuiGl3.shutdown();
             imGuiGl3 = null;

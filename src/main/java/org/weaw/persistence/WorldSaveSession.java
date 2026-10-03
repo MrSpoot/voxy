@@ -1,7 +1,7 @@
 package org.weaw.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.World;
 import org.weaw.game.utils.BlockCatalog;
 

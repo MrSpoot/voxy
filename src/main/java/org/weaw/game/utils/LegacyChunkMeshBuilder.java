@@ -42,7 +42,7 @@ public final class LegacyChunkMeshBuilder {
             for (int z = 0; z < org.weaw.game.Chunk.SIZE; z++) {
                 for (int x = 0; x < org.weaw.game.Chunk.SIZE; x++) {
                     short blockId = snapshot.getBlock(x, y, z);
-                    if (blockId == snapshot.blockCatalog().air().getId()) {
+                    if (blockId == snapshot.blockCatalog().getRuntimeId(snapshot.blockCatalog().air())) {
                         continue;
                     }
 
@@ -286,7 +286,7 @@ public final class LegacyChunkMeshBuilder {
             int neighborZ
     ) {
         short neighborBlockId = snapshot.getBlock(neighborX, neighborY, neighborZ);
-        if (neighborBlockId == snapshot.blockCatalog().air().getId()) {
+        if (neighborBlockId == snapshot.blockCatalog().getRuntimeId(snapshot.blockCatalog().air())) {
             return true;
         }
 
@@ -319,7 +319,7 @@ public final class LegacyChunkMeshBuilder {
         for (int y = 0; y < org.weaw.game.Chunk.SIZE; y++) {
             for (int z = 0; z < org.weaw.game.Chunk.SIZE; z++) {
                 for (int x = 0; x < org.weaw.game.Chunk.SIZE; x++) {
-                    if (snapshot.getBlock(x, y, z) != snapshot.blockCatalog().air().getId()) {
+        if (snapshot.getBlock(x, y, z) != snapshot.blockCatalog().getRuntimeId(snapshot.blockCatalog().air())) {
                         nonAirBlocks++;
                     }
                 }

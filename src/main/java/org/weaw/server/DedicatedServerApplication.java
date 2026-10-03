@@ -53,7 +53,7 @@ public final class DedicatedServerApplication {
                 options.sparseChunkStreamingEnabled()
         );
         World world = new World(
-                new NoiseWorldGenerator(manifest.generationConfig()),
+                new NoiseWorldGenerator(manifest.generationConfig(), catalog),
                 settings,
                 catalog,
                 saveSession.consumeInitialEdits()

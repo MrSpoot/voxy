@@ -44,7 +44,7 @@ public class PlayerInteractionSystem {
                     BlockAction.Type.BREAK,
                     x, y, z,
                     world.getBlockAtWorld(x, y, z),
-                    Blocks.AIR.getId()
+                    world.getBlockCatalog().getRuntimeId(Blocks.AIR)
             );
         }
 
@@ -58,7 +58,7 @@ public class PlayerInteractionSystem {
                     BlockAction.Type.PLACE,
                     x, y, z,
                     world.getBlockAtWorld(x, y, z),
-                    selectedBlock.getId()
+                    world.getBlockCatalog().getRuntimeId(selectedBlock)
             );
         }
         return null;

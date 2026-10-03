@@ -25,14 +25,14 @@ class ChunkMeshingSnapshotTest {
         AtomicInteger haloQueries = new AtomicInteger();
         WorldBlockProvider provider = (x, y, z) -> {
             haloQueries.incrementAndGet();
-            return Blocks.STONE.getId();
+            return BlockRegistry.getRuntimeId(Blocks.STONE);
         };
 
         ChunkMeshingSnapshot snapshot = ChunkMeshingSnapshot.capture(chunk, provider, () -> false);
         chunk.setBlock(1, 2, 3, Blocks.SAND);
 
-        assertEquals(Blocks.DIRT.getId(), snapshot.getBlock(1, 2, 3));
-        assertEquals(Blocks.STONE.getId(), snapshot.getBlock(-1, 2, 3));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.DIRT), snapshot.getBlock(1, 2, 3));
+        assertEquals(BlockRegistry.getRuntimeId(Blocks.STONE), snapshot.getBlock(-1, 2, 3));
         assertEquals(34 * 34 * 34, snapshot.sampledBlockCount());
         assertEquals(34 * 34 * 34, haloQueries.get());
         assertEquals(new Vector3i(-2, 3, 4), snapshot.position());
@@ -44,7 +44,7 @@ class ChunkMeshingSnapshotTest {
         AtomicInteger checks = new AtomicInteger();
         assertThrows(CancellationException.class, () -> ChunkMeshingSnapshot.capture(
                 chunk,
-                (x, y, z) -> Blocks.AIR.getId(),
+                (x, y, z) -> BlockRegistry.getRuntimeId(Blocks.AIR),
                 () -> checks.incrementAndGet() >= 2
         ));
     }

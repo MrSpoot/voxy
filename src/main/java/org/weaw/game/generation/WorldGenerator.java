@@ -1,7 +1,7 @@
 package org.weaw.game.generation;
 
 import org.weaw.game.Chunk;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.WorldBlockProvider;
 
 import java.util.Collection;

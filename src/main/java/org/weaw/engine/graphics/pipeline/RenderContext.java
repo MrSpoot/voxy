@@ -9,7 +9,7 @@ import org.weaw.engine.graphics.utils.ChunkFaceArena;
 import org.weaw.engine.graphics.utils.ChunkLightCache;
 import org.weaw.engine.graphics.utils.ChunkGpuMemoryBudget;
 import org.weaw.game.ChunkManager;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.World;
 import org.weaw.game.WorldSettings;
 import org.weaw.gameplay.CreativeInventoryState;

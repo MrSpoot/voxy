@@ -4,7 +4,7 @@ import org.joml.Vector3i;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.weaw.game.Chunk;
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.ChunkMeshData;
 import org.weaw.game.ChunkMesher;
 import org.weaw.game.World;
@@ -59,7 +59,7 @@ public final class ClientWorld implements AutoCloseable {
                 false
         );
         world = new World(
-                new NoiseWorldGenerator(GenerationConfig.defaults().withSeed(worldSeed)),
+                new NoiseWorldGenerator(GenerationConfig.defaults().withSeed(worldSeed), catalog),
                 settings,
                 catalog
         );

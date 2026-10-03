@@ -1,9 +1,10 @@
 package org.weaw.game;
 
-import org.weaw.game.ChunkManager.ChunkPosition;
+import org.weaw.game.ChunkPosition;
 import org.weaw.game.utils.BlockCatalog;
 import org.weaw.game.utils.BlockDefinition;
 import org.weaw.game.utils.BlockRegistry;
+import org.weaw.game.utils.Blocks;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -56,12 +57,12 @@ public final class WorldLightingSystem {
 
     public WorldLightingSystem() {
         this(BlockRegistry.getDefaultCatalog(),
-                (x, y, z) -> BlockRegistry.getDefaultCatalog().air().getId(),
+                (x, y, z) -> BlockRegistry.getDefaultCatalog().getRuntimeId(Blocks.AIR),
                 WorldHeightRange.configuredDefault());
     }
 
     public WorldLightingSystem(BlockCatalog blockCatalog) {
-        this(blockCatalog, (x, y, z) -> blockCatalog.air().getId(), WorldHeightRange.configuredDefault());
+        this(blockCatalog, (x, y, z) -> blockCatalog.getRuntimeId(blockCatalog.air()), WorldHeightRange.configuredDefault());
     }
 
     public WorldLightingSystem(BlockCatalog blockCatalog, WorldBlockProvider blockProvider, WorldHeightRange heightRange) {

@@ -64,7 +64,9 @@ public final class ChunkMeshingSnapshot {
             }
         }
         BlockDefinition waterDefinition = chunk.getBlockCatalog().getBlock(Blocks.WATER.getStableId());
-        short waterBlockId = waterDefinition == null ? Short.MIN_VALUE : waterDefinition.getId();
+        short waterBlockId = waterDefinition == null
+                ? Short.MIN_VALUE
+                : chunk.getBlockCatalog().getRuntimeId(waterDefinition);
         return new ChunkMeshingSnapshot(
                 position,
                 chunk.getBlockCatalog(),

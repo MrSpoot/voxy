@@ -37,6 +37,22 @@ class BlockCatalogTest {
         )));
     }
 
+    @Test
+    void keepsRuntimeIdsIsolatedBetweenCatalogs() {
+        BlockDefinition air = block("voxy:air");
+        BlockDefinition stone = block("test:stone");
+        BlockCatalog first = BlockCatalog.create(List.of(air, stone));
+        BlockCatalog second = BlockCatalog.create(List.of(stone, air));
+
+        assertEquals(0, first.getRuntimeId(air));
+        assertEquals(1, first.getRuntimeId(stone));
+        assertEquals(1, second.getRuntimeId(air));
+        assertEquals(0, second.getRuntimeId(stone));
+        assertSame(air, first.getBlock((short) 0));
+        assertSame(air, second.getBlock((short) 1));
+        assertThrows(IllegalArgumentException.class, () -> first.getRuntimeId(block("test:missing")));
+    }
+
     private static BlockDefinition block(String id) {
         return new BlockDefinition(id, null, BlockDefinition.TransparencyType.OPAQUE, true);
     }

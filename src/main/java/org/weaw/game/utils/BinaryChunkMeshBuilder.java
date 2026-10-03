@@ -378,7 +378,7 @@ public final class BinaryChunkMeshBuilder {
             ChunkMeshingMetrics.Recorder metrics
     ) {
         short blockId = snapshot.getBlock(x, y, z);
-        if (blockId == snapshot.blockCatalog().air().getId()) {
+        if (blockId == snapshot.blockCatalog().getRuntimeId(snapshot.blockCatalog().air())) {
             return -1;
         }
 
@@ -418,7 +418,7 @@ public final class BinaryChunkMeshBuilder {
             int neighborZ
     ) {
         short neighborBlockId = snapshot.getBlock(neighborX, neighborY, neighborZ);
-        if (neighborBlockId == snapshot.blockCatalog().air().getId()) {
+        if (neighborBlockId == snapshot.blockCatalog().getRuntimeId(snapshot.blockCatalog().air())) {
             return true;
         }
 
